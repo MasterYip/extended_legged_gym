@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #
@@ -28,8 +28,12 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
-from .helpers import class_to_dict, get_load_path, get_args, export_policy_as_jit, set_seed, update_class_from_dict
+from .helpers import class_to_dict, get_load_path, get_args, get_default_args, export_policy_as_jit, set_seed, update_class_from_dict
 from .task_registry import task_registry
 from .logger import Logger
-from .math import *
+from .math_utils import *
 from .terrain import Terrain
+from .terrain_obj import TerrainObj
+from .gait_scheduler import GaitScheduler, GaitSchedulerCfg, AsyncGaitSchedulerCfg, AsyncGaitScheduler
+from .raibert_planner import SimpleRaibertPlanner, SimpleRaibertPlannerConfig, RaibertPlanner, RaibertPlannerConfig
+from .depth_camera import DepthCamera

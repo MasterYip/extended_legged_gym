@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: BSD-3-Clause
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #
@@ -37,11 +37,24 @@ from legged_gym.envs import *
 from legged_gym.utils import get_args, task_registry
 import torch
 
+
 def train(args):
     env, env_cfg = task_registry.make_env(name=args.task, args=args)
     ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args)
     ppo_runner.learn(num_learning_iterations=train_cfg.runner.max_iterations, init_at_random_ep_len=True)
 
+
 if __name__ == '__main__':
     args = get_args()
-    train(args)
+    record_gpu_memory = False  # This excludes the memory usage of Isaac Gym
+    if record_gpu_memory:
+        print("Recording GPU memory usage")
+        torch.cuda.memory._record_memory_history()
+    try:
+        train(args)
+    except KeyboardInterrupt as e:  # Catch Ctrl+C
+        print(e)
+    if record_gpu_memory:
+        torch.cuda.memory._dump_snapshot("gpumem_snap.pickle")   # 保存文件
+        torch.cuda.memory._record_memory_history(enabled=None)   # 终止记录
+        print("Memory history saved to my_snapshot.pickle")

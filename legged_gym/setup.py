@@ -11,5 +11,8 @@ setup(
     description='Isaac Gym environments for Legged Robots',
     install_requires=['isaacgym',
                       'rsl-rl',
-                      'matplotlib']
+                      'matplotlib',
+                      'trimesh',
+                      'rtree',
+                      'warp-lang==1.7.0']
 )

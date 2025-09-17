@@ -33,6 +33,7 @@ from isaacgym import gymapi
 from isaacgym import gymutil
 import numpy as np
 import torch
+from legged_gym.utils.gym_visualizer import GymVisualizer
 
 # Base class for RL tasks
 class BaseTask():
@@ -97,6 +98,9 @@ class BaseTask():
                 self.viewer, gymapi.KEY_ESCAPE, "QUIT")
             self.gym.subscribe_viewer_keyboard_event(
                 self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
+            
+            self.vis = GymVisualizer(self.gym, self.sim, self.viewer, self.envs)
+            
 
     def get_observations(self):
         return self.obs_buf

@@ -37,6 +37,7 @@ from legged_gym.utils import  get_args, export_policy_as_jit, task_registry, Log
 
 import numpy as np
 import torch
+import time
 
 
 def play(args):
@@ -59,10 +60,10 @@ def play(args):
     policy = ppo_runner.get_inference_policy(device=env.device)
     
     # export policy as a jit module (used to run it from C++)
-    if EXPORT_POLICY:
-        path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'policies')
-        export_policy_as_jit(ppo_runner.alg.actor_critic, path)
-        print('Exported policy as jit script to: ', path)
+    # if EXPORT_POLICY:
+    #     path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'policies')
+    #     export_policy_as_jit(ppo_runner.alg.actor_critic, path)
+    #     print('Exported policy as jit script to: ', path)
 
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging
@@ -75,6 +76,7 @@ def play(args):
     img_idx = 0
 
     for i in range(10*int(env.max_episode_length)):
+        time.sleep(env.dt)  # wait for the next step
         actions = policy(obs.detach())
         obs, _, rews, dones, infos = env.step(actions.detach())
         if RECORD_FRAMES:
@@ -86,36 +88,38 @@ def play(args):
             camera_position += camera_vel * env.dt
             env.set_camera(camera_position, camera_position + camera_direction)
 
-        if i < stop_state_log:
-            logger.log_states(
-                {
-                    'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale,
-                    'dof_pos': env.dof_pos[robot_index, joint_index].item(),
-                    'dof_vel': env.dof_vel[robot_index, joint_index].item(),
-                    'dof_torque': env.torques[robot_index, joint_index].item(),
-                    'command_x': env.commands[robot_index, 0].item(),
-                    'command_y': env.commands[robot_index, 1].item(),
-                    'command_yaw': env.commands[robot_index, 2].item(),
-                    'base_vel_x': env.base_lin_vel[robot_index, 0].item(),
-                    'base_vel_y': env.base_lin_vel[robot_index, 1].item(),
-                    'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
-                    'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
-                    'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy()
-                }
-            )
-        elif i==stop_state_log:
-            logger.plot_states()
-        if  0 < i < stop_rew_log:
-            if infos["episode"]:
-                num_episodes = torch.sum(env.reset_buf).item()
-                if num_episodes>0:
-                    logger.log_rewards(infos["episode"], num_episodes)
-        elif i==stop_rew_log:
-            logger.print_rewards()
+        if ENABLE_LOGGING:
+            if i < stop_state_log:
+                logger.log_states(
+                    {
+                        'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale,
+                        'dof_pos': env.dof_pos[robot_index, joint_index].item(),
+                        'dof_vel': env.dof_vel[robot_index, joint_index].item(),
+                        'dof_torque': env.torques[robot_index, joint_index].item(),
+                        'command_x': env.commands[robot_index, 0].item(),
+                        'command_y': env.commands[robot_index, 1].item(),
+                        'command_yaw': env.commands[robot_index, 2].item(),
+                        'base_vel_x': env.base_lin_vel[robot_index, 0].item(),
+                        'base_vel_y': env.base_lin_vel[robot_index, 1].item(),
+                        'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
+                        'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
+                        'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy()
+                    }
+                )
+            elif i==stop_state_log:
+                logger.plot_states()
+            if  0 < i < stop_rew_log:
+                if infos["episode"]:
+                    num_episodes = torch.sum(env.reset_buf).item()
+                    if num_episodes>0:
+                        logger.log_rewards(infos["episode"], num_episodes)
+            elif i==stop_rew_log:
+                logger.print_rewards()
 
 if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = False
+    ENABLE_LOGGING = False
     args = get_args()
     play(args)
