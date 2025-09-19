@@ -96,6 +96,7 @@ from .elspider_air.batch_rollout.elspider_air_nav import ElSpiderAirNav
 from .elspider_air.batch_rollout.elspider_air_nav_config import ElSpiderAirNavCfg, ElSpiderAirNavCfgPPO
 from .elspider_air.nav_tasks.elair_nav_barrier_cfg import ElAirNavBarrierCfg, ElAirNavBarrierCfgPPO
 from .elspider_air.nav_tasks.elair_nav_timberpile_cfg import ElAirNavTimberPileCfg, ElAirNavTimberPileCfgPPO
+from .elspider_air.nav_tasks.elair_nav_gap_cfg import ElAirNavGapCfg, ElAirNavGapCfgPPO
 
 from .cyberdog2.c2_standdance_config import CyberStandDanceConfig, CyberStandDanceCfgPPO, CyberStandDanceCfgPPOAug, CyberStandDanceCfgPPOEMLP
 from .cyberdog2.c2_standdance_env import CyberStandDanceEnv
@@ -184,6 +185,8 @@ task_registry.register("elair_barrier_nav", ElSpiderAirNav,
                        ElAirNavBarrierCfg(), ElAirNavBarrierCfgPPO())
 task_registry.register("elair_timberpile_nav", ElSpiderAirNav,
                        ElAirNavTimberPileCfg(), ElAirNavTimberPileCfgPPO())
+task_registry.register("elair_gap_nav", ElSpiderAirNav,
+                       ElAirNavGapCfg(), ElAirNavGapCfgPPO())
 
 task_registry.register("cyber2_stand", CyberStandDanceEnv, CyberStandDanceConfig(), CyberStandDanceCfgPPOAug())
 task_registry.register("cyber2_hop", CyberWalkEnv, CyberWalkConfig(), CyberWalkCfgPPO())

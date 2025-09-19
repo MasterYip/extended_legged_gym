@@ -173,8 +173,8 @@ class RecordReplayMixin:
         self.gym.simulate(self.sim)
 
         # Refresh the state tensors
-        self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_dof_state_tensor(self.sim)
+        self.post_physics_step()
         if self.viewer and self.debug_viz:
             self._draw_debug_vis()
         # Render the scene if in GUI mode
