@@ -753,7 +753,7 @@ class TerrainConfined:
         height_noise = 0.0 + 0.0 * difficulty
 
         # Gap parameters
-        gap_width = 0.6 + 0.0 * difficulty
+        gap_width = 0.7 + 0.0 * difficulty
         platform_size = 1.0
 
         # Column obstacles parameters
