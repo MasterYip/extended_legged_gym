@@ -10,7 +10,7 @@ setup(
     author_email='rudinn@ethz.ch',
     description='Isaac Gym environments for Legged Robots',
     install_requires=['isaacgym',
-                      'rsl-rl',
+                      'rsl-rl-lib',
                       'matplotlib',
                       'trimesh',
                       'rtree',
