@@ -8,7 +8,7 @@ from typing import Tuple
 
 from legged_gym.envs.batch_rollout.robot_batch_rollout_percept import RobotBatchRolloutPercept
 from legged_gym.utils.math_utils import quat_apply
-from isaac_utils.maths import torch_rand_float
+from isaacgym.torch_utils import torch_rand_float
 from isaacgym import gymtorch
 
 
