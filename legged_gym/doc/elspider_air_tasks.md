@@ -42,7 +42,7 @@ python legged_gym/scripts/train.py --task=el_mini_base_pose_ctrl --num_envs=48
 - 500 epoch: walking good
 
 ```bash
-python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=6144 --resume --headless
+python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=6144 --headless --resume
 python legged_gym/scripts/play.py --task=elspider_air_flat --num_envs=48 --checkpoint=-1  --load_run=Mar13_19-58-56_ --resume
 ```
 

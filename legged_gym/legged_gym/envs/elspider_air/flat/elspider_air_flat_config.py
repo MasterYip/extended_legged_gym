@@ -100,8 +100,13 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
 
     class domain_rand(ElSpiderAirRoughCfg.domain_rand):
         # on ground planes the friction combination mode is averaging, i.e total friction = (foot_friction + 1.)/2.
-        friction_range = [0.5, 1.5]
-
+        randomize_friction = True
+        friction_range = [0.5, 1.25]
+        randomize_base_mass = False
+        added_mass_range = [-5., 5.]
+        push_robots = True
+        push_interval_s = 6
+        max_push_vel_xy = 1.
 
 class ElSpiderAirFlatCfgPPO(ElSpiderAirRoughCfgPPO):
     class policy(ElSpiderAirRoughCfgPPO.policy):

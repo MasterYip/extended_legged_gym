@@ -407,6 +407,10 @@ class ElSpider(LeggedRobot):
                                     torch.abs(self.commands[:, 2]) >= self.speed_min/ 2)
         return re
     
+    def _reward_stand_still(self):
+        # Penalize motion at zero commands
+        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < self.speed_min)
+
 
 class LoadAdaptElSpider(ElSpider):
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
