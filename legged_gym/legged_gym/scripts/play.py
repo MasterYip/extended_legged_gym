@@ -75,10 +75,23 @@ def play(args):
     camera_direction = np.array(env_cfg.viewer.lookat) - np.array(env_cfg.viewer.pos)
     img_idx = 0
 
+    # Realtime management variables
+    realtime_factor_window = []
+    realtime_factor_window_size = 50
+    last_print_time = time.time()
+    print_interval = 2.0  # Print realtime factor every 2 seconds
+    
+    if REALTIME_MODE:
+        print(f"Running in realtime mode (target dt={env.dt:.4f}s)")
+    else:
+        print("Running at maximum speed (no realtime constraints)")
+
     for i in range(int(env.max_episode_length)):
-        time.sleep(env.dt)  # wait for the next step
+        step_start_time = time.time()
+        
         actions = policy(obs.detach())
         obs, _, rews, dones, infos = env.step(actions.detach())
+        
         if RECORD_FRAMES:
             if i % 2:
                 filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'frames', f"{img_idx}.png")
@@ -116,10 +129,40 @@ def play(args):
             elif i==stop_rew_log:
                 logger.print_rewards()
 
+        # Realtime management
+        if REALTIME_MODE:
+            step_end_time = time.time()
+            step_duration = step_end_time - step_start_time
+            
+            # Calculate realtime factor
+            realtime_factor = env.dt / step_duration if step_duration > 0 else float('inf')
+            realtime_factor_window.append(realtime_factor)
+            
+            # Maintain window size
+            if len(realtime_factor_window) > realtime_factor_window_size:
+                realtime_factor_window.pop(0)
+            
+            # Print realtime factor periodically
+            current_time = time.time()
+            if current_time - last_print_time >= print_interval:
+                avg_realtime_factor = np.mean(realtime_factor_window)
+                min_realtime_factor = np.min(realtime_factor_window)
+                max_realtime_factor = np.max(realtime_factor_window)
+                print(f"Step {i}: Realtime factor: {avg_realtime_factor:.2f}x "
+                      f"(min: {min_realtime_factor:.2f}x, max: {max_realtime_factor:.2f}x)")
+                last_print_time = current_time
+            
+            # Sleep to maintain realtime if computation was faster than env.dt
+            sleep_time = env.dt - step_duration
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        # If not realtime mode, run as fast as possible (no sleep)
+
 if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = False
     ENABLE_LOGGING = False
+    REALTIME_MODE = True  # Set to False to run at maximum speed
     args = get_args()
     play(args)
