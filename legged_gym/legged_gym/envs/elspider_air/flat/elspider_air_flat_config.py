@@ -42,13 +42,25 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
     class asset(ElSpiderAirRoughCfg.asset):
         self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
 
+    class control(ElSpiderAirRoughCfg.control):
+        # PD Drive parameters matching Anymal:
+        stiffness = {'HAA': 50., 'HFE': 50., 'KFE': 50.}  # [N*m/rad]
+        damping = {'HAA': 1.5, 'HFE': 1.5, 'KFE': 1.5}     # [N*m*s/rad]
+        # action scale: target angle = actionScale * action + defaultAngle
+        action_scale = 0.5  # Enable Network-0.5 | Disable Network-0.3
+
+        # decimation: Number of control action updates @ sim DT per policy DT
+        decimation = 4
+        use_actuator_network = False
+        actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
+
     ## Rewards V1 (normal dof_acc)
     class rewards(ElSpiderAirRoughCfg.rewards):
         max_contact_force = 500.
         base_height_target = 0.28
-        only_positive_rewards = False
+        only_positive_rewards = True
         # Multi-stage
-        # Stage 0: Learn to walk with tripod gait
+        # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
         # Stage 1: Correct DOF and FootZ positions / Prevent Slip
         multi_stage_rewards = True  # if true, reward scales should be list
         reward_stage_threshold = 6.0
@@ -63,14 +75,14 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             ang_vel_xy = -0.05
             orientation = -5.0
             torques = -0.00001
-            dof_vel = -0.001
-            dof_acc = -2.5e-7
+            dof_vel = [-0.0002, -0.001]
+            dof_acc = [-5e-8, -2.5e-7]
             base_height = -8.0
             feet_slip = [-0.0, -0.4]  # Before feet_air_time
             feet_air_time = 1.0
             collision = -1.
             feet_stumble = -0.0
-            action_rate = -0.01
+            action_rate = [-0.005, -0.01]
             stand_still = -0.
             dof_pos_limits = -1.0
             
@@ -116,11 +128,11 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
     #         gait_2_step = -5.0
     #         # feet_contact_forces = -0.01
 
-        class async_gait_scheduler:
-            # Reward for the async gait scheduler
-            dof_align = 1.0
-            dof_nominal_pos = [0.0, 0.2]
-            reward_foot_z_align = [0.0, 0.6]
+    #     class async_gait_scheduler:
+    #         # Reward for the async gait scheduler
+    #         dof_align = 1.0
+    #         dof_nominal_pos = [0.0, 0.2]
+    #         reward_foot_z_align = [0.0, 0.6]
 
     class commands(ElSpiderAirRoughCfg.commands):
         curriculum = False
