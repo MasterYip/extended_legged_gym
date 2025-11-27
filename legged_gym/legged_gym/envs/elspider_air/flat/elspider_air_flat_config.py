@@ -42,10 +42,11 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
     class asset(ElSpiderAirRoughCfg.asset):
         self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
 
+    ## Rewards V1 (normal dof_acc)
     class rewards(ElSpiderAirRoughCfg.rewards):
         max_contact_force = 500.
         base_height_target = 0.28
-        only_positive_rewards = True
+        only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait
         # Stage 1: Correct DOF and FootZ positions / Prevent Slip
@@ -62,14 +63,14 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             ang_vel_xy = -0.05
             orientation = -5.0
             torques = -0.00001
-            dof_vel = -0.
-            dof_acc = -5e-8
+            dof_vel = -0.001
+            dof_acc = -2.5e-7
             base_height = -8.0
             feet_slip = [-0.0, -0.4]  # Before feet_air_time
-            feet_air_time = 0.8
+            feet_air_time = 1.0
             collision = -1.
             feet_stumble = -0.0
-            action_rate = -0.001
+            action_rate = -0.01
             stand_still = -0.
             dof_pos_limits = -1.0
             
@@ -77,6 +78,43 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             # async_gait_scheduler = -0.4
             gait_2_step = -5.0
             # feet_contact_forces = -0.01
+
+    ## Rewards V0 (small dof_acc)
+    # class rewards(ElSpiderAirRoughCfg.rewards):
+    #     max_contact_force = 500.
+    #     base_height_target = 0.28
+    #     only_positive_rewards = True
+    #     # Multi-stage
+    #     # Stage 0: Learn to walk with tripod gait
+    #     # Stage 1: Correct DOF and FootZ positions / Prevent Slip
+    #     multi_stage_rewards = True  # if true, reward scales should be list
+    #     reward_stage_threshold = 6.0
+    #     reward_min_stage = 0  # Start from 0
+    #     reward_max_stage = 1
+
+    #     class scales:
+    #         termination = -0.0
+    #         tracking_lin_vel = 1.0
+    #         tracking_ang_vel = 0.5
+    #         lin_vel_z = -2.0
+    #         ang_vel_xy = -0.05
+    #         orientation = -5.0
+    #         torques = -0.00001
+    #         dof_vel = -0.
+    #         dof_acc = -5e-8
+    #         base_height = -8.0
+    #         feet_slip = [-0.0, -0.4]  # Before feet_air_time
+    #         feet_air_time = 0.8
+    #         collision = -1.
+    #         feet_stumble = -0.0
+    #         action_rate = -0.001
+    #         stand_still = -0.
+    #         dof_pos_limits = -1.0
+            
+    #         # gait_scheduler = -18.0
+    #         # async_gait_scheduler = -0.4
+    #         gait_2_step = -5.0
+    #         # feet_contact_forces = -0.01
 
         class async_gait_scheduler:
             # Reward for the async gait scheduler
@@ -93,7 +131,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
         heading_command = False  # if true: compute ang vel command from heading error
 
         class ranges(ElSpiderAirRoughCfg.commands.ranges):
-            lin_vel_x = [-1.5, 1.5]  # min max [m/s]
+            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
             lin_vel_y = [-0.6, 0.6]   # min max [m/s]
             ang_vel_yaw = [-0.6, 0.6]    # min max [rad/s]
             heading = [-3.14, 3.14]

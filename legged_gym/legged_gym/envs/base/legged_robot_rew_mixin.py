@@ -91,6 +91,9 @@ class LeggedRobotRewMixin:
 
     def _reward_dof_acc(self):
         # Penalize dof accelerations
+        # if self.common_step_counter % 50 == 0:
+        #     print("mean dof acc:", torch.mean(torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)).item())
+        #     print("mean dof_vel:", torch.mean(torch.sum(torch.square(self.dof_vel), dim=1)).item())
         return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
 
     def _reward_action_rate(self):

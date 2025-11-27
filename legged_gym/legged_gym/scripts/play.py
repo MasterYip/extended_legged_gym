@@ -136,6 +136,7 @@ def play(args):
             
             # Calculate realtime factor
             realtime_factor = env.dt / step_duration if step_duration > 0 else float('inf')
+            realtime_factor = max(0.0, min(realtime_factor, 1.0))  # Clamp between 0 and 1
             realtime_factor_window.append(realtime_factor)
             
             # Maintain window size
