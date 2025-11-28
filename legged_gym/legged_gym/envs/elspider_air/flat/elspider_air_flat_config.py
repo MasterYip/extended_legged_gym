@@ -83,7 +83,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             collision = -1.
             feet_stumble = -0.0
             action_rate = [-0.005, -0.01]
-            stand_still = -0.
+            # stand_still = [-0.1, -0.3] # May affect spot turning
             dof_pos_limits = -1.0
             
             # gait_scheduler = -18.0
@@ -151,12 +151,24 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
     class domain_rand(ElSpiderAirRoughCfg.domain_rand):
         # on ground planes the friction combination mode is averaging, i.e total friction = (foot_friction + 1.)/2.
         randomize_friction = True
-        friction_range = [0.5, 1.25]
-        randomize_base_mass = False
+        friction_range = [0.3, 1.25]
+        randomize_base_mass = True
         added_mass_range = [-5., 5.]
         push_robots = True
-        push_interval_s = 6
+        push_interval_s = 3
         max_push_vel_xy = 1.
+
+    class noise(ElSpiderAirRoughCfg.noise):
+        add_noise = True
+        noise_level = 1.5  # scales other values
+
+        class noise_scales:
+            dof_pos = 0.05
+            dof_vel = 1.5
+            lin_vel = 0.1
+            ang_vel = 0.2
+            gravity = 0.05
+            height_measurements = 0.1
 
 class ElSpiderAirFlatCfgPPO(ElSpiderAirRoughCfgPPO):
     class policy(ElSpiderAirRoughCfgPPO.policy):
