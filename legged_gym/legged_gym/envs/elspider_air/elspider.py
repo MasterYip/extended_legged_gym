@@ -401,10 +401,10 @@ class ElSpider(LeggedRobot):
         re = sync_reward + async_reward
         if self.cfg.commands.heading_command:
             re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                    torch.abs(self.commands[:, 3]) >= self.speed_min/ 2)
+                                    torch.abs(self.commands[:, 3]) >= self.speed_min/ 2) # This is not correct
         else:
             re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                    torch.abs(self.commands[:, 2]) >= self.speed_min/ 2)
+                                    torch.abs(self.commands[:, 2]) > self.speed_min)
         return re
     
     def _reward_stand_still(self):

@@ -79,17 +79,17 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             dof_acc = [-5e-8, -2.5e-7]
             base_height = -8.0
             feet_slip = [-0.0, -0.4]  # Before feet_air_time
-            feet_air_time = 1.0
+            feet_air_time = [1.0, 1.3]
             collision = -1.
             feet_stumble = -0.0
             action_rate = [-0.005, -0.01]
-            # stand_still = [-0.1, -0.3] # May affect spot turning
+            stand_still = [-0.5, -1.0] # May affect spot turning
             dof_pos_limits = -1.0
+            feet_contact_forces = [-0.05, -0.1]
             
             # gait_scheduler = -18.0
             # async_gait_scheduler = -0.4
-            gait_2_step = -5.0
-            # feet_contact_forces = -0.01
+            gait_2_step = [-4.0, -4.0]
 
     ## Rewards V0 (small dof_acc)
     # class rewards(ElSpiderAirRoughCfg.rewards):
