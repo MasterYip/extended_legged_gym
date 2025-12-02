@@ -44,10 +44,12 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
 
     class control(ElSpiderAirRoughCfg.control):
         # PD Drive parameters matching Anymal:
-        stiffness = {'HAA': 50., 'HFE': 50., 'KFE': 50.}  # [N*m/rad]
-        damping = {'HAA': 1.5, 'HFE': 1.5, 'KFE': 1.5}     # [N*m*s/rad]
+        # stiffness = {'HAA': 50., 'HFE': 50., 'KFE': 50.}  # [N*m/rad]
+        # damping = {'HAA': 1.5, 'HFE': 1.5, 'KFE': 1.5}     # [N*m*s/rad]
+        stiffness = {'HAA': 60., 'HFE': 60., 'KFE': 60.}  # [N*m/rad]
+        damping = {'HAA': 0.8, 'HFE': 0.8, 'KFE': 0.8}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
-        action_scale = 0.5  # Enable Network-0.5 | Disable Network-0.3
+        action_scale = 0.25  # Enable Network-0.5 | Disable Network-0.3
 
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
@@ -73,12 +75,12 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             tracking_ang_vel = 0.5
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
-            orientation = -5.0
+            orientation = -0.0
             torques = -0.00001
             dof_vel = [-0.0002, -0.001]
             dof_acc = [-5e-8, -2.5e-7]
-            base_height = -8.0
-            feet_slip = [-0.0, -0.4]  # Before feet_air_time
+            base_height = -2.0
+            feet_slip = [-0.0, -0.2]  # Before feet_air_time
             feet_air_time = [1.0, 1.3]
             collision = -1.
             feet_stumble = -0.0
@@ -89,7 +91,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             
             # gait_scheduler = -18.0
             # async_gait_scheduler = -0.4
-            gait_2_step = [-4.0, -4.0]
+            gait_2_step = [-2.0, -0.0]
 
     ## Rewards V0 (small dof_acc)
     # class rewards(ElSpiderAirRoughCfg.rewards):
@@ -133,6 +135,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
     #         dof_align = 1.0
     #         dof_nominal_pos = [0.0, 0.2]
     #         reward_foot_z_align = [0.0, 0.6]
+
 
     class commands(ElSpiderAirRoughCfg.commands):
         curriculum = False
