@@ -100,17 +100,17 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             tracking_ang_vel = 0.5
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
-            orientation = [-3.0, -0.5]
-            torques = -0.00001
+            orientation = [-3.0, -3.0]
+            torques = -0.00005
             dof_vel = [-0.0002, -0.001]
             dof_acc = [-5e-8, -2.5e-7]
             base_height = [-4.0, -1.0]
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
-            feet_air_time = [1.0, 1.3]
+            feet_air_time = [0.8, 1.0]
             collision = -1.
             feet_stumble = -0.0
             action_rate = [-0.005, -0.01]
-            stand_still = [-0.5, -1.0] # May affect spot turning
+            stand_still = [-20.0, -50.0]  # May affect spot turning
             dof_pos_limits = -1.0
             feet_contact_forces = [-0.05, -0.1]
             

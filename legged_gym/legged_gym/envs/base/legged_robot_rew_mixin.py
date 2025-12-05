@@ -226,9 +226,9 @@ class LeggedRobotRewMixin:
         contact_time_decay_scale = 0.5
         
         # Combination weights
-        joint_position_weight = 0.1
-        contact_count_penalty_weight = 0.0
-        contact_stability_weight = 0.2
+        joint_position_weight = 0.5
+        contact_count_penalty_weight = 0.3
+        contact_stability_weight = 0.4
         contact_time_weight = 0.0
         
         # Small Cmd Mask
