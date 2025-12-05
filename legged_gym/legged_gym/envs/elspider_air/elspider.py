@@ -99,73 +99,18 @@ def get_symmetric_observation_action(obs: torch.Tensor = None, actions: torch.Te
         
         # Swap left-right DOF positions - ElSpider has 6 legs with 3 DOFs each
         # Right side DOFs: 0-8, Left side DOFs: 9-17
-        # HAA joints need to be negated when swapped, HFE and KFE can be directly swapped
-        
-        # Map for mirroring DOF positions (12:30)
-        # RF to LF, RM to LM, RB to LB
-        # HAA joints need sign flip, HFE and KFE don't
-        
-        # Right to Left mapping (index of right-side DOF → index of left-side DOF)
-        # RF_HAA(0) → LF_HAA(9)
-        # RF_HFE(1) → LF_HFE(10)
-        # RF_KFE(2) → LF_KFE(11)
-        # RM_HAA(3) → LM_HAA(12)
-        # RM_HFE(4) → LM_HFE(13)
-        # RM_KFE(5) → LM_KFE(14)
-        # RB_HAA(6) → LB_HAA(15)
-        # RB_HFE(7) → LB_HFE(16)
-        # RB_KFE(8) → LB_KFE(17)
-        
+
         # Swap right and left DOF positions
-        for i in range(3):  # Three leg pairs (front, middle, back)
-            for j in range(3):  # Three joints per leg (HAA, HFE, KFE)
-                right_idx = 12 + i*3 + j  # DOF position indices start at 12
-                left_idx = 12 + (i+3)*3 + j  # Left legs are offset by 3 legs
-                
-                # Store right value temporarily
-                temp = obs_mirrored[:, right_idx].clone()
-                
-                # For HAA joints (j=0), negate the values when swapping
-                if j == 0:  # HAA joint
-                    obs_mirrored[:, right_idx] = -obs[:, left_idx]
-                    obs_mirrored[:, left_idx] = -obs[:, right_idx]
-                else:  # HFE, KFE joints - direct swap without negation
-                    obs_mirrored[:, right_idx] = obs[:, left_idx]
-                    obs_mirrored[:, left_idx] = obs[:, right_idx]
+        obs_mirrored[:, 12:21] = obs[:, 21:30]  # Right legs get left leg positions
+        obs_mirrored[:, 21:30] = obs[:, 12:21]  # Left legs get right leg positions
         
         # Mirror DOF velocities (30:48) using the same mapping as positions
-        for i in range(3):  # Three leg pairs
-            for j in range(3):  # Three joints per leg
-                right_idx = 30 + i*3 + j  # DOF velocity indices start at 30
-                left_idx = 30 + (i+3)*3 + j
-                
-                # Store right value temporarily
-                temp = obs_mirrored[:, right_idx].clone()
-                
-                # For HAA joints, negate the values when swapping
-                if j == 0:  # HAA joint
-                    obs_mirrored[:, right_idx] = -obs[:, left_idx]
-                    obs_mirrored[:, left_idx] = -obs[:, right_idx]
-                else:  # HFE, KFE joints - direct swap
-                    obs_mirrored[:, right_idx] = obs[:, left_idx]
-                    obs_mirrored[:, left_idx] = obs[:, right_idx]
+        obs_mirrored[:, 30:39] = obs[:, 39:48]  # Right legs get left leg velocities
+        obs_mirrored[:, 39:48] = obs[:, 30:39]  # Left legs get right leg velocities
         
         # Mirror previous actions (48:66) using the same mapping
-        for i in range(3):  # Three leg pairs
-            for j in range(3):  # Three joints per leg
-                right_idx = 48 + i*3 + j  # Action indices start at 48
-                left_idx = 48 + (i+3)*3 + j
-                
-                # Store right value temporarily
-                temp = obs_mirrored[:, right_idx].clone()
-                
-                # For HAA joints, negate the values when swapping
-                if j == 0:  # HAA joint
-                    obs_mirrored[:, right_idx] = -obs[:, left_idx]
-                    obs_mirrored[:, left_idx] = -obs[:, right_idx]
-                else:  # HFE, KFE joints - direct swap
-                    obs_mirrored[:, right_idx] = obs[:, left_idx]
-                    obs_mirrored[:, left_idx] = obs[:, right_idx]
+        obs_mirrored[:, 48:57] = obs[:, 57:66]  # Right legs get left leg actions
+        obs_mirrored[:, 57:66] = obs[:, 48:57]  # Left legs get right leg actions
         
         # Mirror height measurements (66:253) if present
         if obs.shape[1] > 66:
@@ -201,19 +146,8 @@ def get_symmetric_observation_action(obs: torch.Tensor = None, actions: torch.Te
         # Right legs: 0-8, Left legs: 9-17
         actions_mirrored = actions.clone()
         
-        # Apply the same logic as DOF positions
-        for i in range(3):  # Three leg pairs
-            for j in range(1):  # Three joints per leg
-                right_idx = i*3 + j
-                left_idx = (i+3)*3 + j
-                
-                # For HAA joints, negate the values when swapping
-                if j == 0:  # HAA joint
-                    actions_mirrored[:, right_idx] = -actions[:, left_idx]
-                    actions_mirrored[:, left_idx] = -actions[:, right_idx]
-                # else:  # HFE, KFE joints - direct swap
-                #     actions_mirrored[:, right_idx] = actions[:, left_idx]
-                #     actions_mirrored[:, left_idx] = actions[:, right_idx]
+        actions_mirrored[:, 0:9] = actions[:, 9:18]  # Right legs get left leg actions
+        actions_mirrored[:, 9:18] = actions[:, 0:9]  # Left legs get right leg actions
         
         # Combine original and mirrored actions
         actions_augmented = torch.cat([actions, actions_mirrored], dim=0) if actions is not None else None
@@ -398,20 +332,31 @@ class ElSpider(LeggedRobot):
         # Calculate total synchronization reward
         sync_reward = (sync_group1 + sync_group2) / 2
         
-        re = sync_reward + async_reward
+        # Calculate sync all legs reward for small commands (standing still)
+        sync_all_pairs = [
+            sync_lb_lf, sync_lb_rm, sync_lf_rm,  # Group 1 internal
+            sync_lm_rb, sync_lm_rf, sync_rb_rf,  # Group 2 internal
+            self._sync_reward_func(0, 2), self._sync_reward_func(0, 3), self._sync_reward_func(0, 4),  # LB with group 2
+            self._sync_reward_func(1, 2), self._sync_reward_func(1, 3), self._sync_reward_func(1, 4),  # LF with group 2
+            self._sync_reward_func(5, 2), self._sync_reward_func(5, 3), self._sync_reward_func(5, 4)   # RM with group 2
+        ]
+        sync_all_reward = sum(sync_all_pairs) / len(sync_all_pairs)
+        
+        # Determine command magnitude
         if self.cfg.commands.heading_command:
-            re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                    torch.abs(self.commands[:, 3]) >= self.speed_min/ 2) # This is not correct
+            command_magnitude = torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
+                                               torch.abs(self.commands[:, 3]) >= self.speed_min / 2)
         else:
-            re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                    torch.abs(self.commands[:, 2]) > self.speed_min)
+            command_magnitude = torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
+                                               torch.abs(self.commands[:, 2]) > self.speed_min)
+        
+        # Use gait reward for large commands, sync all legs reward for small commands
+        re = torch.where(command_magnitude, 
+                        sync_reward + async_reward,  # 2-step gait for movement
+                        sync_all_reward)             # sync all legs for standing still
+        
         return re
     
-    def _reward_stand_still(self):
-        # Penalize motion at zero commands
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < self.speed_min)
-
-
 class LoadAdaptElSpider(ElSpider):
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless)

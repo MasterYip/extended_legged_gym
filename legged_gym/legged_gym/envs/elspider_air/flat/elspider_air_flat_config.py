@@ -56,6 +56,31 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
         use_actuator_network = False
         actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
 
+    class init_state(ElSpiderAirRoughCfg.init_state):
+        pos = [0.0, 0.0, 0.4]  # x,y,z [m]
+        default_joint_angles = {  # = target angles [rad] when action = 0.0
+            "RF_HAA": 0.0,
+            "RM_HAA": 0.0,
+            "RB_HAA": 0.0,
+            "LF_HAA": 0.0,
+            "LM_HAA": 0.0,
+            "LB_HAA": 0.0,
+
+            "RF_HFE": 0.2,
+            "RM_HFE": 0.2,
+            "RB_HFE": 0.2,
+            "LF_HFE": 0.2,
+            "LM_HFE": 0.2,
+            "LB_HFE": 0.2,
+
+            "RF_KFE": 0.3,
+            "RM_KFE": 0.3,
+            "RB_KFE": 0.3,
+            "LF_KFE": 0.3,
+            "LM_KFE": 0.3,
+            "LB_KFE": 0.3,
+        }
+
     ## Rewards V1 (normal dof_acc)
     class rewards(ElSpiderAirRoughCfg.rewards):
         max_contact_force = 500.
@@ -75,11 +100,11 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             tracking_ang_vel = 0.5
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
-            orientation = -0.0
+            orientation = [-3.0, -0.5]
             torques = -0.00001
             dof_vel = [-0.0002, -0.001]
             dof_acc = [-5e-8, -2.5e-7]
-            base_height = -2.0
+            base_height = [-4.0, -1.0]
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
             feet_air_time = [1.0, 1.3]
             collision = -1.
@@ -188,3 +213,12 @@ class ElSpiderAirFlatCfgPPO(ElSpiderAirRoughCfgPPO):
         load_run = -1
         max_iterations = 3000
         multi_stage_rewards = True
+
+    class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
+        # Symmetry augmentation configuration
+        class symmetry_cfg:
+            use_data_augmentation = True
+            use_mirror_loss = True
+            mirror_loss_coeff = 0.6
+            data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_symmetric_observation_action"
+        

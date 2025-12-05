@@ -86,7 +86,7 @@ def play(args):
     else:
         print("Running at maximum speed (no realtime constraints)")
 
-    for i in range(int(env.max_episode_length)):
+    for i in range(int(env.max_episode_length*10)):
         step_start_time = time.time()
         
         actions = policy(obs.detach())

@@ -226,10 +226,10 @@ class LeggedRobotRewMixin:
         contact_time_decay_scale = 0.5
         
         # Combination weights
-        joint_position_weight = 1.0
-        contact_count_penalty_weight = 1.0
-        contact_stability_weight = 1.0
-        contact_time_weight = 1.0
+        joint_position_weight = 0.1
+        contact_count_penalty_weight = 0.0
+        contact_stability_weight = 0.2
+        contact_time_weight = 0.0
         
         # Small Cmd Mask
         small_command_mask = (torch.norm(self.commands[:, :2], dim=1) < self.speed_min) & \
