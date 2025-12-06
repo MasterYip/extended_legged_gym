@@ -220,6 +220,11 @@ class LeggedRobotRewMixin:
         return self.reset_buf * ~self.time_out_buf
 
     def _reward_stand_still(self):
+        # Penalize motion at zero commands
+        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < self.speed_min)
+
+
+    def _reward_stand_still2(self):
         # Parameters
         contact_count_weight = 0.1
         force_normalization_scale = 50.0
