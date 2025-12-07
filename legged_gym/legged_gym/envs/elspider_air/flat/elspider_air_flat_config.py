@@ -57,7 +57,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
         actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
 
     class init_state(ElSpiderAirRoughCfg.init_state):
-        pos = [0.0, 0.0, 0.4]  # x,y,z [m]
+        pos = [0.0, 0.0, 0.35]  # x,y,z [m]
         default_joint_angles = {  # = target angles [rad] when action = 0.0
             "RF_HAA": 0.0,
             "RM_HAA": 0.0,
@@ -66,12 +66,12 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             "LM_HAA": 0.0,
             "LB_HAA": 0.0,
 
-            "RF_HFE": 0.2,
-            "RM_HFE": 0.2,
-            "RB_HFE": 0.2,
-            "LF_HFE": 0.2,
-            "LM_HFE": 0.2,
-            "LB_HFE": 0.2,
+            "RF_HFE": 0.3,
+            "RM_HFE": 0.3,
+            "RB_HFE": 0.3,
+            "LF_HFE": 0.3,
+            "LM_HFE": 0.3,
+            "LB_HFE": 0.3,
 
             "RF_KFE": 0.3,
             "RM_KFE": 0.3,
@@ -100,13 +100,13 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             tracking_ang_vel = 0.5
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
-            orientation = [-3.0, -3.0]
-            torques = -0.00005
+            orientation = [-5.0, -5.0]
+            torques = -0.0001
             dof_vel = [-0.0002, -0.001]
             dof_acc = [-5e-8, -2.5e-7]
             base_height = [-4.0, -1.0]
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
-            feet_air_time = [0.8, 1.0]
+            feet_air_time = [1.0, 0.2]
             collision = -1.
             feet_stumble = -0.0
             action_rate = [-0.005, -0.01]
@@ -163,17 +163,17 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
 
 
     class commands(ElSpiderAirRoughCfg.commands):
-        curriculum = False
-        max_curriculum = 1.
+        curriculum = True
+        max_curriculum = 1.5
         # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         num_commands = 4
         resampling_time = 4.  # time before command are changed[s]
         heading_command = False  # if true: compute ang vel command from heading error
 
         class ranges(ElSpiderAirRoughCfg.commands.ranges):
-            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
-            lin_vel_y = [-0.6, 0.6]   # min max [m/s]
-            ang_vel_yaw = [-0.6, 0.6]    # min max [rad/s]
+            lin_vel_x = [-0.5, 0.5]  # min max [m/s]
+            lin_vel_y = [-0.8, 0.8]   # min max [m/s]
+            ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
             heading = [-3.14, 3.14]
 
     class domain_rand(ElSpiderAirRoughCfg.domain_rand):
