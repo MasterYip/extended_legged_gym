@@ -106,7 +106,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             dof_acc = [-5e-8, -2.5e-7]
             base_height = [-4.0, -1.0]
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
-            feet_air_time = [1.0, 0.2]
+            feet_air_time = [1.0, 0.5]
             collision = -1.
             feet_stumble = -0.0
             action_rate = [-0.005, -0.01]
