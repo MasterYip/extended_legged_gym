@@ -74,6 +74,7 @@ from .a1.a1_config import A1RoughCfg, A1RoughCfgPPO
 from .elspider_air.elspider import ElSpider, PoseElSpider, FootTrackElSpider
 from .elspider_air.mixed_terrains.elspider_air_rough_config import ElSpiderAirRoughCfg, ElSpiderAirRoughCfgPPO
 from .elspider_air.mixed_terrains.elspider_air_rough_train_config import ElSpiderAirRoughTrainCfg, ElSpiderAirRoughTrainCfgPPO
+from .elspider_air.mixed_terrains.elspider_air_rough_train2_config import ElSpiderAirRoughTrain2Cfg, ElSpiderAirRoughTrain2CfgPPO
 from .elspider_air.mixed_terrains.elspider_air_rough_raycast_config import ElSpiderAirRoughRaycastCfg, ElSpiderAirRoughRaycastCfgPPO
 from .elspider_air.flat.elspider_air_flat_config import ElSpiderAirFlatCfg, ElSpiderAirFlatCfgPPO
 from .elspider_air.flat.pose_elspider_air_flat_config import PoseElSpiderAirFlatCfg, PoseElSpiderAirFlatCfgPPO
@@ -152,7 +153,7 @@ task_registry.register("cassie_traj_grad_sampling", CassieTrajGradSampling,
                        CassieTrajGradSamplingCfg(), CassieTrajGradSamplingCfgPPO())
 
 
-task_registry.register("elspider_air_rough", ElSpider, ElSpiderAirRoughTrainCfg(), ElSpiderAirRoughTrainCfgPPO())
+task_registry.register("elspider_air_rough", ElSpider, ElSpiderAirRoughTrain2Cfg(), ElSpiderAirRoughTrain2CfgPPO())
 task_registry.register("elspider_air_rough_raycast", ElSpiderRayCast,
                        ElSpiderAirRoughRaycastCfg(), ElSpiderAirRoughRaycastCfgPPO())
 task_registry.register("elspider_air_flat", ElSpider, ElSpiderAirFlatCfg(), ElSpiderAirFlatCfgPPO())
