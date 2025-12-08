@@ -108,8 +108,8 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/el_mini/urdf/el_mini.urdf"
         name = "elspider_air"
         foot_name = "FOOT"
-        penalize_contacts_on = ["THIGH", "HIP"]  # "SHANK" may collide with the ground through foot
-        terminate_after_contacts_on = ["trunk"]
+        penalize_contacts_on = ["THIGH", "HIP", "trunk"]  # "SHANK" may collide with the ground through foot
+        terminate_after_contacts_on = []
         self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
         flip_visual_attachments = False  # Some .obj meshes must be flipped from y-up to z-up
 
@@ -258,5 +258,5 @@ class ElSpiderAirRoughTrain2CfgPPO(LeggedRobotCfgPPO):
             use_data_augmentation = True
             use_mirror_loss = True
             mirror_loss_coeff = 0.6
-            data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_symmetric_observation_action"
+            data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_elair_xysym_obs_act"
         

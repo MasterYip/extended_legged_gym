@@ -202,5 +202,5 @@ class ElSpiderAirRoughTrainCfgPPO(LeggedRobotCfgPPO):
     #         use_data_augmentation = False
     #         use_mirror_loss = True
     #         mirror_loss_coeff = 0.6
-    #         data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_symmetric_observation_action"
+    #         data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_elair_xsym_obs_act"
         
