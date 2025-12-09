@@ -45,7 +45,7 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
         mesh_type = 'trimesh'  # "heightfield" # none, plane, heightfield or trimesh, confined_trimesh
         horizontal_scale = 0.1  # [m]
         vertical_scale = 0.005  # [m]
-        border_size = 25  # [m] NOTE: too large will cause segmentation fault
+        border_size = 15  # [m] NOTE: margin of the terrain, too large will cause segmentation fault
         curriculum = True
         static_friction = 1.0
         dynamic_friction = 1.0
@@ -58,9 +58,9 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
         selected = False  # select a unique terrain type and pass all arguments
         terrain_kwargs = None  # Dict of arguments for selected terrain
         max_init_terrain_level = 0  # starting curriculum state
-        terrain_length = 6.
-        terrain_width = 6.
-        num_rows = 12  # number of terrain rows (levels)
+        terrain_length = 8.
+        terrain_width = 8.
+        num_rows = 10  # number of terrain rows (levels)
         num_cols = 8  # number of terrain cols (types)
         difficulty_scale = 1.0
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
@@ -130,8 +130,8 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
     # Reward V1
     class rewards(LeggedRobotCfg.rewards):
         max_contact_force = 500.
-        base_height_target = 0.28
-        only_positive_rewards = True
+        base_height_target = 0.24
+        only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
         # Stage 1: Correct DOF and FootZ positions / Prevent Slip
@@ -142,20 +142,21 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
 
         class scales:
             termination = -0.0
-            tracking_lin_vel = 1.0
-            tracking_ang_vel = 0.5
+            tracking_lin_vel = 2.0
+            tracking_ang_vel = 1.0
             lin_vel_z = -0.5
             ang_vel_xy = -0.05
             orientation = [-2.0, -1.0]
-            torques = -0.0001
+            torques = -0.00003
             dof_vel = [-0.0002, -0.001]
             dof_acc = [-5e-8, -2.5e-7]
             # base_height = [-1.0, -0.0]
             base_foot_height = -5.0
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
             feet_air_time = [1.0, 0.2]
-            collision = -3.0
-            feet_stumble = -1.5
+            collision = -1.0
+            # feet_stumble = -1.0
+            feet_stumble_liftup = 1.0
             action_rate = [-0.005, -0.01]
             # stand_still = -0.4  # May affect spot turning
             dof_pos_limits = -1.0
