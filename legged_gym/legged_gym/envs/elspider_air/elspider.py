@@ -335,6 +335,13 @@ class ElSpider(LeggedRobot):
                                             cfg)
 
         cfg = AsyncGaitSchedulerCfg()
+        # Make sure shanks are perpendicular to the ground
+        cfg.dof_align_sets = [['RF_HFE', 'RF_KFE'],
+                    ['RM_HFE', 'RM_KFE'],
+                    ['RB_HFE', 'RB_KFE'],
+                    ['LF_HFE', 'LF_KFE'],
+                    ['LM_HFE', 'LM_KFE'],
+                    ['LB_HFE', 'LB_KFE'],]
         self.async_gait_scheduler = AsyncGaitScheduler(self.height_samples,
                                                        self.base_quat,
                                                        self.base_lin_vel,
