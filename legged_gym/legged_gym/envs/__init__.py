@@ -116,6 +116,11 @@ from .anymal_c.mixed_terrains.anymal_c_rough_teacher_config import AnymalCRoughT
 from .anymal_c.mixed_terrains.anymal_c_rough_student_config import AnymalCRoughStudentCfg, AnymalCRoughStudentCfgPPO
 from .anymal_c.anymal import AnymalStudent
 
+from .el_4090.el_4090 import EL_4090
+from .el_4090.el_4090_config import EL_4090_Cfg,EL_4090_PPO
+from .el_4090.el_4090_config_v2 import El4090Cfg, El4090CfgPPO
+
+
 task_registry.register("anymal_c_rough", Anymal, AnymalCRoughCfg(), AnymalCRoughCfgPPO())
 task_registry.register("anymal_c_flat", Anymal, AnymalCFlatCfg(), AnymalCFlatCfgPPO())
 task_registry.register("pose_anymal_c_flat", PoseAnymal, PoseAnymalCFlatCfg(), PoseAnymalCFlatCfgPPO())
@@ -201,3 +206,5 @@ task_registry.register("anymal_c_rough_student", AnymalStudent, AnymalCRoughStud
 # Register franka environments
 task_registry.register("franka", Franka, FrankaCfg(), FrankaCfgPPO())
 task_registry.register("franka_batch_rollout", FrankaBatchRollout, FrankaBatchRolloutCfg(), FrankaBatchRolloutCfgPPO)
+
+task_registry.register("el_4090", ElSpider, El4090Cfg(), El4090CfgPPO())
