@@ -31,7 +31,7 @@
 from legged_gym.envs import ElSpiderAirRoughCfg, ElSpiderAirRoughCfgPPO
 
 
-class El4090Cfg(ElSpiderAirRoughCfg):
+class El4090SpiderCfg(ElSpiderAirRoughCfg):
     class env(ElSpiderAirRoughCfg.env):
         num_observations = 66
 
@@ -117,7 +117,7 @@ class El4090Cfg(ElSpiderAirRoughCfg):
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
             orientation = [-5.0, -5.0]
-            torques = [-0.00005, -0.0001]
+            torques = [-0.00003, -0.00006]
             dof_vel = [-0.0002, -0.001]
             dof_acc = [-2e-8, -2.5e-7]
             base_height = [-4.0, -1.0]
@@ -214,7 +214,7 @@ class El4090Cfg(ElSpiderAirRoughCfg):
             gravity = 0.05
             height_measurements = 0.1
 
-class El4090CfgPPO(ElSpiderAirRoughCfgPPO):
+class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
     class policy(ElSpiderAirRoughCfgPPO.policy):
         actor_hidden_dims = [128, 64, 32]
         critic_hidden_dims = [128, 64, 32]
