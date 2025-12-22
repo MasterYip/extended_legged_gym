@@ -225,7 +225,7 @@ class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
 
     class runner (ElSpiderAirRoughCfgPPO.runner):
         run_name = ''
-        experiment_name = 'flat_elspider_air'
+        experiment_name = 'flat_el4090_spider'
         load_run = -1
         max_iterations = 3000
         multi_stage_rewards = True
