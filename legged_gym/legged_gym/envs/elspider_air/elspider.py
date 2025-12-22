@@ -499,12 +499,8 @@ class ElSpider(LeggedRobot):
         sync_all_reward = sum(sync_all_pairs) / len(sync_all_pairs)
         
         # Determine command magnitude
-        if self.cfg.commands.heading_command:
-            command_magnitude = torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                               torch.abs(self.commands[:, 3]) >= self.speed_min / 2)
-        else:
-            command_magnitude = torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                               torch.abs(self.commands[:, 2]) > self.speed_min)
+        command_magnitude = torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
+                                            torch.abs(self.commands[:, 2]) > self.speed_min)
         
         # Use gait reward for large commands, sync all legs reward for small commands
         re = torch.where(command_magnitude, 

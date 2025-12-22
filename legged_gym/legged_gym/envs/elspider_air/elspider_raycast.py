@@ -285,12 +285,9 @@ class ElSpiderRayCast(LeggedRobotDepth):
         sync_reward = (sync_group1 + sync_group2) / 2
         
         re = sync_reward + async_reward
-        if self.cfg.commands.heading_command:
-            re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                    torch.abs(self.commands[:, 3]) >= self.speed_min/ 2)
-        else:
-            re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                    torch.abs(self.commands[:, 2]) >= self.speed_min/ 2)
+
+        re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
+                                torch.abs(self.commands[:, 2]) >= self.speed_min/ 2)
         return re
     
     def check_termination(self):

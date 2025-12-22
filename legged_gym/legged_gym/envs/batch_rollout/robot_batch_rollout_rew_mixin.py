@@ -166,12 +166,9 @@ class RobotBatchRolloutRewMixin:
         async_rr_fr = self._async_reward_func(3, 1)
         async_reward = (async_fl_fr + async_fl_rl + async_rr_rl + async_rr_fr) / 4
         re = sync_reward + async_reward
-        if self.cfg.commands.heading_command:
-            re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                    torch.abs(self.commands[:, 3]) >= self.speed_min/ 2)
-        else:
-            re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
-                                    torch.abs(self.commands[:, 2]) >= self.speed_min/ 2)
+
+        re = re * torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
+                                torch.abs(self.commands[:, 2]) >= self.speed_min/ 2)
         return re
     
     def _sync_reward_func(self, foot_0: int, foot_1: int, max_err=2) -> torch.Tensor:

@@ -120,17 +120,17 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
         # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         num_commands = 4
         resampling_time = 4.  # time before command are changed[s]
-        heading_command = False  # if true: compute ang vel command from heading error
+        heading_command = True  # if true: compute ang vel command from heading error
         class ranges(LeggedRobotCfg.commands.ranges):
             lin_vel_x = [-1.0, 1.0]  # min max [m/s]
-            lin_vel_y = [-0.8, 0.8]   # min max [m/s]
-            ang_vel_yaw = [-1.5, 1.5]    # min max [rad/s]
+            lin_vel_y = [-0.6, 0.6]   # min max [m/s]
+            ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
             heading = [-3.14, 3.14]
 
     # Reward V1
     class rewards(LeggedRobotCfg.rewards):
         max_contact_force = 500.
-        base_height_target = 0.30
+        base_height_target = 0.27
         only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
@@ -146,18 +146,18 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
             tracking_ang_vel = 0.5
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
-            orientation = [-5.0, -1.0]
-            torques = -0.0001
+            orientation = [-3.0, -1.0]
+            torques = [-0.00002, -0.0001]
             dof_vel = [-0.0002, -0.001]
-            dof_acc = [-5e-8, -2.5e-7]
-            base_height = [-4.0, -3.0]
+            dof_acc = [-3e-8, -2.5e-7]
+            base_height = [-4.0, -2.0]
             # base_foot_height = -5.0
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
             feet_air_time = [1.0, 1.0]
             collision = -1.
-            feet_stumble = -1.0
+            feet_stumble = [-0.3, -1.0]
             feet_stumble_liftup = 2.0
-            action_rate = [-0.005, -0.01]
+            action_rate = [-0.003, -0.01]
             # stand_still = -0.4  # May affect spot turning
             dof_pos_limits = -1.0
             feet_contact_forces = [-0.05, -0.1]
@@ -165,7 +165,7 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
             # gait_scheduler = -18.0
             # async_gait_scheduler = -0.5  
             shank_perp2ground = -0.5 # Shanks to be perpendicular to the ground
-            gait_2_step = [-3.0, -0.0]
+            gait_2_step = [-2.0, -0.0]
 
 
     # Reward V0
