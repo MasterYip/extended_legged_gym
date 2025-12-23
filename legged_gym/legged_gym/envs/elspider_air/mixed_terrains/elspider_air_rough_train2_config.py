@@ -64,7 +64,7 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
         num_cols = 8  # number of terrain cols (types)
         difficulty_scale = 0.6
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
-        terrain_proportions = [0.1, 0.1, 0.3, 0.3, 0.2]
+        terrain_proportions = [0.0, 0.1, 0.3, 0.2, 0.4]
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
 
@@ -115,11 +115,11 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
         flip_visual_attachments = False  # Some .obj meshes must be flipped from y-up to z-up
 
     class commands(LeggedRobotCfg.commands):
-        curriculum = True
+        curriculum = False
         max_curriculum = 1.5
         # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         num_commands = 4
-        resampling_time = 4.  # time before command are changed[s]
+        resampling_time = 5.  # time before command are changed[s]
         heading_command = True  # if true: compute ang vel command from heading error
         class ranges(LeggedRobotCfg.commands.ranges):
             lin_vel_x = [-1.0, 1.0]  # min max [m/s]
@@ -137,7 +137,7 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
         # Stage 1: Correct DOF and FootZ positions / Prevent Slip
         multi_stage_rewards = True  # if true, reward scales should be list
         reward_stage_threshold = 6.0
-        reward_min_stage = 0  # Start from 0
+        reward_min_stage = 1  # Start from 0
         reward_max_stage = 1
 
         class scales:
@@ -156,7 +156,7 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
             feet_air_time = [1.0, 1.0]
             collision = -1.
             feet_stumble = [-0.3, -1.0]
-            feet_stumble_liftup = 2.0
+            feet_stumble_liftup = 5.0
             action_rate = [-0.003, -0.01]
             # stand_still = -0.4  # May affect spot turning
             dof_pos_limits = -1.0
@@ -164,7 +164,7 @@ class ElSpiderAirRoughTrain2Cfg(LeggedRobotCfg):
             
             # gait_scheduler = -18.0
             # async_gait_scheduler = -0.5  
-            shank_perp2ground = -0.5 # Shanks to be perpendicular to the ground
+            shank_perp2ground = [-0.3, -0.1] # Shanks to be perpendicular to the ground
             gait_2_step = [-2.0, -0.0]
 
 
