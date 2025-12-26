@@ -60,10 +60,10 @@ def play(args):
     policy = ppo_runner.get_inference_policy(device=env.device)
     
     # export policy as a jit module (used to run it from C++)
-    # if EXPORT_POLICY:
-    #     path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'policies')
-    #     export_policy_as_jit(ppo_runner.alg.actor_critic, path)
-    #     print('Exported policy as jit script to: ', path)
+    if EXPORT_POLICY:
+        path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'policies')
+        export_policy_as_jit(ppo_runner.alg.policy, path)
+        print('Exported policy as jit script to: ', path)
 
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging
@@ -75,7 +75,7 @@ def play(args):
     camera_direction = np.array(env_cfg.viewer.lookat) - np.array(env_cfg.viewer.pos)
     img_idx = 0
 
-    for i in range(10*int(env.max_episode_length)):
+    for i in range(int(env.max_episode_length)):
         time.sleep(env.dt)  # wait for the next step
         actions = policy(obs.detach())
         obs, _, rews, dones, infos = env.step(actions.detach())

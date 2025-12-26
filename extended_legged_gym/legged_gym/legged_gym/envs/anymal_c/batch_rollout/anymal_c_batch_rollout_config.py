@@ -81,7 +81,7 @@ class AnymalCBatchRolloutCfg(RobotBatchRolloutPerceptCfg):
         use_terrain_obj = False  # use TerrainObj class to create terrain
         mesh_type = 'plane'  # Options: plane, heightfield, trimesh
         # path to the terrain file
-        terrain_file = "/home/chen/extended_legged_gym/legged_gym/resources/terrains/confined/confined_terrain.obj"
+        terrain_file = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"
         measure_heights = False
         curriculum = False
         max_init_terrain_level = 2  # starting curriculum state

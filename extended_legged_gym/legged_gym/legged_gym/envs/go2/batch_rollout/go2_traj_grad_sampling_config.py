@@ -93,7 +93,7 @@ class Go2TrajGradSamplingCfg(RobotTrajGradSamplingCfg):
         use_terrain_obj = False  # use TerrainObj class to create terrain
         mesh_type = 'plane'
         # path to the terrain file
-        terrain_file = "/home/chen/extended_legged_gym/legged_gym/resources/terrains/confined/confined_terrain.obj"
+        terrain_file = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"
         measure_heights = False
         curriculum = False
         # Origin generation method
@@ -109,7 +109,7 @@ class Go2TrajGradSamplingCfg(RobotTrajGradSamplingCfg):
         ray_pattern = "spherical"    # Options: single, grid, cone, spherical
         num_rays = 10           # Number of rays for cone pattern
         ray_angle = 30.0        # Cone angle in degrees
-        terrain_file = "/home/chen/extended_legged_gym/legged_gym/resources/terrains/confined/confined_terrain.obj"       # Path to terrain mesh file
+        terrain_file = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"       # Path to terrain mesh file
         max_distance = 10.0     # Maximum ray cast distance
         attach_yaw_only = False  # If True, only yaw rotation is applied to rays
         offset_pos = [0.0, 0.0, 0.0]  # Offset from robot base
@@ -121,7 +121,7 @@ class Go2TrajGradSamplingCfg(RobotTrajGradSamplingCfg):
     class sdf(RobotTrajGradSamplingCfg.sdf):
         enable_sdf = False      # Set to True to enable SDF calculations
         # Paths to mesh files for SDF calculation
-        mesh_paths = ["/home/chen/extended_legged_gym/legged_gym/resources/terrains/confined/confined_terrain.obj"]
+        mesh_paths = ["/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"]
         max_distance = 10.0     # Maximum SDF distance to compute
         enable_caching = True   # Enable SDF query caching for performance
         update_freq = 5         # Update SDF values every N steps

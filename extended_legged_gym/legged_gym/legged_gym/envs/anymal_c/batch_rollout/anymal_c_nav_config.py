@@ -86,7 +86,7 @@ class AnymalCNavCfg(RobotBatchRolloutNavCfg):
         use_terrain_obj = False  # use TerrainObj class to create terrain
         mesh_type = 'confined_trimesh'  # Options: plane, heightfield, trimesh
         # path to the terrain file
-        terrain_file = "/home/chen/extended_legged_gym/legged_gym/resources/terrains/confined/confined_terrain.obj"
+        terrain_file = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"
         measure_heights = False
         curriculum = False
         difficulty_scale = 0.0
