@@ -144,19 +144,28 @@ python legged_gym/scripts/play.py --task=foot_track_elspider_air_flat --num_envs
 **Training Tip:**
 IMPORTANT
 
-1. Pretrain model on flat terrain to learn correct gait.
-2. Use the pretrained model to train on rough terrain.
+Use multi-stage training to achieve better performance. Stage0 focuses on basic walking skills on `plane`, while Stage1 introduces rough terrain for fine-tuning.
 
-**Training Epoch:** ~500
+- Stage0: Pretrain model on flat terrain to learn basic walking skills (gaits, etc.).
+- Stage1: Use the pretrained model to finetune on rough terrain.
 
 **Training Profile:**
 
 - 100 epoch: velocity tracking reward starts to grow up
 - 100-500 epoch: terrain level grows up, rew_ang_vel~0.19, rew_lin_vel~0.57
 
+**Single Stage(Test only)**
 ```bash
 python legged_gym/scripts/train.py --task=elspider_air_rough --num_envs=4096 --resume --headless
 python legged_gym/scripts/play.py --task=elspider_air_rough --num_envs=48 --checkpoint=-1
+```
+
+**Multi Stage**
+```bash
+# Train Stage 0 for ~550 epochs
+python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage0 --num_envs=4096 --headless
+python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage1 --num_envs=4096 --headless --resume
+python legged_gym/scripts/play.py --task=elspider_air_rough_multi_stage1 --num_envs=48 --checkpoint=-1
 ```
 
 ## ElSpiderAir Rough RayCast

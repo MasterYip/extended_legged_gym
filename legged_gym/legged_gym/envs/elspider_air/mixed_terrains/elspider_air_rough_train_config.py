@@ -30,7 +30,12 @@
 
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 
+#############################################################
+# Multi Stage TrainingConfig for ElSpiderAir on Rough Terrain
+#############################################################
 
+
+# Basic
 class ElSpiderAirRoughTrainCfg(LeggedRobotCfg):
     class env(LeggedRobotCfg.env):
         num_envs = 4096
@@ -166,58 +171,6 @@ class ElSpiderAirRoughTrainCfg(LeggedRobotCfg):
             # async_gait_scheduler = -0.5  
             shank_perp2ground = [-0.3, -0.1] # Shanks to be perpendicular to the ground
             gait_2_step = [-2.0, -0.0]
-
-
-    # Reward V0
-    # class rewards(LeggedRobotCfg.rewards):
-    #     max_contact_force = 500.
-    #     base_height_target = 0.28
-    #     only_positive_rewards = True
-    #     # Multi-stage
-    #     # Stage 0: Learn to walk with tripod gait
-    #     # Stage 1: Correct DOF and FootZ positions / Prevent Slip
-    #     multi_stage_rewards = True  # if true, reward scales should be list
-    #     reward_stage_threshold = 6.0
-    #     reward_min_stage = 0  # Start from 0
-    #     reward_max_stage = 1
-
-    #     class scales:
-    #         termination = -5.0
-    #         tracking_lin_vel = 1.0
-    #         tracking_ang_vel = 0.5
-    #         lin_vel_z = -2.0
-    #         ang_vel_xy = -0.05
-    #         orientation = -5.0
-    #         torques = -0.00001
-    #         dof_vel = -0.
-    #         dof_acc = -5e-8
-    #         base_height = -8.0
-    #         feet_slip = [-0.0, -0.4]  # Before feet_air_time
-    #         feet_air_time = 0.8
-    #         collision = -1.
-    #         feet_stumble = -0.0
-    #         action_rate = -0.001
-    #         stand_still = -0.
-    #         dof_pos_limits = -1.0
-            
-    #         # gait_scheduler = -18.0
-    #         # async_gait_scheduler = -0.4
-    #         gait_2_step = -5.0
-    #         # feet_contact_forces = -0.01
-
-    #     class async_gait_scheduler:
-    #         # Reward for the async gait scheduler
-    #         dof_align = 0.5
-    #         dof_nominal_pos = [0.1, 0.2]
-    #         reward_foot_z_align = [0.2, 0.05]
-
-    #     class raibert_planner:
-    #         planner_type = 0
-    #         # Reward for the raibert_planner_tracking
-    #         base_pos_track = 1.0
-    #         base_quat_track = 0.5
-    #         foot_pos_track = 0.3
-
     class domain_rand(LeggedRobotCfg.domain_rand):
         # on ground planes the friction combination mode is averaging, i.e total friction = (foot_friction + 1.)/2.
         randomize_friction = True
@@ -239,6 +192,40 @@ class ElSpiderAirRoughTrainCfg(LeggedRobotCfg):
             gravity = 0.05
             height_measurements = 0.1
 
+# Stage0: Plane with Gait
+class ElSpiderAirRoughStage0Cfg(ElSpiderAirRoughTrainCfg):
+    class terrain(ElSpiderAirRoughTrainCfg.terrain):
+        mesh_type = 'plane'  # none, plane, heightfield or trimesh, confined_trimesh
+
+    class rewards(ElSpiderAirRoughTrainCfg.rewards):
+        reward_min_stage = 0  # Start from 0
+
+    class commands(ElSpiderAirRoughTrainCfg.commands):
+        class ranges(LeggedRobotCfg.commands.ranges):
+            lin_vel_x = [-1.2, 1.2]  # min max [m/s]
+            lin_vel_y = [-0.6, 0.6]   # min max [m/s]
+            ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
+            heading = [-3.14, 3.14]
+
+# Stage1: Rough Terrain
+class ElSpiderAirRoughStage1Cfg(ElSpiderAirRoughTrainCfg):
+    class terrain(ElSpiderAirRoughTrainCfg.terrain):
+        mesh_type = 'trimesh'  # none, plane, heightfield or trimesh, confined_trimesh
+
+    class rewards(ElSpiderAirRoughTrainCfg.rewards):
+        reward_min_stage = 1  # Start from 0
+    
+    class commands(ElSpiderAirRoughTrainCfg.commands):
+        curriculum = False
+        max_curriculum = 1.5
+        heading_command = True  # if true: compute ang vel command from heading error
+        class ranges(LeggedRobotCfg.commands.ranges):
+            lin_vel_x = [-1.2, 1.2]  # min max [m/s]
+            lin_vel_y = [-0.6, 0.6]   # min max [m/s]
+            ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
+            heading = [-3.14, 3.14]
+
+
 class ElSpiderAirRoughTrainCfgPPO(LeggedRobotCfgPPO):
 
     class policy(LeggedRobotCfgPPO.policy):
@@ -251,7 +238,7 @@ class ElSpiderAirRoughTrainCfgPPO(LeggedRobotCfgPPO):
 
     class runner(LeggedRobotCfgPPO.runner):
         run_name = ''
-        experiment_name = 'rough_elspider_air'
+        experiment_name = 'rough_elair_multi_stage'
         load_run = -1
         max_iterations = 15000  # number of policy updates
 
