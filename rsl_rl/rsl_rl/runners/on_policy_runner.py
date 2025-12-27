@@ -471,8 +471,8 @@ class OnPolicyRunner:
             if self.cfg.get("multi_stage_rewards", False) and len(rewbuffer) > 0 and\
                     self.env.update_reward_scales(statistics.mean(rewbuffer)):
                 print("Updated reward scales to ", self.env.reward_scales_stage)
-                rewbuffer.clear()
-                cur_reward_sum *= 0.0
+                # rewbuffer.clear()
+                # cur_reward_sum *= 0.0
 
             # Clear episode infos
             ep_infos.clear()
