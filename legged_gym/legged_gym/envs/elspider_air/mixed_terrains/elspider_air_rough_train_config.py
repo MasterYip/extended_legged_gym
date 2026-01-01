@@ -201,7 +201,7 @@ class ElSpiderAirRoughStage0Cfg(ElSpiderAirRoughTrainCfg):
         reward_min_stage = 0  # Start from 0
 
     class commands(ElSpiderAirRoughTrainCfg.commands):
-        class ranges(LeggedRobotCfg.commands.ranges):
+        class ranges(ElSpiderAirRoughTrainCfg.commands.ranges):
             lin_vel_x = [-1.2, 1.2]  # min max [m/s]
             lin_vel_y = [-0.6, 0.6]   # min max [m/s]
             ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
@@ -219,7 +219,7 @@ class ElSpiderAirRoughStage1Cfg(ElSpiderAirRoughTrainCfg):
         curriculum = False
         max_curriculum = 1.5
         heading_command = True  # if true: compute ang vel command from heading error
-        class ranges(LeggedRobotCfg.commands.ranges):
+        class ranges(ElSpiderAirRoughTrainCfg.commands.ranges):
             lin_vel_x = [-1.2, 1.2]  # min max [m/s]
             lin_vel_y = [-0.6, 0.6]   # min max [m/s]
             ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
@@ -233,9 +233,6 @@ class ElSpiderAirRoughTrainCfgPPO(LeggedRobotCfgPPO):
         critic_hidden_dims = [256, 128, 64]
         activation = 'elu'  # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
 
-    class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.01
-
     class runner(LeggedRobotCfgPPO.runner):
         run_name = ''
         experiment_name = 'rough_elair_multi_stage'
@@ -245,6 +242,7 @@ class ElSpiderAirRoughTrainCfgPPO(LeggedRobotCfgPPO):
         multi_stage_rewards = True
         
     class algorithm(LeggedRobotCfgPPO.algorithm):
+        entropy_coef = 0.01
         # Symmetry augmentation configuration
         class symmetry_cfg:
             use_data_augmentation = True
