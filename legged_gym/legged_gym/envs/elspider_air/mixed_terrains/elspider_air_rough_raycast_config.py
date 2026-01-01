@@ -169,7 +169,7 @@ class ElSpiderAirRoughRaycastCfg(ElSpiderAirRoughTrainCfg):
         resampling_time = 5.  # time before command are changed[s]
         heading_command = True  # if true: compute ang vel command from heading error
         class ranges(ElSpiderAirRoughTrainCfg.commands.ranges):
-            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
+            lin_vel_x = [-1.2, 1.2]  # min max [m/s]
             lin_vel_y = [-0.6, 0.6]   # min max [m/s]
             ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
             heading = [-3.14, 3.14]
@@ -337,12 +337,12 @@ class ElSpiderAirRoughRaycastCfgPPO(ElSpiderAirRoughTrainCfgPPO):
 
         multi_stage_rewards = True
         
-    class algorithm(ElSpiderAirRoughTrainCfgPPO.algorithm):
+    class algorithm(LeggedRobotCfgPPO.algorithm):
         entropy_coef = 0.01
         # Symmetry augmentation configuration
-        class symmetry_cfg:
-            use_data_augmentation = False
-            use_mirror_loss = False
-            mirror_loss_coeff = 0.6
-            data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_elair_xysym_obs_act"
+        # class symmetry_cfg:
+        #     use_data_augmentation = True
+        #     use_mirror_loss = True
+        #     mirror_loss_coeff = 0.6
+        #     data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_elair_xysym_obs_act"
         
