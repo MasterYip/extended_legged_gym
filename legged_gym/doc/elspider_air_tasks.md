@@ -59,7 +59,22 @@ python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage1 --num_
 python legged_gym/scripts/play.py --task=elspider_air_rough_multi_stage1 --num_envs=48 --checkpoint=-1
 ```
 
-**Distillation**
+**Distillation (Teacher-Student)**
+
+Train a student policy using distillation from a trained teacher model. The teacher uses privileged terrain information (height scans), while the student only uses proprioceptive history.
+
+```bash
+# First, train a teacher model (use multi-stage training for best results)
+python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage0 --num_envs=4096 --headless
+python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage1 --num_envs=4096 --headless --resume
+
+# Update teacher_model_path in elspider_air_rough_student_config.py with the trained teacher checkpoint
+# Then train the student policy via distillation
+python legged_gym/scripts/train.py --task=elspider_air_rough_student --num_envs=4096 --headless
+
+# Evaluate the student policy
+python legged_gym/scripts/play.py --task=elspider_air_rough_student --num_envs=48 --checkpoint=-1
+```
 
 
 ### ElSpiderAir Rough RayCast

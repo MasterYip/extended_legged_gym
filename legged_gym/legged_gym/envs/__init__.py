@@ -71,11 +71,13 @@ from .cassie.cassie_traj_grad_sampling import CassieTrajGradSampling
 from .cassie.cassie_traj_grad_sampling_config import CassieTrajGradSamplingCfg, CassieTrajGradSamplingCfgPPO
 from .a1.a1_config import A1RoughCfg, A1RoughCfgPPO
 
-from .elspider_air.elspider import ElSpider, PoseElSpider, FootTrackElSpider
+from .elspider_air.elspider import ElSpider, ElSpiderStudent
+from .elspider_air.elspider_tasks import PoseElSpider, FootTrackElSpider
 from .elspider_air.mixed_terrains.elspider_air_rough_config import ElSpiderAirRoughCfg, ElSpiderAirRoughCfgPPO
 from .elspider_air.mixed_terrains.elspider_air_rough_train_config import ElSpiderAirRoughStage0Cfg, ElSpiderAirRoughStage1Cfg, ElSpiderAirRoughTrainCfg, ElSpiderAirRoughTrainCfgPPO
 # from .elspider_air.mixed_terrains.elspider_air_rough_train2_config import ElSpiderAirRoughTrain2Cfg, ElSpiderAirRoughTrain2CfgPPO
 from .elspider_air.mixed_terrains.elspider_air_rough_raycast_config import ElSpiderAirRoughRaycastCfg, ElSpiderAirRoughRaycastCfgPPO
+from .elspider_air.mixed_terrains.elspider_air_rough_student_config import ElSpiderAirRoughStudentCfg, ElSpiderAirRoughStudentCfgPPO
 from .elspider_air.flat.elspider_air_flat_config import ElSpiderAirFlatCfg, ElSpiderAirFlatCfgPPO
 from .elspider_air.flat.pose_elspider_air_flat_config import PoseElSpiderAirFlatCfg, PoseElSpiderAirFlatCfgPPO
 from .elspider_air.flat.foot_track_elspider_air_flat_config import FootTrackElSpiderAirFlatCfg, FootTrackElSpiderAirFlatCfgPPO
@@ -199,6 +201,7 @@ task_registry.register("cyber2_walk", CyberWalkEnv, CyberWalkConfig(), CyberWalk
 # Register teacher-student tasks
 task_registry.register("anymal_c_rough_teacher", Anymal, AnymalCRoughTeacherCfg(), AnymalCRoughTeacherCfgPPO())
 task_registry.register("anymal_c_rough_student", AnymalStudent, AnymalCRoughStudentCfg(), AnymalCRoughStudentCfgPPO())
+task_registry.register("elspider_air_rough_student", ElSpiderStudent, ElSpiderAirRoughStudentCfg(), ElSpiderAirRoughStudentCfgPPO())
 
 # Register franka environments
 task_registry.register("franka", Franka, FrankaCfg(), FrankaCfgPPO())
