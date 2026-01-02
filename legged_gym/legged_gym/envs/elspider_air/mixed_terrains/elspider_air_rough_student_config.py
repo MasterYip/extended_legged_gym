@@ -60,6 +60,7 @@ class ElSpiderAirRoughStudentCfg(ElSpiderAirRoughStage1Cfg):
 
     class rewards(ElSpiderAirRoughStage1Cfg.rewards):
         # Keep same reward settings as base config
+        reward_min_stage = 0
         pass
 
 

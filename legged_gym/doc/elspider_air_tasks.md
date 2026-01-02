@@ -70,6 +70,7 @@ python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage1 --num_
 
 # Update teacher_model_path in elspider_air_rough_student_config.py with the trained teacher checkpoint
 # Then train the student policy via distillation
+# PROBLEM: The distilled policy are not good judging from data, but it can walk in terrain.
 python legged_gym/scripts/train.py --task=elspider_air_rough_student --num_envs=4096 --headless
 
 # Evaluate the student policy
