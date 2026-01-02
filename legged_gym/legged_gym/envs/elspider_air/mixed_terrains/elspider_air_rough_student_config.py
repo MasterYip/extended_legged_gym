@@ -29,12 +29,12 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
-from .elspider_air_rough_train_config import ElSpiderAirRoughTrainCfg
+from .elspider_air_rough_train_config import ElSpiderAirRoughStage1Cfg, ElSpiderAirRoughStage1Cfg
 
 
-class ElSpiderAirRoughStudentCfg(ElSpiderAirRoughTrainCfg):
+class ElSpiderAirRoughStudentCfg(ElSpiderAirRoughStage1Cfg):
 
-    class env(ElSpiderAirRoughTrainCfg.env):
+    class env(ElSpiderAirRoughStage1Cfg.env):
         # Student observations: 66 (proprio) * 3 (history) = 198
         num_observations = 198
         # Privileged observations for distillation: 66 (proprio) + 187 (height scan) = 253
@@ -43,7 +43,7 @@ class ElSpiderAirRoughStudentCfg(ElSpiderAirRoughTrainCfg):
         history_length = 3
         num_actions = 18
 
-    class terrain(ElSpiderAirRoughTrainCfg.terrain):
+    class terrain(ElSpiderAirRoughStage1Cfg.terrain):
         # Enable terrain height measurements for privileged observations
         mesh_type = 'trimesh'
         measure_heights = True
@@ -58,7 +58,7 @@ class ElSpiderAirRoughStudentCfg(ElSpiderAirRoughTrainCfg):
         dynamic_friction = 1.0
         restitution = 0.
 
-    class rewards(ElSpiderAirRoughTrainCfg.rewards):
+    class rewards(ElSpiderAirRoughStage1Cfg.rewards):
         # Keep same reward settings as base config
         pass
 
@@ -69,7 +69,7 @@ class ElSpiderAirRoughStudentCfgPPO(LeggedRobotCfgPPO):
 
     class policy(LeggedRobotCfgPPO.policy):
         init_noise_std = 1.0
-        teacher_hidden_dims = [512, 256, 128]
+        teacher_hidden_dims = [256, 128, 64]
         student_hidden_dims = [512, 256, 128]
         activation = 'elu'
 
@@ -85,10 +85,10 @@ class ElSpiderAirRoughStudentCfgPPO(LeggedRobotCfgPPO):
         policy_class_name = 'StudentTeacher'  # Use StudentTeacher for distillation
         algorithm_class_name = 'Distillation'  # Use Distillation instead of PPO
         num_steps_per_env = 24
-        max_iterations = 1500
+        max_iterations = 15000
 
         # Teacher model path (update this with actual teacher model path)
-        teacher_model_path = ""  # TODO: Set path to trained ElSpiderAir teacher model
+        teacher_model_path = "/home/user/CodeSpace/Python/PredictiveDiffusionPlanner_Dev/extended_legged_gym/legged_gym/logs/rough_elair_multi_stage/Dec30_12-30-25_/model_10400.pt"  # TODO: Set path to trained ElSpiderAir teacher model
 
         # Logging
         save_interval = 50
