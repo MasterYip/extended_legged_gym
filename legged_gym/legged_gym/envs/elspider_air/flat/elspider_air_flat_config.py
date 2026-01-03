@@ -117,6 +117,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             # gait_scheduler = -18.0
             # async_gait_scheduler = -0.2  # Shanks to be perpendicular to the ground
             gait_2_step = [-3.0, -0.0]
+            # gait_3_step = [-3.0, -3.0]
 
         class async_gait_scheduler:
             # Reward for the Shanks to be perpendicular to the ground

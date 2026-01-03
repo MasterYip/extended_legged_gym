@@ -456,7 +456,7 @@ class ElSpider(LeggedRobot):
                                                    torch.clip(self.terrain_levels[env_ids], 0))  # (the minumum level is zero)
         self.env_origins[env_ids] = self.terrain_origins[self.terrain_levels[env_ids], self.terrain_types[env_ids]]
 
-
+    # Rewards
     def _reward_gait_scheduler(self):
         # Reward for tracking the gait scheduler
         return self.gait_scheduler.reward_foot_z_track()
@@ -528,6 +528,71 @@ class ElSpider(LeggedRobot):
         # Use gait reward for large commands, sync all legs reward for small commands
         re = torch.where(command_magnitude, 
                         sync_reward + async_reward,  # 2-step gait for movement
+                        sync_all_reward)             # sync all legs for standing still
+        
+        return re
+    
+    def _reward_gait_3_step(self):
+        # Foot index (alphabet): 0 LB, 1 LF, 2 LM, 3 RB, 4 RF, 5 RM
+        # Hexapod 3-step gait: first group (1-4) synchronized, second group (2-5) synchronized, third group (0-3) synchronized
+        # The three groups are asynchronized with each other
+        
+        # First group internal synchronization rewards (1-4): LF, RF
+        sync_group1 = self._sync_reward_func(1, 4)
+        
+        # Second group internal synchronization rewards (2-5): LM, RM
+        sync_group2 = self._sync_reward_func(2, 5)
+        
+        # Third group internal synchronization rewards (0-3): LB, RB
+        sync_group3 = self._sync_reward_func(0, 3)
+        
+        # Asynchronization rewards between group 1 and group 2
+        async_lf_lm = self._async_reward_func(1, 2)
+        async_lf_rm = self._async_reward_func(1, 5)
+        async_rf_lm = self._async_reward_func(4, 2)
+        async_rf_rm = self._async_reward_func(4, 5)
+        async_group1_group2 = (async_lf_lm + async_lf_rm + async_rf_lm + async_rf_rm) / 4
+        
+        # Asynchronization rewards between group 1 and group 3
+        async_lf_lb = self._async_reward_func(1, 0)
+        async_lf_rb = self._async_reward_func(1, 3)
+        async_rf_lb = self._async_reward_func(4, 0)
+        async_rf_rb = self._async_reward_func(4, 3)
+        async_group1_group3 = (async_lf_lb + async_lf_rb + async_rf_lb + async_rf_rb) / 4
+        
+        # Asynchronization rewards between group 2 and group 3
+        async_lm_lb = self._async_reward_func(2, 0)
+        async_lm_rb = self._async_reward_func(2, 3)
+        async_rm_lb = self._async_reward_func(5, 0)
+        async_rm_rb = self._async_reward_func(5, 3)
+        async_group2_group3 = (async_lm_lb + async_lm_rb + async_rm_lb + async_rm_rb) / 4
+        
+        # Calculate average asynchronization reward across all group pairs
+        async_reward = (async_group1_group2 + async_group1_group3 + async_group2_group3) / 3
+        async_reward *= 0.0 # 3-step gait does not require strong asynchronization
+
+        # Calculate total synchronization reward
+        sync_reward = (sync_group1 + sync_group2 + sync_group3) / 3
+        
+        # Calculate sync all legs reward for small commands (standing still)
+        sync_all_pairs = [
+            sync_group1, sync_group2, sync_group3,  # Within-group sync
+            self._sync_reward_func(1, 2), self._sync_reward_func(1, 5),  # Group 1 with group 2
+            self._sync_reward_func(4, 2), self._sync_reward_func(4, 5),
+            self._sync_reward_func(1, 0), self._sync_reward_func(1, 3),  # Group 1 with group 3
+            self._sync_reward_func(4, 0), self._sync_reward_func(4, 3),
+            self._sync_reward_func(2, 0), self._sync_reward_func(2, 3),  # Group 2 with group 3
+            self._sync_reward_func(5, 0), self._sync_reward_func(5, 3)
+        ]
+        sync_all_reward = sum(sync_all_pairs) / len(sync_all_pairs)
+        
+        # Determine command magnitude
+        command_magnitude = torch.logical_or(torch.norm(self.commands[:, :2], dim=1) > self.speed_min, 
+                                            torch.abs(self.commands[:, 2]) > self.speed_min)
+        
+        # Use gait reward for large commands, sync all legs reward for small commands
+        re = torch.where(command_magnitude, 
+                        sync_reward + async_reward,  # 3-step gait for movement
                         sync_all_reward)             # sync all legs for standing still
         
         return re
