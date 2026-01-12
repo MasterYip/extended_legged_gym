@@ -43,7 +43,7 @@ import time
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 50)
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 10)
     env_cfg.terrain.num_rows = 5
     env_cfg.terrain.num_cols = 5
     env_cfg.terrain.curriculum = False
@@ -88,6 +88,10 @@ def play(args):
 
     for i in range(int(env.max_episode_length*10)):
         step_start_time = time.time()
+
+        env.commands[:,0] = 1.0
+        env.commands[:,1] = 0.0
+        env.commands[:,2] = 0.0
         
         actions = policy(obs.detach())
         obs, _, rews, dones, infos = env.step(actions.detach())

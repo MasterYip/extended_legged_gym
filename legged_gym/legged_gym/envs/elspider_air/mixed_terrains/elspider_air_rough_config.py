@@ -45,7 +45,7 @@ class ElSpiderAirRoughCfg(LeggedRobotCfg):
         mesh_type = 'trimesh'  # "heightfield" # none, plane, heightfield or trimesh
         horizontal_scale = 0.1  # [m]
         vertical_scale = 0.005  # [m]
-        border_size = 100  # [m]
+        border_size = 10  # [m]
         curriculum = True
         static_friction = 1.0
         dynamic_friction = 1.0

@@ -208,5 +208,5 @@ task_registry.register("anymal_c_rough_student", AnymalStudent, AnymalCRoughStud
 task_registry.register("franka", Franka, FrankaCfg(), FrankaCfgPPO())
 task_registry.register("franka_batch_rollout", FrankaBatchRollout, FrankaBatchRolloutCfg(), FrankaBatchRolloutCfgPPO)
 
-task_registry.register("el4090_spider", ElSpider, El4090SpiderCfg(), El4090SpiderCfgPPO())
-task_registry.register("el4090_mammal", ElSpider, El4090MammalianCfg(), El4090MammalianCfgPPO())
+task_registry.register("el4090_spider", EL_4090, El4090SpiderCfg(), El4090SpiderCfgPPO())
+task_registry.register("el4090_mammal", EL_4090, El4090MammalianCfg(), El4090MammalianCfgPPO())
