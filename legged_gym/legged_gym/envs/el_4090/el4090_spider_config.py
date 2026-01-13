@@ -126,7 +126,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
 
     ## Rewards V1 (normal dof_acc)
     class rewards(ElSpiderAirRoughCfg.rewards):
-        max_contact_force = 200.
+        max_contact_force = 180.
         base_height_target = 0.4
         only_positive_rewards = False
         # Multi-stage
@@ -155,7 +155,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
             action_rate = [-0.005, -0.01]
             stand_still = -5  # May affect spot turning
             dof_pos_limits = -1.0
-            feet_contact_forces = [-1.5, -1]
+            feet_contact_forces = [-3, -3]
             feet_async = [-0.8,-1]
             feet_sync = [-0.8,-1]
             shank_vertical_when_contact = [-3,-5]
