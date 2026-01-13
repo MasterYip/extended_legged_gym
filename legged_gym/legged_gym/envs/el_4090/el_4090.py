@@ -90,6 +90,9 @@ class EL_4090(ElSpider):
         self.group2_contact_time = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
 
         self.T = 0.5
+        
+        # Debug counters
+        self.debug_step_counter = 0
 
     def _init_buffers(self):
         """ Initialize torch tensors which will contain simulation states and processed quantities
@@ -114,6 +117,68 @@ class EL_4090(ElSpider):
 
 
 
+    def _debug_info(self):
+        """Print debug information for the specified environment(s)"""
+        if not self.cfg.env.debug_mode:
+            return
+        
+        self.debug_step_counter += 1
+        if self.debug_step_counter % self.cfg.env.debug_interval != 0:
+            return
+        
+        env_id = self.cfg.env.debug_env_id
+        
+        # Determine which environments to print
+        if env_id == -1:
+            # Print all environments
+            env_ids_to_print = list(range(self.num_envs))
+        else:
+            # Print specified environment
+            if env_id >= self.num_envs:
+                return
+            env_ids_to_print = [env_id]
+        
+        print("\n" + "="*80)
+        print(f"DEBUG INFO - Step {self.common_step_counter} | Printing {len(env_ids_to_print)} environment(s)")
+        print("="*80)
+        
+        for env_idx in env_ids_to_print:
+            print(f"\n{'─'*80}")
+            print(f"Environment {env_idx} | Episode Length: {self.episode_length_buf[env_idx].item()}")
+            print(f"{'─'*80}")
+            
+            # Base state
+            print(f"\n[Base State]")
+            print(f"  Position:     [{self.base_pos[env_idx, 0]:.3f}, {self.base_pos[env_idx, 1]:.3f}, {self.base_pos[env_idx, 2]:.3f}]")
+            print(f"  Base Height:  {self.base_pos[env_idx, 2]:.3f} m")
+
+            # Contact info and forces
+            contact = self.contact_forces[env_idx, self.feet_indices, 2] > 1.
+            contact_forces = self.contact_forces[env_idx, self.feet_indices, :]
+            contact_forces_z = contact_forces[:, 2]
+            max_contact_force = torch.max(contact_forces_z).item()
+            max_force_idx = torch.argmax(contact_forces_z).item()
+            
+            # Foot names for better readability
+            foot_names = ['LB', 'LF', 'LM', 'RB', 'RF', 'RM']
+            
+            print(f"\n[Contact Info]")
+            print(f"  Feet Contact: {contact.cpu().numpy()}")
+            print(f"  Contact Forces (X,Y,Z) [N]:")
+            for i, name in enumerate(foot_names):
+                fx = contact_forces[i, 0].item()
+                fy = contact_forces[i, 1].item()
+                fz = contact_forces[i, 2].item()
+                f_total = torch.norm(contact_forces[i]).item()
+                contact_str = "✓" if contact[i].item() else "✗"
+                print(f"    {name}: [{fx:7.2f}, {fy:7.2f}, {fz:7.2f}] (Total: {f_total:7.2f}) {contact_str}")
+            print(f"  Max Contact Force: {max_contact_force:.2f} N (Foot {foot_names[max_force_idx]})")
+            print(f"  Total Ground Force: {torch.sum(contact_forces_z).item():.2f} N")
+            print(f"  Feet Air Time: {self.feet_air_time[env_idx].cpu().numpy()}")
+            
+        
+        print("\n" + "="*80 + "\n")
+    
     def _reward_feet_air_time(self):
         # Reward long steps
         # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
@@ -355,6 +420,12 @@ class EL_4090(ElSpider):
         
         return total_penalty
     
+    
+    def post_physics_step(self):
+        """Override post_physics_step to add debug info"""
+        super().post_physics_step()
+        # Call debug info after all computations are done
+        self._debug_info()
     
 
 # Bodies:  ['base_link', 'LB_HIP', 'LB_THIGH', 'LB_SHANK', 'LB_FOOT', 'LF_HIP', 'LF_THIGH', 'LF_SHANK', 'LF_FOOT', 

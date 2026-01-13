@@ -68,7 +68,7 @@ def play(args):
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging
     joint_index = 1 # which joint is used for logging
-    stop_state_log = 100 # number of steps before plotting states
+    stop_state_log = 1 # number of steps before plotting states
     stop_rew_log = env.max_episode_length + 1 # number of steps before print average episode rewards
     camera_position = np.array(env_cfg.viewer.pos, dtype=np.float64)
     camera_vel = np.array([1., 1., 0.])
@@ -89,9 +89,10 @@ def play(args):
     for i in range(int(env.max_episode_length*10)):
         step_start_time = time.time()
 
-        env.commands[:,0] = 1.0
+        env.commands[:,0] = 1.5
         env.commands[:,1] = 0.0
         env.commands[:,2] = 0.0
+        env.commands[:,3] = 0.0
         
         actions = policy(obs.detach())
         obs, _, rews, dones, infos = env.step(actions.detach())
@@ -147,15 +148,15 @@ def play(args):
             if len(realtime_factor_window) > realtime_factor_window_size:
                 realtime_factor_window.pop(0)
             
-            # Print realtime factor periodically
-            current_time = time.time()
-            if current_time - last_print_time >= print_interval:
-                avg_realtime_factor = np.mean(realtime_factor_window)
-                min_realtime_factor = np.min(realtime_factor_window)
-                max_realtime_factor = np.max(realtime_factor_window)
-                print(f"Step {i}: Realtime factor: {avg_realtime_factor:.2f}x "
-                      f"(min: {min_realtime_factor:.2f}x, max: {max_realtime_factor:.2f}x)")
-                last_print_time = current_time
+            # Print realtime factor periodically (disabled)
+            # current_time = time.time()
+            # if current_time - last_print_time >= print_interval:
+            #     avg_realtime_factor = np.mean(realtime_factor_window)
+            #     min_realtime_factor = np.min(realtime_factor_window)
+            #     max_realtime_factor = np.max(realtime_factor_window)
+            #     print(f"Step {i}: Realtime factor: {avg_realtime_factor:.2f}x "
+            #           f"(min: {min_realtime_factor:.2f}x, max: {max_realtime_factor:.2f}x)")
+            #     last_print_time = current_time
             
             # Sleep to maintain realtime if computation was faster than env.dt
             sleep_time = env.dt - step_duration

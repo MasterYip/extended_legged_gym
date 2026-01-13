@@ -34,6 +34,10 @@ from legged_gym.envs import ElSpiderAirRoughCfg, ElSpiderAirRoughCfgPPO
 class El4090SpiderCfg(ElSpiderAirRoughCfg):
     class env(ElSpiderAirRoughCfg.env):
         num_observations = 66
+        # Debug settings
+        debug_mode = False  # Enable debug output
+        debug_interval = 100  # Print debug info every N steps
+        debug_env_id = 0  # Which environment to debug (0-based index)
 
     class terrain(ElSpiderAirRoughCfg.terrain):
         mesh_type = 'plane'  # "heightfield" # none, plane, heightfield or trimesh
@@ -69,8 +73,8 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         # PD Drive parameters matching Anymal:
         # stiffness = {'HAA': 50., 'HFE': 50., 'KFE': 50.}  # [N*m/rad]
         # damping = {'HAA': 1.5, 'HFE': 1.5, 'KFE': 1.5}     # [N*m*s/rad]
-        stiffness = {'HAA': 60., 'HFE': 60., 'KFE': 60.}  # [N*m/rad]
-        damping = {'HAA': 0.8, 'HFE': 0.8, 'KFE': 0.8}     # [N*m*s/rad]
+        stiffness = {'HAA': 150., 'HFE': 150., 'KFE': 150.}  # [N*m/rad]
+        damping = {'HAA': 2, 'HFE': 2, 'KFE': 2}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
         action_scale = 0.25  # Enable Network-0.5 | Disable Network-0.3
 
@@ -98,12 +102,12 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
     class init_state(ElSpiderAirRoughCfg.init_state):
         pos = [0.0, 0.0, 0.4]  # x,y,z [m]
         default_joint_angles = {  # = target angles [rad] when action = 0.0
-            "RF_HAA": -0.2,
+            "RF_HAA": 0.0,
             "RM_HAA": 0.0,
-            "RB_HAA": 0.2,
-            "LF_HAA": -0.2,
+            "RB_HAA": 0.0,
+            "LF_HAA": 0.0,
             "LM_HAA": 0.0,
-            "LB_HAA": 0.2,
+            "LB_HAA": 0.0,
 
             "RF_HFE": 0.0,
             "RM_HFE": 0.0,
@@ -122,7 +126,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
 
     ## Rewards V1 (normal dof_acc)
     class rewards(ElSpiderAirRoughCfg.rewards):
-        max_contact_force = 250.
+        max_contact_force = 200.
         base_height_target = 0.4
         only_positive_rewards = False
         # Multi-stage
@@ -140,20 +144,20 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
             lin_vel_z = -5
             ang_vel_xy = -0.05
             orientation = [-5, -10]
-            torques = [-0.00005, -0.0001]
+            torques = [-0.0003, -0.005]
             dof_vel = [-0.00005, -0.0001]
             dof_acc = [-2e-7, -2.5e-7]
-            base_height = [-5., -8.0]
+            base_height = [-10., -15.0]
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
             feet_air_time = [1.0, 1.5]
             collision = -1.
             feet_stumble = -0.1
-            action_rate = [-0.001, -0.005]
-            stand_still = -1  # May affect spot turning
+            action_rate = [-0.005, -0.01]
+            stand_still = -5  # May affect spot turning
             dof_pos_limits = -1.0
-            feet_contact_forces = [-1, -1]
-            feet_async = [-0.5,-1]
-            feet_sync = [-0.5,-1]
+            feet_contact_forces = [-1.5, -1]
+            feet_async = [-0.8,-1]
+            feet_sync = [-0.8,-1]
             shank_vertical_when_contact = [-3,-5]
             # haa_tripod_symmetry  = -1
             
