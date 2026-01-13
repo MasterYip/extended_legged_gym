@@ -155,7 +155,22 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
     def check_termination(self):
         """ Check if environments need to be reset
         """
-        self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
+        # Get protection steps (grace period during early training)
+        if hasattr(self.cfg.rewards, 'allow_initial_contact_steps'):
+            min_steps = self.cfg.rewards.allow_initial_contact_steps
+        else:
+            min_steps = 5  # Default: 5 steps grace period
+        
+        # Check contact termination condition
+        contact_termination = torch.any(
+            torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1
+        )
+        
+        # Only terminate due to contact after grace period to avoid early termination
+        # This helps with initialization issues and gives the robot time to stabilize
+        self.reset_buf = contact_termination & (self.episode_length_buf > min_steps)
+        
+        # Timeout termination (no grace period needed)
         self.time_out_buf = self.episode_length_buf > self.max_episode_length  # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
 

@@ -341,8 +341,17 @@ class ElSpider(LeggedRobot):
         """
         super().check_termination()
         
+        # Get protection steps (grace period during early training)
+        if hasattr(self.cfg.rewards, 'allow_initial_contact_steps'):
+            min_steps = self.cfg.rewards.allow_initial_contact_steps
+        else:
+            min_steps = 5  # Default: 5 steps grace period
+        
         # Add new termination condition - terminate if robot is upside down (z-component of projected gravity > 0)
-        self.reset_buf |= (self.projected_gravity[:, 2] > 0)
+        # Only check after grace period to avoid early termination due to initialization
+        upside_down = self.projected_gravity[:, 2] > 0
+        upside_down_termination = upside_down & (self.episode_length_buf > min_steps)
+        self.reset_buf |= upside_down_termination
 
     def _reward_gait_scheduler(self):
         # Reward for tracking the gait scheduler

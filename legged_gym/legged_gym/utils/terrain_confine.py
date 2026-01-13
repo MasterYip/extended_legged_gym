@@ -597,6 +597,131 @@ def wall_with_gap_terrain(terrain_ground, terrain_ceiling,
     return terrain_ground, terrain_ceiling
 
 
+def complex_maze_terrain(terrain_ground, terrain_ceiling, complexity=0.5):
+    """
+    Generate a complex maze-like terrain with turns, narrow passages, slopes, and obstacles.
+    Designed for 6-legged robot (ElSpider/el_mini) navigation.
+    
+    Parameters:
+        terrain_ground: ground SubTerrain object
+        terrain_ceiling: ceiling SubTerrain object
+        complexity: 0.0 to 1.0 (affects obstacle density and path narrowness)
+    """
+    # Grid dimensions
+    width = terrain_ground.width
+    length = terrain_ground.length
+    h_scale = terrain_ground.horizontal_scale
+    v_scale = terrain_ground.vertical_scale
+    
+    # Defaults
+    ceiling_height_m = 1.0  # Reduced ceiling height for "confined" feel
+    wall_height_m = 0.5     # Walls low enough not to hit high ceiling interaction but high enough to block
+    path_width_m = 1.2 - (0.4 * complexity)  # Path width narrows with complexity
+    
+    # Convert to pixels
+    ceiling_height_px = int(ceiling_height_m / v_scale)
+    wall_height_px = int(wall_height_m / v_scale)
+    path_width_px = int(path_width_m / h_scale)
+    spawn_radius_px = int(1.0 / h_scale)
+    
+    # Initialize basic ground (flat) and ceiling
+    terrain_ground.ground_height_field_raw[:, :] = 0
+    terrain_ceiling.ceiling_height_field_raw[:, :] = int(ceiling_height_m * 2.5 / v_scale) # High default ceiling
+    
+    # Create random walls/maze using recursive division or similar, 
+    # but for simplicity and navigability, we'll use a cellular automata or noise-based approach,
+    # ensuring the center is clear.
+    
+    center_x, center_y = width // 2, length // 2
+    
+    # 1. Create Slopes (Global tilt) independent of walls
+    # Create a gentle slope across the terrain
+    slope_steepness = 0.1 * complexity 
+    x = np.linspace(-1, 1, width)
+    y = np.linspace(-1, 1, length)
+    X, Y = np.meshgrid(x, y)
+    slope_map = (X + Y) * slope_steepness # Gradient
+    slope_map_px = (slope_map / v_scale).astype(int)
+    terrain_ground.ground_height_field_raw += slope_map_px
+    terrain_ceiling.ceiling_height_field_raw += slope_map_px # Ceiling follows ground slope
+    
+    # 2. Procedural Obstacles/Walls
+    # We want a path, so we can generate random blocks but ensure connectivity?
+    # Simpler: Generate random blocks and clear a path from center to edges.
+    
+    num_obstacles = int((20 + 40 * complexity))
+    
+    for _ in range(num_obstacles):
+        # Random size block
+        obs_w_m = np.random.uniform(0.5, 1.5)
+        obs_l_m = np.random.uniform(0.5, 1.5)
+        obs_w_px = int(obs_w_m / h_scale)
+        obs_l_px = int(obs_l_m / h_scale)
+        
+        px = np.random.randint(0, width - obs_w_px)
+        py = np.random.randint(0, length - obs_l_px)
+        
+        # Check distance from spawn
+        dist_sq = (px + obs_w_px//2 - center_x)**2 + (py + obs_l_px//2 - center_y)**2
+        if dist_sq < spawn_radius_px**2:
+            continue
+            
+        # Add "Wall" or "Pillar"
+        # Ground height up
+        terrain_ground.ground_height_field_raw[px:px+obs_w_px, py:py+obs_l_px] += wall_height_px
+        
+        # Optional: Lower ceiling over this block to make it impossible to traverse?
+        # Or make it a full column
+        if np.random.random() < 0.3:
+            # Full column
+             terrain_ceiling.ceiling_height_field_raw[px:px+obs_w_px, py:py+obs_l_px] = \
+                 terrain_ground.ground_height_field_raw[px:px+obs_w_px, py:py+obs_l_px]
+        else:
+            # Just an obstacle on ground, but maybe confined from top too
+             terrain_ceiling.ceiling_height_field_raw[px:px+obs_w_px, py:py+obs_l_px] = \
+                  terrain_ground.ground_height_field_raw[px:px+obs_w_px, py:py+obs_l_px] + int(0.6 / v_scale)
+
+    # 3. Create corridors/maze-like structure
+    # Use simple logic: Horizontal or Vertical bars
+    if np.random.random() < 0.5:
+        # Radial corridors from center? No, let's just ensure spawn area is clear
+        pass
+        
+    # Ensuring central area is clear
+    spawn_clear_radius = int(1.2 / h_scale)
+    x_min = max(0, center_x - spawn_clear_radius)
+    x_max = min(width, center_x + spawn_clear_radius)
+    y_min = max(0, center_y - spawn_clear_radius)
+    y_max = min(length, center_y + spawn_clear_radius)
+    
+    # Flatten spawn area to original level (0 + slope) 
+    # We need to recalculate slope at spawn to avoid Step Down
+    # Actually, simplistic approach: Just flatten ground relative to slope
+    # Better: just don't add obstacles there. (Already handled by check above)
+    
+    # 4. Add "Confined Roof" patches
+    # Randomly lower ceiling in some areas to navigation height (e.g. 0.4m above robot)
+    num_low_ceilings = 10
+    low_ceiling_h_rel = 0.5 # 50cm clearance
+    low_ceiling_px = int(low_ceiling_h_rel / v_scale)
+    
+    for _ in range(num_low_ceilings):
+        w_px = int(np.random.uniform(1.0, 3.0) / h_scale)
+        l_px = int(np.random.uniform(1.0, 3.0) / h_scale)
+        px = np.random.randint(0, width - w_px)
+        py = np.random.randint(0, length - l_px)
+        
+        # Don't cover spawn perfectly? It's okay if spawn has low ceiling as long as it fits
+        
+        # Current ground mean
+        g_mean = np.mean(terrain_ground.ground_height_field_raw[px:px+w_px, py:py+l_px])
+        
+        # Set ceiling
+        terrain_ceiling.ceiling_height_field_raw[px:px+w_px, py:py+l_px] = int(g_mean) + low_ceiling_px
+
+    return terrain_ground, terrain_ceiling
+
+
 class SubTerrainConfined:
     """SubTerrain class for confined environments with ground and ceiling layers"""
     def __init__(self, terrain_name="confined_terrain", width=256, length=256, vertical_scale=1.0, horizontal_scale=1.0):
@@ -770,14 +895,13 @@ class TerrainConfined:
         wall_thickness = 0.1   # Thickness of wall [meters]
 
         if choice < self.proportions[0]:
-            # Tunnel terrain
-            terrain_ground, terrain_ceiling = tunnel_terrain(
-                terrain_ground, terrain_ceiling, 
-                tunnel_width=tunnel_width, 
-                tunnel_height=tunnel_height
+            # Complex Maze Terrain (New)
+            terrain_ground, terrain_ceiling = complex_maze_terrain(
+                terrain_ground, terrain_ceiling,
+                complexity=difficulty
             )
         elif choice < self.proportions[1]:
-            # Barrier terrain  
+            # Tunnel terrain  
             terrain_ground, terrain_ceiling = barrier_terrain(
                 terrain_ground, terrain_ceiling,
                 barrier_height=barrier_height,

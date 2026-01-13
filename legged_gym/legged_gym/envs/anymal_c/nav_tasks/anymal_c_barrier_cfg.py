@@ -142,7 +142,7 @@ class AnymalCNavBarrierCfg(AnymalCNavCfg):
     class terrain(AnymalCNavCfg.terrain):
         mesh_type = 'confined_trimesh'
         # path to the terrain file
-        terrain_file = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"
+        terrain_file = "/home/chen/extended_legged_gym/legged_gym/resources/terrains/confined/confined_terrain.obj"
         measure_heights = False
 
         # Curriculum Settings
