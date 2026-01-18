@@ -606,6 +606,17 @@ class ElSpider(LeggedRobot):
                 'RF_KFE', 'RM_KFE', 'RB_KFE', 'LF_KFE', 'LM_KFE', 'LB_KFE']]
         return torch.square(self.dof_pos[:, self.hfe_indices] - self.dof_pos[:, self.kfe_indices]).sum(dim=1)
 
+    def _reward_haa_nominal_pos(self):
+        if not hasattr(self, 'haa_indices'):
+            self.haa_indices = [self.dof_names.index(name) for name in [
+                'RF_HAA', 'RM_HAA', 'RB_HAA', 'LF_HAA', 'LM_HAA', 'LB_HAA']]
+        haa_nominal_pos = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], device=self.device)
+        # use ema to smooth the reward
+        ema = 0.01
+        self.haa_nominal_pos_ema = getattr(self, 'haa_nominal_pos_ema', torch.zeros(self.num_envs, device=self.device))
+        current_deviation = torch.square(self.dof_pos[:, self.haa_indices] - haa_nominal_pos).sum(dim=1)
+        self.haa_nominal_pos_ema = ema * current_deviation + (1 - ema) * self.haa_nominal_pos_ema
+        return self.haa_nominal_pos_ema
 
 class ElSpiderStudent(ElSpider):
     """ElSpiderStudent class for distillation training with observation history."""

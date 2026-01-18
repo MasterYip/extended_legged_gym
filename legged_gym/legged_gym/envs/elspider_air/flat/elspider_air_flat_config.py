@@ -231,6 +231,10 @@ class ElSpiderAirSlightRoughCfg(ElSpiderAirFlatCfg):
     class rewards(ElSpiderAirFlatCfg.rewards):
         reward_stage_threshold = 4.0
 
+        class scales(ElSpiderAirFlatCfg.rewards.scales):
+            haa_nominal_pos = -0.4
+
+
 class ElSpiderAirFlatCfgPPO(ElSpiderAirRoughCfgPPO):
     class policy(ElSpiderAirRoughCfgPPO.policy):
         actor_hidden_dims = [128, 64, 32]
