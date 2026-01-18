@@ -27,7 +27,7 @@ conda activate pdplanner
 - 500 epoch: walking good
 
 ```bash
-python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=6144 --headless --resume
+python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=4096 --headless --resume
 python legged_gym/scripts/play.py --task=elspider_air_flat --num_envs=48 --checkpoint=-1  --load_run=Dec05_21-36-11_ --resume
 ```
 
