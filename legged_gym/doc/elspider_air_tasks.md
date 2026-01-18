@@ -31,6 +31,12 @@ python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=4096 --he
 python legged_gym/scripts/play.py --task=elspider_air_flat --num_envs=48 --checkpoint=-1  --load_run=Dec05_21-36-11_ --resume
 ```
 
+**Slight Rough for Better Sim2Sim Robustness**:
+```bash
+python legged_gym/scripts/train.py --task=elspider_air_slight_rough --num_envs=4096 --headless --resume
+python legged_gym/scripts/play.py --task=elspider_air_slight_rough --num_envs=48 --checkpoint=-1  --load_run=Dec05_21-36-11_ --resume
+```
+
 ### ElSpiderAir Rough Terrain
 
 **Training Tip:**

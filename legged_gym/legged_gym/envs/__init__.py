@@ -78,7 +78,7 @@ from .elspider_air.mixed_terrains.elspider_air_rough_train_config import ElSpide
 # from .elspider_air.mixed_terrains.elspider_air_rough_train2_config import ElSpiderAirRoughTrain2Cfg, ElSpiderAirRoughTrain2CfgPPO
 from .elspider_air.mixed_terrains.elspider_air_rough_raycast_config import ElSpiderAirRoughRaycastCfg, ElSpiderAirRoughRaycastCfgPPO
 from .elspider_air.mixed_terrains.elspider_air_rough_student_config import ElSpiderAirRoughStudentCfg, ElSpiderAirRoughStudentCfgPPO
-from .elspider_air.flat.elspider_air_flat_config import ElSpiderAirFlatCfg, ElSpiderAirFlatCfgPPO
+from .elspider_air.flat.elspider_air_flat_config import ElSpiderAirFlatCfg, ElSpiderAirSlightRoughCfg, ElSpiderAirFlatCfgPPO
 from .elspider_air.flat.pose_elspider_air_flat_config import PoseElSpiderAirFlatCfg, PoseElSpiderAirFlatCfgPPO
 from .elspider_air.flat.foot_track_elspider_air_flat_config import FootTrackElSpiderAirFlatCfg, FootTrackElSpiderAirFlatCfgPPO
 from .elspider_air.flat.foot_track_elspider_air_hang_config import FootTrackElSpiderAirHangCfg, FootTrackElSpiderAirHangCfgPPO
@@ -161,6 +161,7 @@ task_registry.register("elspider_air_rough_multi_stage1", ElSpider, ElSpiderAirR
 task_registry.register("elspider_air_rough_raycast", ElSpiderRayCast,
                        ElSpiderAirRoughRaycastCfg(), ElSpiderAirRoughRaycastCfgPPO())
 task_registry.register("elspider_air_flat", ElSpider, ElSpiderAirFlatCfg(), ElSpiderAirFlatCfgPPO())
+task_registry.register("elspider_air_slight_rough", ElSpider, ElSpiderAirSlightRoughCfg(), ElSpiderAirFlatCfgPPO())
 task_registry.register("pose_elspider_air_flat", PoseElSpider, PoseElSpiderAirFlatCfg(), PoseElSpiderAirFlatCfgPPO())
 task_registry.register("foot_track_elspider_air_flat", FootTrackElSpider,
                        FootTrackElSpiderAirFlatCfg(), FootTrackElSpiderAirFlatCfgPPO())

@@ -36,7 +36,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
         num_observations = 66
 
     class terrain(ElSpiderAirRoughCfg.terrain):
-        mesh_type = 'trimesh'  # "heightfield" # none, plane, heightfield or trimesh
+        mesh_type = 'plane'  # "heightfield" # none, plane, heightfield or trimesh
         horizontal_scale = 0.05  # [m]
         vertical_scale = 0.005  # [m]
         border_size = 10  # [m]
@@ -223,6 +223,13 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             ang_vel = 0.2
             gravity = 0.05
             height_measurements = 0.1
+
+class ElSpiderAirSlightRoughCfg(ElSpiderAirFlatCfg):
+    class terrain(ElSpiderAirFlatCfg.terrain):
+        mesh_type = 'trimesh'  # "heightfield" # none, plane, heightfield or trimesh
+
+    class rewards(ElSpiderAirFlatCfg.rewards):
+        reward_stage_threshold = 4.0
 
 class ElSpiderAirFlatCfgPPO(ElSpiderAirRoughCfgPPO):
     class policy(ElSpiderAirRoughCfgPPO.policy):
