@@ -85,12 +85,12 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             "LM_HAA": 0.0,
             "LB_HAA": 0.0,
 
-            "RF_HFE": 0.3,
-            "RM_HFE": 0.3,
-            "RB_HFE": 0.3,
-            "LF_HFE": 0.3,
-            "LM_HFE": 0.3,
-            "LB_HFE": 0.3,
+            "RF_HFE": 0.2,
+            "RM_HFE": 0.2,
+            "RB_HFE": 0.2,
+            "LF_HFE": 0.2,
+            "LM_HFE": 0.2,
+            "LB_HFE": 0.2,
 
             "RF_KFE": 0.3,
             "RM_KFE": 0.3,
@@ -103,7 +103,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
     ## Rewards V1 (normal dof_acc)
     class rewards(ElSpiderAirRoughCfg.rewards):
         max_contact_force = 500.
-        base_height_target = 0.28
+        base_height_target = 0.24
         only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
@@ -117,25 +117,26 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             termination = -0.0
             tracking_lin_vel = 1.0
             tracking_ang_vel = 0.5
-            lin_vel_z = -2.0
-            ang_vel_xy = -0.05
-            orientation = [-5.0, -5.0]
+            lin_vel_z = -3.0
+            ang_vel_xy = -0.5
+            orientation = [-5.0, -3.0]
             torques = -0.0001
-            dof_vel = [-0.0002, -0.001]
-            dof_acc = [-5e-8, -2.5e-7]
-            base_height = [-4.0, -1.0]
+            dof_vel = [-0.0002, -0.0004]
+            dof_acc = [-5e-8, -1.5e-7]
+            base_height = [-2.0, -0.4]
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
             feet_air_time = [1.0, 0.5]
             collision = -1.
-            feet_stumble = -0.0
-            action_rate = [-0.005, -0.01]
-            stand_still = -0.4  # May affect spot turning
+            feet_stumble = [-0.0, -0.2]
+            action_rate = [-0.005, -0.005]
+            stand_still = -0.6  # May affect spot turning
             dof_pos_limits = -1.0
-            feet_contact_forces = [-0.05, -0.1]
+            feet_contact_forces = [-0.2, -0.5]
             
             # gait_scheduler = -18.0
             # async_gait_scheduler = -0.2  # Shanks to be perpendicular to the ground
-            gait_2_step = [-3.0, -0.0]
+            shank_perp2ground = -0.05
+            gait_2_step = [-1.0, -0.0]
             # gait_3_step = [-3.0, -3.0]
 
         class async_gait_scheduler:
