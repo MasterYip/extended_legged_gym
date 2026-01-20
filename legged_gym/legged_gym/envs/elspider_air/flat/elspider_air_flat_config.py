@@ -109,7 +109,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
         # Stage 1: Correct DOF and FootZ positions / Prevent Slip
         multi_stage_rewards = True  # if true, reward scales should be list
-        reward_stage_threshold = 6.0
+        reward_stage_threshold = 2.0
         reward_min_stage = 0  # Start from 0
         reward_max_stage = 1
 
@@ -125,11 +125,11 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             dof_acc = [-5e-8, -1.5e-7]
             base_height = [-2.0, -0.4]
             feet_slip = [-0.0, -0.2]  # Before feet_air_time
-            feet_air_time = [1.0, 0.5]
+            feet_air_time = [0.5, 0.1]
             collision = -1.
             feet_stumble = [-0.0, -0.2]
             action_rate = [-0.005, -0.005]
-            stand_still = -0.6  # May affect spot turning
+            stand_still2 = -0.6  # May affect spot turning
             dof_pos_limits = -1.0
             feet_contact_forces = [-0.2, -0.5]
             
@@ -191,7 +191,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
 
     class commands(ElSpiderAirRoughCfg.commands):
         curriculum = True
-        max_curriculum = 1.5
+        max_curriculum = 1.7
         # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
         num_commands = 4
         resampling_time = 4.  # time before command are changed[s]
@@ -199,8 +199,8 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
 
         class ranges(ElSpiderAirRoughCfg.commands.ranges):
             lin_vel_x = [-0.5, 0.5]  # min max [m/s]
-            lin_vel_y = [-0.8, 0.8]   # min max [m/s]
-            ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
+            lin_vel_y = [-1.0, 1.0]   # min max [m/s]
+            ang_vel_yaw = [-1.5, 1.5]    # min max [rad/s]
             heading = [-3.14, 3.14]
 
     class domain_rand(ElSpiderAirRoughCfg.domain_rand):

@@ -10,7 +10,7 @@ class LeggedRobotRewMixin:
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.speed_min = 0.1  # Minimum speed for some rewards
+        self.speed_min = 0.2  # Minimum speed for some rewards
 
     def _get_reward_scales(self, stage=0):
         self.reward_scales_dict = class_to_dict(self.cfg.rewards.scales)
@@ -223,14 +223,14 @@ class LeggedRobotRewMixin:
 
     def _reward_stand_still2(self):
         # Parameters
-        contact_count_weight = 0.1
-        force_normalization_scale = 50.0
+        contact_count_weight = 0.2
+        force_normalization_scale = 10.0
         contact_time_decay_scale = 0.5
         
         # Combination weights
-        joint_position_weight = 0.5
-        contact_count_penalty_weight = 0.3
-        contact_stability_weight = 0.4
+        joint_position_weight = 2.0
+        contact_count_penalty_weight = 0.0
+        contact_stability_weight = 0.0
         contact_time_weight = 0.0
         
         # Small Cmd Mask
