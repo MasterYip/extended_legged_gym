@@ -100,7 +100,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             "LB_KFE": 0.3,
         }
 
-    ## Rewards V1 (normal dof_acc)
+    ## Rewards V2 (faster&smoother gait, zzl-style)
     class rewards(ElSpiderAirRoughCfg.rewards):
         max_contact_force = 500.
         base_height_target = 0.24
@@ -144,6 +144,41 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             dof_align = 1.0
             dof_nominal_pos = 0.0
             reward_foot_z_align = 0.0
+
+    # ## Rewards V1 (normal dof_acc)
+    # class rewards(ElSpiderAirRoughCfg.rewards):
+    #     max_contact_force = 500.
+    #     base_height_target = 0.28
+    #     only_positive_rewards = False
+    #     # Multi-stage
+    #     # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
+    #     # Stage 1: Correct DOF and FootZ positions / Prevent Slip
+    #     multi_stage_rewards = True  # if true, reward scales should be list
+    #     reward_stage_threshold = 6.0
+    #     reward_min_stage = 0  # Start from 0
+    #     reward_max_stage = 1
+
+    #     class scales:
+    #         termination = -0.0
+    #         tracking_lin_vel = 1.0
+    #         tracking_ang_vel = 0.5
+    #         lin_vel_z = -2.0
+    #         ang_vel_xy = -0.05
+    #         orientation = [-5.0, -5.0]
+    #         torques = -0.0001
+    #         dof_vel = [-0.0002, -0.001]
+    #         dof_acc = [-5e-8, -2.5e-7]
+    #         base_height = [-4.0, -1.0]
+    #         feet_slip = [-0.0, -0.2]  # Before feet_air_time
+    #         feet_air_time = [1.0, 0.5]
+    #         collision = -1.
+    #         feet_stumble = -0.0
+    #         action_rate = [-0.005, -0.01]
+    #         stand_still = -0.4  # May affect spot turning
+    #         dof_pos_limits = -1.0
+    #         feet_contact_forces = [-0.05, -0.1]
+    #         gait_2_step = [-3.0, -0.0]
+    #         # gait_3_step = [-3.0, -3.0]
 
     ## Rewards V0 (small dof_acc)
     # class rewards(ElSpiderAirRoughCfg.rewards):

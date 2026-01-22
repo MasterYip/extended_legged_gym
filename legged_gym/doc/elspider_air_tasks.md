@@ -36,6 +36,8 @@ Training Profile(grey):
 ![alt text](imgs/elspider_air_slight_rough.png)
 
 ```bash
+# For 500 eps to warmup
+python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=4096 --headless --max_iterations=500
 python legged_gym/scripts/train.py --task=elspider_air_slight_rough --num_envs=4096 --headless --resume
 python legged_gym/scripts/play.py --task=elspider_air_slight_rough --num_envs=48 --checkpoint=-1  --load_run=Dec05_21-36-11_ --resume
 ```
@@ -63,7 +65,7 @@ python legged_gym/scripts/play.py --task=elspider_air_rough --num_envs=48 --chec
 **Multi Stage**
 ```bash
 # Train Stage 0 for ~550 epochs
-python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage0 --num_envs=4096 --headless
+python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage0 --num_envs=4096 --headless --max_iterations=550
 python legged_gym/scripts/train.py --task=elspider_air_rough_multi_stage1 --num_envs=4096 --headless --resume
 python legged_gym/scripts/play.py --task=elspider_air_rough_multi_stage1 --num_envs=48 --checkpoint=-1
 ```
