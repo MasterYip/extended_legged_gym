@@ -28,7 +28,7 @@ conda activate pdplanner
 
 ```bash
 python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=4096 --headless --resume
-python legged_gym/scripts/play.py --task=elspider_air_flat --num_envs=48 --checkpoint=-1  --load_run=Dec05_21-36-11_ --resume
+python legged_gym/scripts/play.py --task=elspider_air_flat --num_envs=48 --checkpoint=-1  --load_run=Jan22_11-24-04_ --resume
 ```
 
 **Slight Rough for Better Sim2Sim Robustness**:
@@ -37,9 +37,9 @@ Training Profile(grey):
 
 ```bash
 # For 500 eps to warmup
-python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=4096 --headless --max_iterations=500
+python legged_gym/scripts/train.py --task=elspider_air_flat --num_envs=4096 --headless --max_iterations=700
 python legged_gym/scripts/train.py --task=elspider_air_slight_rough --num_envs=4096 --headless --resume
-python legged_gym/scripts/play.py --task=elspider_air_slight_rough --num_envs=48 --checkpoint=-1  --load_run=Dec05_21-36-11_ --resume
+python legged_gym/scripts/play.py --task=elspider_air_slight_rough --num_envs=48 --checkpoint=-1  --load_run=Feb02_17-14-09_ --resume
 ```
 
 ### ElSpiderAir Rough Terrain

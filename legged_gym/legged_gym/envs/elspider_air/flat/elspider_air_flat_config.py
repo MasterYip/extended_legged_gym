@@ -47,8 +47,8 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
         measure_heights = False
         selected = False  # select a unique terrain type and pass all arguments
         terrain_kwargs = None  # Dict of arguments for selected terrain
-        terrain_length = 10.
-        terrain_width = 10.
+        terrain_length = 5.
+        terrain_width = 5.
         num_rows = 8  # number of terrain rows (levels)
         num_cols = 8  # number of terrain cols (types)
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
@@ -118,7 +118,7 @@ class ElSpiderAirFlatCfg(ElSpiderAirRoughCfg):
             tracking_lin_vel = 1.0
             tracking_ang_vel = 0.5
             lin_vel_z = -3.0
-            ang_vel_xy = -0.5
+            ang_vel_xy = -0.2
             orientation = [-5.0, -3.0]
             torques = -0.0001
             dof_vel = [-0.0002, -0.0004]
@@ -265,10 +265,16 @@ class ElSpiderAirSlightRoughCfg(ElSpiderAirFlatCfg):
         mesh_type = 'trimesh'  # "heightfield" # none, plane, heightfield or trimesh
 
     class rewards(ElSpiderAirFlatCfg.rewards):
-        reward_stage_threshold = 4.0
+        reward_stage_threshold = 1.0
+        reward_min_stage = 1  # Start from 1
 
         class scales(ElSpiderAirFlatCfg.rewards.scales):
             haa_nominal_pos = -0.4
+
+    class commands(ElSpiderAirFlatCfg.commands):
+        max_curriculum = 1.7
+        class ranges(ElSpiderAirFlatCfg.commands.ranges):
+            lin_vel_x = [-1.5, 1.5]  # min max [m/s]
 
 
 class ElSpiderAirFlatCfgPPO(ElSpiderAirRoughCfgPPO):
