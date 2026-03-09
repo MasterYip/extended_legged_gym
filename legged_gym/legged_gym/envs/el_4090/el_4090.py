@@ -307,66 +307,21 @@ class EL_4090(ElSpider):
         
         return total_variance_penalty
 
-    def _reward_shank_vertical_when_contact(self):
-        """
-        奖励小腿在触地时接近垂直于地面。
-        在空中时不施加惩罚。
-        
-        计算方法:
-        1. 获取小腿的方向向量(从关节指向脚底)
-        2. 计算小腿方向与垂直向下方向的夹角
-        3. 只在脚部触地时惩罚偏离垂直的角度
-        
-        Returns:
-            torch.Tensor: 惩罚值,当小腿不垂直时返回正值(被惩罚)
-        """
+    def _reward_shank_vertical(self):
+  
         # 获取小腿的刚体状态: [num_envs, num_shanks, 13]
         # 13维度: pos(3), quat(4), lin_vel(3), ang_vel(3)
         shank_states = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.shank_indices, :]
+        foot_states = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, :]
+
+        x_error = shank_states[:, :, 0] - foot_states[:, :, 0]
+        y_error = shank_states[:, :, 1] - foot_states[:, :, 1]
         
-        # 获取小腿的四元数 [num_envs, num_shanks, 4]
-        shank_quats = shank_states[:, :, 3:7]
+        # 计算小腿方向向量在XY平面的投影长度    
+        horizontal_dist = torch.sum(torch.sqrt(x_error**2 + y_error**2), dim=1)
         
-        # 小腿在局部坐标系中的方向是沿着Y轴负方向(指向脚底)
-        # 从URDF可以看到,SHANK到FOOT的关节offset主要在Y轴负方向(-0.299)
-        # 创建局部方向向量 [0, -1, 0]
-        local_direction = torch.tensor([0., -1., 0.], device=self.device, dtype=torch.float)
-        local_direction = local_direction.unsqueeze(0).unsqueeze(0).expand(self.num_envs, self.shank_indices.shape[0], -1)
-        
-        # 使用四元数将局部方向转换到世界坐标系
-        # quat_apply函数: 应用四元数旋转到向量
-        shank_direction_world = quat_apply(shank_quats, local_direction)
-        
-        # 垂直向下的方向 (世界坐标系)
-        vertical_down = torch.tensor([0., 0., -1.], device=self.device, dtype=torch.float)
-        vertical_down = vertical_down.unsqueeze(0).unsqueeze(0).expand(self.num_envs, self.shank_indices.shape[0], -1)
-        
-        # 计算小腿方向与垂直方向的夹角的余弦值
-        cos_angle = torch.sum(shank_direction_world * vertical_down, dim=-1)  # [num_envs, num_shanks]
-        
-        # 将余弦值限制在[-1, 1]范围内,避免数值误差
-        cos_angle = torch.clamp(cos_angle, -1.0, 1.0)
-        
-        # 计算与垂直方向的偏差: 1 - cos(angle)
-        # 当完全垂直时 cos(angle)=1, 偏差=0
-        # 当水平时 cos(angle)=0, 偏差=1
-        # 当反向时 cos(angle)=-1, 偏差=2
-        deviation = 1.0 - cos_angle  # [num_envs, num_shanks]
-        
-        # 获取脚部接触状态 [num_envs, num_feet]
-        # 脚部索引顺序: LB(0), LF(1), LM(2), RB(3), RF(4), RM(5)
-        # 小腿索引顺序: LB_SHANK(0), LF_SHANK(1), LM_SHANK(2), RB_SHANK(3), RF_SHANK(4), RM_SHANK(5)
-        # 顺序一致,可以直接对应
-        foot_contact = self.contact_forces[:, self.feet_indices, 2] > 1.0  # [num_envs, num_feet]
-        
-        # 只在触地时计算惩罚
-        # 使用平方偏差使惩罚更平滑
-        penalty_per_leg = torch.square(deviation) * foot_contact.float()  # [num_envs, num_shanks]
-        
-        # 对所有腿求和得到总惩罚
-        total_penalty = torch.sum(penalty_per_leg, dim=1)  # [num_envs]
-        
-        return total_penalty
+
+        return horizontal_dist
     
     def _reward_haa_tripod_symmetry(self):
         """

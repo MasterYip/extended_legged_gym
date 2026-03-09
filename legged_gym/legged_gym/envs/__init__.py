@@ -121,6 +121,9 @@ from .el_4090.el_4090_config import EL_4090_Cfg,EL_4090_PPO
 from .el_4090.el4090_spider_config import El4090SpiderCfg, El4090SpiderCfgPPO
 from .el_4090.el4090_mammal_config import El4090MammalianCfg, El4090MammalianCfgPPO
 
+from .el_4090.el_4090_safe import EL_4090_Safe
+from .el_4090.el_4090_safe_config import El4090SafeCfg, El4090SafeCfgPPO
+
 
 task_registry.register("anymal_c_rough", Anymal, AnymalCRoughCfg(), AnymalCRoughCfgPPO())
 task_registry.register("anymal_c_flat", Anymal, AnymalCFlatCfg(), AnymalCFlatCfgPPO())
@@ -210,3 +213,5 @@ task_registry.register("franka_batch_rollout", FrankaBatchRollout, FrankaBatchRo
 
 task_registry.register("el4090_spider", EL_4090, El4090SpiderCfg(), El4090SpiderCfgPPO())
 task_registry.register("el4090_mammal", EL_4090, El4090MammalianCfg(), El4090MammalianCfgPPO())
+
+task_registry.register("el_4090_safe", EL_4090_Safe, El4090SafeCfg(), El4090SafeCfgPPO())

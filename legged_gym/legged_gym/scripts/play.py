@@ -38,7 +38,7 @@ from legged_gym.utils import  get_args, export_policy_as_jit, task_registry, Log
 import numpy as np
 import torch
 import time
-
+import isaacgym.gymapi as gymapi
 
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
@@ -53,6 +53,10 @@ def play(args):
 
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
+    l_color = gymapi.Vec3(0.5, 0.5, 0.5)  # 提高亮度
+    l_ambient = gymapi.Vec3(0.1, 0.1, 0.1)  # 提高亮度
+    l_direction = gymapi.Vec3(0., 0., 1.)
+    env.gym.set_light_parameters(env.sim, 0, l_color, l_ambient, l_direction)
     obs = env.get_observations()
     # load policy
     train_cfg.runner.resume = True
@@ -67,8 +71,8 @@ def play(args):
 
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging
-    joint_index = 1 # which joint is used for logging
-    stop_state_log = 1 # number of steps before plotting states
+    joint_index = 0 # which joint is used for logging
+    stop_state_log = 200 # number of steps before plotting states
     stop_rew_log = env.max_episode_length + 1 # number of steps before print average episode rewards
     camera_position = np.array(env_cfg.viewer.pos, dtype=np.float64)
     camera_vel = np.array([1., 1., 0.])
@@ -87,13 +91,64 @@ def play(args):
         print("Running at maximum speed (no realtime constraints)")
 
     for i in range(int(env.max_episode_length*10)):
+
         step_start_time = time.time()
 
-        env.commands[:,0] = 1.5
-        env.commands[:,1] = 0.0
-        env.commands[:,2] = 0.0
-        env.commands[:,3] = 0.0
-        
+        # 键盘控制指令（wasdqe控制）
+        import sys, select, termios, tty
+        def get_key(timeout=0.01):
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                rlist, _, _ = select.select([fd], [], [], timeout)
+                if rlist:
+                    key = sys.stdin.read(1)
+                else:
+                    key = ''
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            return key
+
+        # 初始命名变量
+        if i == 0:
+            lin_vel_x = 0.0  # 前进/后退速度
+            lin_vel_y = 0.0  # 侧移速度
+            ang_vel_yaw = 0.0  # 偏航角速度
+            heading = 0.0  # 预留
+        key = get_key()
+        # 速度步长
+        lin_step = 0.1
+        yaw_step = 0.1
+        # 按键映射
+        if key == 'w':
+            lin_vel_x += lin_step
+        elif key == 's':
+            lin_vel_x -= lin_step
+        elif key == 'a':
+            lin_vel_y += lin_step
+        elif key == 'd':
+            lin_vel_y -= lin_step
+        elif key == 'q':
+            ang_vel_yaw += yaw_step
+        elif key == 'e':
+            ang_vel_yaw -= yaw_step
+        elif key == 'z':
+            lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
+        # 限制范围
+        lin_vel_x = np.clip(lin_vel_x, -1.5, 1.5)
+        lin_vel_x = 1.0
+        lin_vel_y = np.clip(lin_vel_y, -1.0, 1.0)
+        lin_vel_y = 0.2
+        ang_vel_yaw = np.clip(ang_vel_yaw, -1.5, 1.5)
+        heading = np.clip(heading, -1.0, 1.0)
+        command = [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
+        import torch
+        env.commands[:] = torch.tensor(command, dtype=env.commands.dtype, device=env.commands.device)
+
+
+        print(f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f}", end="\r")
+
         actions = policy(obs.detach())
         obs, _, rews, dones, infos = env.step(actions.detach())
         
@@ -113,7 +168,11 @@ def play(args):
                         'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale,
                         'dof_pos': env.dof_pos[robot_index, joint_index].item(),
                         'dof_vel': env.dof_vel[robot_index, joint_index].item(),
+                        'dof_vel_1': env.dof_vel[robot_index, 1].item(),
+                        'dof_vel_2': env.dof_vel[robot_index, 2].item(),
                         'dof_torque': env.torques[robot_index, joint_index].item(),
+                        'dof_torque_1': env.torques[robot_index, 1].item(),
+                        'dof_torque_2': env.torques[robot_index, 2].item(),
                         'command_x': env.commands[robot_index, 0].item(),
                         'command_y': env.commands[robot_index, 1].item(),
                         'command_yaw': env.commands[robot_index, 2].item(),
@@ -168,7 +227,7 @@ if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = False
-    ENABLE_LOGGING = False
+    ENABLE_LOGGING = True
     REALTIME_MODE = True  # Set to False to run at maximum speed
     args = get_args()
     play(args)
