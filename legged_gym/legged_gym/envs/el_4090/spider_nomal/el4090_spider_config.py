@@ -1,18 +1,45 @@
-from legged_gym.envs.el_4090.el4090_spider_config import El4090SpiderCfg,El4090SpiderCfgPPO
+# SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+# contributors may be used to endorse or promote products derived from
+# this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Copyright (c) 2021 ETH Zurich, Nikita Rudin
+
+from legged_gym.envs.elspider_air.mixed_terrains.elspider_air_rough_config import ElSpiderAirRoughCfg, ElSpiderAirRoughCfgPPO
 
 
-
-class El4090SafeCfg(El4090SpiderCfg):
-    class env(El4090SpiderCfg.env):
-        num_envs = 10
-        # 原始 66 维观测 + u_mu 77 维 = 143 维
-        num_observations = 143
+class El4090SpiderCfg(ElSpiderAirRoughCfg):
+    class env(ElSpiderAirRoughCfg.env):
+        num_observations = 66
         # Debug settings
         debug_mode = False  # Enable debug output
         debug_interval = 100  # Print debug info every N steps
         debug_env_id = 0  # Which environment to debug (0-based index)
 
-    class terrain(El4090SpiderCfg.terrain):
+    class terrain(ElSpiderAirRoughCfg.terrain):
         mesh_type = 'plane'  # "heightfield" # none, plane, heightfield or trimesh
         horizontal_scale = 0.1  # [m]
         vertical_scale = 0.005  # [m]
@@ -39,10 +66,10 @@ class El4090SafeCfg(El4090SpiderCfg):
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
 
-    class asset(El4090SpiderCfg.asset):
+    class asset(ElSpiderAirRoughCfg.asset):
         self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
 
-    class control(El4090SpiderCfg.control):
+    class control(ElSpiderAirRoughCfg.control):
         # PD Drive parameters matching Anymal:
         stiffness = {'HAA': 120., 
                      'HFE': 120., 
@@ -59,7 +86,7 @@ class El4090SafeCfg(El4090SpiderCfg):
         actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
 
 
-    class asset(El4090SpiderCfg.asset):
+    class asset(ElSpiderAirRoughCfg.asset):
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/el_4090/urdf/el_4090.urdf"
         name = "el_4090"
         foot_name = "FOOT"
@@ -71,7 +98,7 @@ class El4090SafeCfg(El4090SpiderCfg):
         self_collisions = 0 # 1 to disable, 0 to enable...bitwise filter
         flip_visual_attachments = False
 
-    class init_state(El4090SpiderCfg.init_state):
+    class init_state(ElSpiderAirRoughCfg.init_state):
         pos = [0.0, 0.0, 0.47]  # x,y,z [m]
         default_joint_angles = {  # = target angles [rad] when action = 0.0
             "RF_HAA": 0.0,
@@ -97,7 +124,7 @@ class El4090SafeCfg(El4090SpiderCfg):
         }
 
     ## Rewards V1 (normal dof_acc)
-    class rewards(El4090SpiderCfg.rewards):
+    class rewards(ElSpiderAirRoughCfg.rewards):
         max_contact_force = 300.
         base_height_target = 0.5
         only_positive_rewards = False
@@ -135,7 +162,7 @@ class El4090SafeCfg(El4090SpiderCfg):
             # feet_async = -10
             # feet_sync = -10
 
-    class commands(El4090SpiderCfg.commands):
+    class commands(ElSpiderAirRoughCfg.commands):
         curriculum = True
         max_curriculum = 1.5
         # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
@@ -143,13 +170,13 @@ class El4090SafeCfg(El4090SpiderCfg):
         resampling_time = 4.  # time before command are changed[s]
         heading_command = False  # if true: compute ang vel command from heading error
 
-        class ranges(El4090SpiderCfg.commands.ranges):
+        class ranges(ElSpiderAirRoughCfg.commands.ranges):
             lin_vel_x = [-1.5, 1.5]  # min max [m/s]
             lin_vel_y = [-1, 1]   # min max [m/s]
             ang_vel_yaw = [-1.5, 1.5]    # min max [rad/s]
             heading = [-1, 1]
 
-    class domain_rand(El4090SpiderCfg.domain_rand):
+    class domain_rand(ElSpiderAirRoughCfg.domain_rand):
         # on ground planes the friction combination mode is averaging, i.e total friction = (foot_friction + 1.)/2.
         randomize_friction = True
         friction_range = [0.3, 1.25]
@@ -159,7 +186,7 @@ class El4090SafeCfg(El4090SpiderCfg):
         push_interval_s = 3
         max_push_vel_xy = 1.
 
-    class noise(El4090SpiderCfg.noise):
+    class noise(ElSpiderAirRoughCfg.noise):
         add_noise = True
         noise_level = 1.5  # scales other values
 
@@ -171,83 +198,27 @@ class El4090SafeCfg(El4090SpiderCfg):
             gravity = 0.5
             height_measurements = 0.1
 
-    class safety:
-        # ------------------------------------------------------------------
-        # 开关
-        # ------------------------------------------------------------------
-        enable_atacom        = True
-        clip_nominal_actions = True   # 是否在送入 ATACOM 前裁剪名义动作
-        warmup_steps         = 0      # 前 N 步跳过 ATACOM（用于调试）
-
-        # ------------------------------------------------------------------
-        # ATACOM 算法超参数
-        # ------------------------------------------------------------------
-        lambda_retract = 1.0    # 收缩增益 λ：控制向约束流形收缩的速率
-        beta           = 2.0    # 松弛变量动力学系数
-        dt             = 0.01   # 控制步长（s），建议与仿真 dt 保持一致
-
-        # ------------------------------------------------------------------
-        # 关节限位（列表长度须为 18）
-        # ------------------------------------------------------------------
-        q_max   = [2.95]  * 18    # 关节位置上限（rad）
-        q_min   = [-2.95] * 18    # 关节位置下限（rad）
-        dq_max  = [14.2]  * 18    # 关节速度上限（rad/s）
-        tau_max = [76] * 18    # 关节力矩上限（N·m）
-
-        # ------------------------------------------------------------------
-        # 机身限位
-        # ------------------------------------------------------------------
-        # 三轴倾角上限（rad），对应机体系欧拉角约束
-        phi_max = [0.14, 0.14, 0.24] # roll, pitch, yaw 上限（rad）
-
-        z_min = 0.2    # 机身高度下限（m）
-        z_max = 0.8   # 机身高度上限（m）
-
-        # ------------------------------------------------------------------
-        # 调试
-        # ------------------------------------------------------------------
-        log_info = False    # 是否每步将 ATACOM info 写入 extras
-
-class El4090SafeCfgPPO( El4090SpiderCfgPPO ):
-    seed = 1
-    runner_class_name = 'OnPolicyRunner'
-    class policy:
-        init_noise_std = 0.3
+class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
+    class policy(ElSpiderAirRoughCfgPPO.policy):
         actor_hidden_dims = [512, 256, 128]
         critic_hidden_dims = [512, 256, 128]
-        activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
-        # only for 'ActorCriticRecurrent':
-        # rnn_type = 'lstm'
-        # rnn_hidden_size = 512
-        # rnn_num_layers = 1
-        
-    class algorithm:
-        # training params
-        value_loss_coef = 1.0
-        use_clipped_value_loss = True
-        clip_param = 0.2
+        activation = 'elu'  # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+
+    class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
         entropy_coef = 0.01
-        num_learning_epochs = 5
-        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
-        learning_rate = 1.e-3 #5.e-4
-        schedule = 'adaptive' # could be adaptive, fixed
-        gamma = 0.99
-        lam = 0.95
-        desired_kl = 0.01
-        max_grad_norm = 1.
 
-    class runner:
-        policy_class_name = 'ActorCritic'
-        algorithm_class_name = 'PPO'
-        num_steps_per_env = 24 # per iteration
-        max_iterations = 1500 # number of policy updates
-
-        # logging
-        save_interval = 50 # check for potential saves every this many iterations
-        experiment_name = 'el_4090_safe'
+    class runner (ElSpiderAirRoughCfgPPO.runner):
         run_name = ''
-        # load and resume
-        resume = False
-        load_run = -1 # -1 = last run
-        checkpoint = -1 # -1 = last saved model
-        resume_path = None # updated from load_run and chkpt
+        experiment_name = 'flat_el4090_spider'
+        load_run = -1
+        max_iterations = 3000
+        multi_stage_rewards = True
+
+    class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
+        # Symmetry augmentation configuration
+        class symmetry_cfg:
+            use_data_augmentation = True
+            use_mirror_loss = True
+            mirror_loss_coeff = 0.6
+            data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_elair_xsym_obs_act"
+        

@@ -49,7 +49,7 @@ from legged_gym import LEGGED_GYM_ROOT_DIR
 from .el_4090_config import EL_4090_Cfg,EL_4090_PPO
 from legged_gym.envs.elspider_air.elspider import ElSpider
 
-from legged_gym.envs.el_4090.el4090_spider_config import El4090SpiderCfg
+from legged_gym.envs.el_4090.spider_nomal.el4090_spider_config import El4090SpiderCfg
 
 
 class EL_4090(ElSpider):

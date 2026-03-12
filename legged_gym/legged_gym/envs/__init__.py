@@ -116,13 +116,11 @@ from .anymal_c.mixed_terrains.anymal_c_rough_teacher_config import AnymalCRoughT
 from .anymal_c.mixed_terrains.anymal_c_rough_student_config import AnymalCRoughStudentCfg, AnymalCRoughStudentCfgPPO
 from .anymal_c.anymal import AnymalStudent
 
-from .el_4090.el_4090 import EL_4090
-from .el_4090.el_4090_config import EL_4090_Cfg,EL_4090_PPO
-from .el_4090.el4090_spider_config import El4090SpiderCfg, El4090SpiderCfgPPO
-from .el_4090.el4090_mammal_config import El4090MammalianCfg, El4090MammalianCfgPPO
+from .el_4090.spider_nomal.el_4090 import EL_4090
+from .el_4090.spider_nomal.el4090_spider_config import El4090SpiderCfg, El4090SpiderCfgPPO
 
-from .el_4090.el_4090_safe import EL_4090_Safe
-from .el_4090.el_4090_safe_config import El4090SafeCfg, El4090SafeCfgPPO
+from .el_4090.safe.el_4090_safe import EL_4090_Safe
+from .el_4090.safe.el_4090_safe_config import El4090SafeCfg, El4090SafeCfgPPO
 
 
 task_registry.register("anymal_c_rough", Anymal, AnymalCRoughCfg(), AnymalCRoughCfgPPO())
@@ -211,7 +209,7 @@ task_registry.register("anymal_c_rough_student", AnymalStudent, AnymalCRoughStud
 task_registry.register("franka", Franka, FrankaCfg(), FrankaCfgPPO())
 task_registry.register("franka_batch_rollout", FrankaBatchRollout, FrankaBatchRolloutCfg(), FrankaBatchRolloutCfgPPO)
 
-task_registry.register("el4090_spider", EL_4090, El4090SpiderCfg(), El4090SpiderCfgPPO())
-task_registry.register("el4090_mammal", EL_4090, El4090MammalianCfg(), El4090MammalianCfgPPO())
 
+
+task_registry.register("el4090_spider_normal", EL_4090, El4090SpiderCfg(), El4090SpiderCfgPPO())
 task_registry.register("el_4090_safe", EL_4090_Safe, El4090SafeCfg(), El4090SafeCfgPPO())
