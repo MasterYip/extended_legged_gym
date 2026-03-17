@@ -16,16 +16,18 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
     """Configuration for ElSpider with LiDAR in confined spaces."""
     
     class env(LeggedRobotCfg.env):
-        num_envs = 1024  # Reduced from 4096 to avoid PhysX memory issues
+        num_envs = 2048  # Increased: more envs = more diverse experience per update
         num_actions = 18  # 6 legs × 3 joints
         
         # Base observations: 3+3+3+3+18+18+18 = 66
         # Height measurements: 17×11 = 187
         # LiDAR observations: 12×8 = 96
+        # Goal observations: 2 (direction_angle, normalized_distance)
         num_lidar_obs = 96  # num_theta_bins × num_phi_bins
-        num_observations = 66 + 187 + 96  # 349 total
+        num_goal_obs = 2    # goal direction angle + normalized distance
+        num_observations = 66 + 187 + 96 + 2  # 351 total
         
-        episode_length_s = 20  # Episode length in seconds
+        episode_length_s = 24  # Longer episode to reach goal
 
     class sim(LeggedRobotCfg.sim):
         class physx(LeggedRobotCfg.sim.physx):
@@ -78,25 +80,29 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
         measured_points_y = [-0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5]
         
         # Confined terrain settings
-        terrain_length = 8.0
-        terrain_width = 8.0
-        num_rows = 10  # Number of terrain difficulty levels
-        num_cols = 6   # Number of terrain types
+        terrain_length = 10.0  # Corridor length
+        terrain_width = 10.0
+        num_rows = 8   # More difficulty levels for corridor progression
+        num_cols = 4   # Terrain type columns
         
-        # Confined terrain proportions: [maze, tunnel, barrier, timber_piles, confined_gap, column_obstacles, wall_with_gap]
-        # Adjust proportions to feature the new maze terrain significantly
-        confined_terrain_proportions = [0.4, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+        # Confined terrain proportions: [corridor, timber, column, maze, tunnel/barrier, gap, corridor_easy]
+        # IMPORTANT: keep tunnel/barrier at 0.0 for goal-reaching training to avoid closed, unreachable maps
+        confined_terrain_proportions = [0.45, 0.20, 0.15, 0.10, 0.00, 0.05, 0.05]
         
         # Spawn area size for robot placement
-        spawn_area_size = 2.0  # meters
+        spawn_area_size = 1.2  # Smaller central free area to reduce local hovering near center
         
-        # Difficulty scaling
-        difficulty_scale = 0.5  # Start with medium difficulty for maze
+        # Difficulty scaling - higher for narrower corridors
+        difficulty_scale = 0.8  # Real difficulty: corridors get narrow
         
         slope_treshold = 0.75  # Slopes above this threshold will be corrected
+        
+        # Goal navigation settings
+        goal_navigation = True  # Enable start→goal navigation mode
+        goal_offset_y = 3.0     # Goal position Y offset from env_origin [meters]
 
     class init_state(LeggedRobotCfg.init_state):
-        pos = [0.0, 0.0, 0.6]  # x,y,z [m] - Increased from 0.4 to prevent spawning into ground
+        pos = [0.0, 0.0, 0.45]  # x,y,z [m] - Closer to ground: less falling damage on spawn
         default_joint_angles = {
             "RF_HAA": 0.0, "RM_HAA": 0.0, "RB_HAA": 0.0,
             "LF_HAA": 0.0, "LM_HAA": 0.0, "LB_HAA": 0.0,
@@ -131,7 +137,7 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
         friction_range = [0.5, 1.25]
         randomize_base_mass = True
         added_mass_range = [-3., 3.]
-        push_robots = True
+        push_robots = False
         push_interval_s = 15
         max_push_vel_xy = 1.0
 
@@ -155,24 +161,28 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
         
         # Obstacle avoidance parameters
         safe_obstacle_dist = 0.5    # Distance considered safe (meters)
-        danger_obstacle_dist = 0.2  # Distance considered dangerous (meters)
-        collision_threshold = 0.08  # Distance for collision termination (meters) - reduced from 0.15
+        danger_obstacle_dist = 0.15 # REDUCED from 0.2: penalty only fires when very close
+        collision_threshold = 0.03  # REDUCED from 0.05: only terminate on actual collision (3cm)
         
-        # Termination protection - disable collision termination during early training steps
-        collision_termination_after_steps = 10  # Only terminate after this many steps
-        allow_initial_contact_steps = 5  # Allow contact termination grace period
+        # Termination protection - generous grace period
+        collision_termination_after_steps = 200  # INCREASED from 50: let robot survive much longer
+        allow_initial_contact_steps = 30  # Grace period at episode start
         
-        # Multi-stage rewards
-        multi_stage_rewards = True
-        reward_stage_threshold = 5.0
+        # Multi-stage rewards disabled
+        multi_stage_rewards = False
+        reward_stage_threshold = 80.0
         reward_min_stage = 0
         reward_max_stage = 2
+        
+        # Goal navigation reward parameters
+        goal_reach_threshold = 1.0    # Distance to consider goal reached [meters]
+        goal_max_distance = 8.0       # Max expected distance to goal [meters] (for normalization)
 
         class scales(LeggedRobotCfg.rewards.scales):
             # Standard locomotion rewards
-            termination = -0.0
-            tracking_lin_vel = 4.0   # 1.5 -> 4.0: Encorage moving forward
-            tracking_ang_vel = 0.8
+            termination = -2.0         # Penalize episode termination
+            tracking_lin_vel = 0.5     # Low: ElSpider convention mismatch, goal_reaching handles movement
+            tracking_ang_vel = 0.5     # Low: goal heading system handles turning
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
             orientation = -0.2
@@ -183,18 +193,24 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
             feet_air_time = 0.8
             collision = -1.0
             feet_stumble = -0.0
-            action_rate = -0.002
-            stand_still = -0.1
+            action_rate = -0.01        # Moderate smoothness penalty
+            stand_still = -0.4         # Stronger penalty for not moving
             dof_pos_limits = -1.0
             feet_slip = -0.2
             
             # Confined space specific rewards
-            obstacle_avoidance = 5.0     # 2.0 -> 5.0
-            collision_penalty = -20.0    # -5.0 -> -20.0
-            exploration = 2.0            # 0.5 -> 2.0
+            obstacle_avoidance = 0.3    # Reward keeping safe distance
+            collision_penalty = -0.2    # Light penalty, don't dominate
+            exploration = 0.0           # Disabled: goal system handles movement
+            
+            # Goal-directed navigation rewards
+            goal_reaching = 15.0        # DOMINANT reward: velocity toward goal
+            goal_progress = 6.0         # Dense reward on distance reduction per step
+            goal_bonus = 30.0           # Large bonus for reaching goal
+            goal_heading = 1.5          # Heading guidance, gated by movement speed
             
             # Gait rewards
-            gait_2_step = -3.0
+            gait_2_step = -0.8
 
         class async_gait_scheduler:
             dof_align = 0.5
@@ -202,44 +218,47 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
             reward_foot_z_align = [0.2, 0.05]
 
     class commands(LeggedRobotCfg.commands):
-        curriculum = False
+        curriculum = True  # Enable: start with slow commands, increase over time
         max_curriculum = 1.0
         num_commands = 4
-        resampling_time = 10.0
-        heading_command = True
+        resampling_time = 10.0  # Longer resampling: goal provides consistent direction
+        heading_command = True  # Will be overridden to use goal heading
+        goal_directed = True    # Use goal position to generate heading commands
         
         class ranges:
-            lin_vel_x = [-0.5, 0.8]   # Slower speeds for confined space
-            lin_vel_y = [-0.4, 0.4]
-            ang_vel_yaw = [-0.5, 0.5]
-            heading = [-3.14, 3.14]
+            lin_vel_x = [0.0, 1.2]    # Forward only toward goal (no backward)
+            lin_vel_y = [-0.3, 0.3]   # Small lateral for obstacle avoidance
+            ang_vel_yaw = [-1.0, 1.0] # Allow turning to face goal
+            heading = [-3.14, 3.14]   # Will be overridden by goal heading
 
 
 class ElSpiderLidarConfinedCfgPPO(LeggedRobotCfgPPO):
     """PPO training configuration for ElSpider LiDAR confined space task."""
     
     class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.01
-        learning_rate = 1e-3
+        entropy_coef = 0.001          # Low: prevent entropy bonus from pushing noise_std up
+        learning_rate = 1e-3           # Faster learning in early stages
         num_learning_epochs = 5
         gamma = 0.99
         lam = 0.95
         num_mini_batches = 4
+        desired_kl = 0.012            # RELAXED from 0.008: allow larger updates to escape plateau
+        schedule = 'adaptive'         # Use adaptive LR schedule based on KL divergence
 
     class policy(LeggedRobotCfgPPO.policy):
-        init_noise_std = 1.0
-        actor_hidden_dims = [512, 256, 128]
-        critic_hidden_dims = [512, 256, 128]
+        init_noise_std = 0.5           # Standard: entropy_coef handles exploration
+        actor_hidden_dims = [256, 128, 64]   # Smaller network: easier to train, less overfitting
+        critic_hidden_dims = [256, 128, 64]
         activation = 'elu'
 
     class runner(LeggedRobotCfgPPO.runner):
         run_name = ''
         experiment_name = 'elspider_lidar_confined'
         load_run = -1
-        max_iterations = 5000
+        max_iterations = 22600  # Extended: resuming from checkpoint with boosted rewards
         
-        # Enable multi-stage rewards
-        multi_stage_rewards = True
+        # Multi-stage rewards disabled (env config controls this)
+        multi_stage_rewards = False
         
         # Checkpointing
         save_interval = 100
