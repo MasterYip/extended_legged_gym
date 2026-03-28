@@ -11,6 +11,9 @@ Configuration for ElSpider LiDAR Confined Space Navigation Task
 
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 
+SAME_DIM_POLICY_HIDDEN_DIMS = [128, 64, 32]
+SAME_DIM_INIT_NOISE_STD = 0.35
+
 
 class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
     """Configuration for ElSpider with LiDAR in confined spaces."""
@@ -45,8 +48,8 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
         min_range = 0.1  # meters
         
         # Grid LiDAR settings
-        horizontal_line_num = 36  # Number of horizontal rays
-        vertical_line_num = 10   # Number of vertical rays
+        horizontal_line_num = 48  # More horizontal rays to catch thin columns
+        vertical_line_num = 12   # More vertical rays to catch low obstacles
         horizontal_fov_deg_min = -180  # Horizontal FOV min (degrees)
         horizontal_fov_deg_max = 180   # Horizontal FOV max (degrees)
         vertical_fov_deg_min = -30     # Vertical FOV min (degrees)
@@ -85,37 +88,57 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
         num_rows = 8   # More difficulty levels for corridor progression
         num_cols = 4   # Terrain type columns
         
-        # Confined terrain proportions: [corridor, timber, column, maze, tunnel/barrier, gap, corridor_easy]
-        # IMPORTANT: keep tunnel/barrier at 0.0 for goal-reaching training to avoid closed, unreachable maps
-        confined_terrain_proportions = [0.45, 0.20, 0.15, 0.10, 0.00, 0.05, 0.05]
+        # Final task: only a narrow uniform corridor, with sparse small columns inside it.
+        confined_terrain_proportions = [1.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
         
         # Spawn area size for robot placement
-        spawn_area_size = 1.2  # Smaller central free area to reduce local hovering near center
+        spawn_area_size = 1.0  # Smaller central free area to reduce local hovering near center
+        spawn_area_flat = True
         
-        # Difficulty scaling - higher for narrower corridors
-        difficulty_scale = 0.8  # Real difficulty: corridors get narrow
+        # Moderate difficulty so the robot can still complete the course.
+        difficulty_scale = 0.16
+        corridor_only = True
+        corridor_width_override = 1.45
+        corridor_uniform_width = True
+        corridor_obstacle_density_override = 0.08
+        corridor_obstacle_size_override = 0.12
+        corridor_obstacle_height_override = 0.08
         
         slope_treshold = 0.75  # Slopes above this threshold will be corrected
         
         # Goal navigation settings
         goal_navigation = True  # Enable start→goal navigation mode
-        goal_offset_y = 3.0     # Goal position Y offset from env_origin [meters]
+        goal_offset_y = 4.8     # Put goal near the far end without hitting the boundary
 
     class init_state(LeggedRobotCfg.init_state):
-        pos = [0.0, 0.0, 0.45]  # x,y,z [m] - Closer to ground: less falling damage on spawn
-        default_joint_angles = {
-            "RF_HAA": 0.0, "RM_HAA": 0.0, "RB_HAA": 0.0,
-            "LF_HAA": 0.0, "LM_HAA": 0.0, "LB_HAA": 0.0,
-            "RF_HFE": 0.6, "RM_HFE": 0.6, "RB_HFE": 0.6,
-            "LF_HFE": 0.6, "LM_HFE": 0.6, "LB_HFE": 0.6,
-            "RF_KFE": 0.6, "RM_KFE": 0.6, "RB_KFE": 0.6,
-            "LF_KFE": 0.6, "LM_KFE": 0.6, "LB_KFE": 0.6,
+        pos = [0.0, 0.0, 0.4]  # x,y,z [m]
+        default_joint_angles = {  # = target angles [rad] when action = 0.0
+            "RF_HAA": 0.0,
+            "RM_HAA": 0.0,
+            "RB_HAA": 0.0,
+            "LF_HAA": 0.0,
+            "LM_HAA": 0.0,
+            "LB_HAA": 0.0,
+
+            "RF_HFE": 0.6,
+            "RM_HFE": 0.6,
+            "RB_HFE": 0.6,
+            "LF_HFE": 0.6,
+            "LM_HFE": 0.6,
+            "LB_HFE": 0.6,
+
+            "RF_KFE": 0.6,
+            "RM_KFE": 0.6,
+            "RB_KFE": 0.6,
+            "LF_KFE": 0.6,
+            "LM_KFE": 0.6,
+            "LB_KFE": 0.6,
         }
 
     class control(LeggedRobotCfg.control):
         # PD Drive parameters
-        stiffness = {'HAA': 80., 'HFE': 80., 'KFE': 80.}  # [N*m/rad]
-        damping = {'HAA': 2., 'HFE': 2., 'KFE': 2.}       # [N*m*s/rad]
+        stiffness = {'HAA': 90., 'HFE': 90., 'KFE': 90.}  # [N*m/rad]
+        damping = {'HAA': 3.5, 'HFE': 3.5, 'KFE': 3.5}    # [N*m*s/rad]
         
         action_scale = 0.5
         decimation = 4
@@ -134,9 +157,9 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
 
     class domain_rand(LeggedRobotCfg.domain_rand):
         randomize_friction = True
-        friction_range = [0.5, 1.25]
+        friction_range = [0.7, 1.2]
         randomize_base_mass = True
-        added_mass_range = [-3., 3.]
+        added_mass_range = [-1.5, 1.5]
         push_robots = False
         push_interval_s = 15
         max_push_vel_xy = 1.0
@@ -155,13 +178,13 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
             lidar = 0.05  # LiDAR observation noise
 
     class rewards(LeggedRobotCfg.rewards):
-        base_height_target = 0.25
+        base_height_target = 0.34
         max_contact_force = 500.
         only_positive_rewards = False  # Allow negative rewards for collision
         
         # Obstacle avoidance parameters
-        safe_obstacle_dist = 0.5    # Distance considered safe (meters)
-        danger_obstacle_dist = 0.15 # REDUCED from 0.2: penalty only fires when very close
+        safe_obstacle_dist = 0.65    # Slightly safer corridor tracking
+        danger_obstacle_dist = 0.20  # Penalty starts a bit earlier in the final task
         collision_threshold = 0.03  # REDUCED from 0.05: only terminate on actual collision (3cm)
         
         # Termination protection - generous grace period
@@ -175,42 +198,47 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
         reward_max_stage = 2
         
         # Goal navigation reward parameters
-        goal_reach_threshold = 1.0    # Distance to consider goal reached [meters]
-        goal_max_distance = 8.0       # Max expected distance to goal [meters] (for normalization)
+        goal_reach_threshold = 0.9    # Tighten goal reach criterion for the final task
+        goal_max_distance = 6.5       # Max expected distance to goal [meters] (for normalization)
 
         class scales(LeggedRobotCfg.rewards.scales):
             # Standard locomotion rewards
             termination = -2.0         # Penalize episode termination
-            tracking_lin_vel = 0.5     # Low: ElSpider convention mismatch, goal_reaching handles movement
-            tracking_ang_vel = 0.5     # Low: goal heading system handles turning
+            tracking_lin_vel = 1.0     # Stronger forward gait tracking
+            tracking_ang_vel = 0.6     # Slightly stronger to keep heading stable
             lin_vel_z = -2.0
-            ang_vel_xy = -0.05
-            orientation = -0.2
+            ang_vel_xy = -0.1
+            orientation = -0.45
             torques = -0.00001
             dof_vel = -0.
             dof_acc = -2.5e-8
-            base_height = -1.0
-            feet_air_time = 0.8
-            collision = -1.0
+            base_height = -1.2
+            feet_air_time = 1.0
+            collision = -1.5
             feet_stumble = -0.0
-            action_rate = -0.01        # Moderate smoothness penalty
-            stand_still = -0.4         # Stronger penalty for not moving
+            action_rate = -0.012       # Reduce over-smoothing to avoid freezing
+            stand_still = -0.30        # Stronger anti-idle pressure
             dof_pos_limits = -1.0
-            feet_slip = -0.2
+            feet_slip = -0.4
             
             # Confined space specific rewards
-            obstacle_avoidance = 0.3    # Reward keeping safe distance
-            collision_penalty = -0.2    # Light penalty, don't dominate
+            obstacle_avoidance = 0.25   # Keep obstacle margin without dominating gait
+            collision_penalty = -0.20   # Penalize danger but avoid over-conservative policy
+            corridor_centering = 0.45   # Keep the robot away from walls in open corridors
             exploration = 0.0           # Disabled: goal system handles movement
+
+            # Active obstacle negotiation rewards
+            obstacle_maneuvering = 0.12
+            retreat = 0.05
             
             # Goal-directed navigation rewards
-            goal_reaching = 15.0        # DOMINANT reward: velocity toward goal
-            goal_progress = 6.0         # Dense reward on distance reduction per step
-            goal_bonus = 30.0           # Large bonus for reaching goal
-            goal_heading = 1.5          # Heading guidance, gated by movement speed
+            goal_reaching = 6.5         # Balance objective against gait preservation
+            goal_progress = 4.5         # Increase dense forward incentive
+            goal_bonus = 16.0           # Terminal objective remains meaningful
+            goal_heading = 0.8          # Heading guidance, gated by movement speed
             
             # Gait rewards
-            gait_2_step = -0.8
+            gait_2_step = 0.8
 
         class async_gait_scheduler:
             dof_align = 0.5
@@ -226,8 +254,8 @@ class ElSpiderLidarConfinedCfg(LeggedRobotCfg):
         goal_directed = True    # Use goal position to generate heading commands
         
         class ranges:
-            lin_vel_x = [0.0, 1.2]    # Forward only toward goal (no backward)
-            lin_vel_y = [-0.3, 0.3]   # Small lateral for obstacle avoidance
+            lin_vel_x = [0.12, 0.95]   # Push a clearer forward command to avoid idle/backward bias
+            lin_vel_y = [-0.2, 0.2]   # Moderate lateral commands for cleaner gait
             ang_vel_yaw = [-1.0, 1.0] # Allow turning to face goal
             heading = [-3.14, 3.14]   # Will be overridden by goal heading
 
@@ -236,19 +264,19 @@ class ElSpiderLidarConfinedCfgPPO(LeggedRobotCfgPPO):
     """PPO training configuration for ElSpider LiDAR confined space task."""
     
     class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.001          # Low: prevent entropy bonus from pushing noise_std up
-        learning_rate = 1e-3           # Faster learning in early stages
+        entropy_coef = 0.0006         # Slightly more exploration for robust obstacle handling
+        learning_rate = 7e-4          # Smoother policy updates for gait stability
         num_learning_epochs = 5
         gamma = 0.99
         lam = 0.95
         num_mini_batches = 4
-        desired_kl = 0.012            # RELAXED from 0.008: allow larger updates to escape plateau
+        desired_kl = 0.008            # Tighter updates for stability
         schedule = 'adaptive'         # Use adaptive LR schedule based on KL divergence
 
     class policy(LeggedRobotCfgPPO.policy):
-        init_noise_std = 0.5           # Standard: entropy_coef handles exploration
-        actor_hidden_dims = [256, 128, 64]   # Smaller network: easier to train, less overfitting
-        critic_hidden_dims = [256, 128, 64]
+        init_noise_std = 0.25
+        actor_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        critic_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
         activation = 'elu'
 
     class runner(LeggedRobotCfgPPO.runner):
@@ -324,3 +352,569 @@ class ElSpiderLidarTunnelCfgPPO(ElSpiderLidarConfinedCfgPPO):
     
     class runner(ElSpiderLidarConfinedCfgPPO.runner):
         experiment_name = 'elspider_lidar_tunnel'
+
+
+class ElSpiderLidarFlatPretrainCfg(ElSpiderLidarConfinedCfg):
+    """Flat pretraining task with exactly the same obs/action dimensions as confined task.
+
+    This task is used for stage-1 pretraining, then weights can be resumed on
+    `elspider_lidar_confined` directly without network shape mismatch.
+    """
+
+    class terrain(ElSpiderLidarConfinedCfg.terrain):
+        mesh_type = 'plane'
+        curriculum = False
+        measure_heights = True
+        goal_navigation = False
+        goal_offset_y = 2.0
+
+    class commands(ElSpiderLidarConfinedCfg.commands):
+        class ranges(ElSpiderLidarConfinedCfg.commands.ranges):
+            lin_vel_x = [0.0, 0.8]
+            lin_vel_y = [-0.2, 0.2]
+            ang_vel_yaw = [-0.8, 0.8]
+
+    class domain_rand(ElSpiderLidarConfinedCfg.domain_rand):
+        randomize_friction = False
+        randomize_base_mass = False
+        push_robots = False
+
+    class rewards(ElSpiderLidarConfinedCfg.rewards):
+        class scales(ElSpiderLidarConfinedCfg.rewards.scales):
+            tracking_lin_vel = 1.0
+            tracking_ang_vel = 1.0
+            orientation = -0.25
+            base_height = -1.0
+            action_rate = -0.01
+            feet_slip = -0.15
+            collision = -0.5
+            obstacle_avoidance = 0.0
+            collision_penalty = 0.0
+            goal_reaching = 10.0
+            goal_progress = 6.0
+            goal_bonus = 25.0
+            stand_still = -0.35
+
+
+class ElSpiderLidarFlatPretrainCfgPPO(ElSpiderLidarConfinedCfgPPO):
+    """PPO config for flat pretraining with same network structure."""
+
+    class algorithm(ElSpiderLidarConfinedCfgPPO.algorithm):
+        entropy_coef = 0.0003
+        desired_kl = 0.008
+
+    class runner(ElSpiderLidarConfinedCfgPPO.runner):
+        experiment_name = 'elspider_lidar_flat_pretrain'
+        max_iterations = 8000
+
+
+class ElSpiderLidarPoseAdaptSameDimCfg(ElSpiderLidarConfinedCfg):
+    """Stage-A: pose/posture adaptation style task (same obs/action dimensions)."""
+
+    class terrain(ElSpiderLidarConfinedCfg.terrain):
+        mesh_type = 'plane'
+        curriculum = False
+        measure_heights = True
+        goal_navigation = False
+
+    class commands(ElSpiderLidarConfinedCfg.commands):
+        goal_directed = False
+        heading_command = False
+        curriculum = False
+        resampling_time = 4.0
+
+        class ranges(ElSpiderLidarConfinedCfg.commands.ranges):
+            lin_vel_x = [-0.3, 0.3]
+            lin_vel_y = [-0.2, 0.2]
+            ang_vel_yaw = [-0.3, 0.3]
+
+    class domain_rand(ElSpiderLidarConfinedCfg.domain_rand):
+        randomize_friction = False
+        randomize_base_mass = False
+        push_robots = False
+
+    class rewards(ElSpiderLidarConfinedCfg.rewards):
+        base_height_target = 0.34
+        only_positive_rewards = True
+        goal_reach_threshold = 0.20
+        terminate_on_goal_reached = False
+
+        class scales(ElSpiderLidarConfinedCfg.rewards.scales):
+            tracking_lin_vel = 0.4
+            tracking_ang_vel = 0.2
+            orientation = -6.0
+            base_height = -10.0
+            action_rate = -0.002
+            stand_still = -0.05
+            collision = -0.3
+            gait_2_step = -2.0
+            obstacle_avoidance = 0.0
+            collision_penalty = 0.0
+            goal_reaching = 0.0
+            goal_progress = 0.0
+            goal_bonus = 0.0
+            goal_heading = 0.0
+
+
+class ElSpiderLidarPoseAdaptSameDimCfgPPO(ElSpiderLidarConfinedCfgPPO):
+    """PPO config for pose/posture adaptation style stage."""
+
+    class policy(ElSpiderLidarConfinedCfgPPO.policy):
+        actor_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        critic_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        activation = 'elu'
+        init_noise_std = 0.25
+
+    class algorithm(ElSpiderLidarConfinedCfgPPO.algorithm):
+        entropy_coef = 0.002
+        desired_kl = 0.01
+
+    class runner(ElSpiderLidarConfinedCfgPPO.runner):
+        experiment_name = 'elspider_lidar_pose_adapt_same_dim'
+        max_iterations = 1500
+
+
+class ElSpiderLidarFlatSkillSameDimCfg(ElSpiderLidarConfinedCfg):
+    """Stage-B: flat locomotion style task (same obs/action dimensions)."""
+
+    class terrain(ElSpiderLidarConfinedCfg.terrain):
+        mesh_type = 'plane'
+        curriculum = False
+        measure_heights = True
+        goal_navigation = False
+
+    class commands(ElSpiderLidarConfinedCfg.commands):
+        goal_directed = False
+        heading_command = False
+        curriculum = False
+        resampling_time = 4.0
+
+        class ranges(ElSpiderLidarConfinedCfg.commands.ranges):
+            lin_vel_x = [-1.2, 1.2]
+            lin_vel_y = [-0.5, 0.5]
+            ang_vel_yaw = [-0.6, 0.6]
+
+    class rewards(ElSpiderLidarConfinedCfg.rewards):
+        base_height_target = 0.34
+        only_positive_rewards = True
+        multi_stage_rewards = True
+        reward_stage_threshold = 6.0
+        reward_min_stage = 0
+        reward_max_stage = 1
+
+        class scales(ElSpiderLidarConfinedCfg.rewards.scales):
+            tracking_lin_vel = 1.0
+            tracking_ang_vel = 0.5
+            lin_vel_z = -2.0
+            ang_vel_xy = -0.05
+            orientation = -5.0
+            torques = -0.00001
+            dof_acc = -5e-8
+            base_height = -8.0
+            feet_slip = [-0.0, -0.4]
+            feet_air_time = 0.8
+            gait_2_step = -5.0
+            collision = -1.0
+            action_rate = -0.001
+            stand_still = -0.1
+            dof_pos_limits = -1.0
+            obstacle_avoidance = 0.0
+            collision_penalty = 0.0
+            goal_reaching = 0.0
+            goal_progress = 0.0
+            goal_bonus = 0.0
+            goal_heading = 0.0
+
+
+class ElSpiderLidarFlatSkillSameDimCfgPPO(ElSpiderLidarConfinedCfgPPO):
+    """PPO config for flat locomotion style stage."""
+
+    class policy(ElSpiderLidarConfinedCfgPPO.policy):
+        actor_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        critic_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        activation = 'elu'
+        init_noise_std = SAME_DIM_INIT_NOISE_STD
+
+    class algorithm(ElSpiderLidarConfinedCfgPPO.algorithm):
+        entropy_coef = 0.005
+        desired_kl = 0.01
+
+    class runner(ElSpiderLidarConfinedCfgPPO.runner):
+        experiment_name = 'elspider_lidar_flat_same_dim'
+        max_iterations = 3000
+        multi_stage_rewards = True
+
+
+class ElSpiderLidarMixedTerrainSameDimCfg(ElSpiderLidarConfinedCfg):
+    """Stage-C: mixed terrain style task (same obs/action dimensions)."""
+
+    class terrain(ElSpiderLidarConfinedCfg.terrain):
+        mesh_type = 'trimesh'
+        curriculum = True
+        measure_heights = True
+        goal_navigation = False
+        max_init_terrain_level = 0
+        terrain_length = 4.0
+        terrain_width = 4.0
+        num_rows = 4
+        num_cols = 4
+        terrain_proportions = [0.1, 0.1, 0.3, 0.3, 0.2]
+
+    class commands(ElSpiderLidarConfinedCfg.commands):
+        goal_directed = False
+        heading_command = False
+        curriculum = True
+        max_curriculum = 1.0
+        resampling_time = 4.0
+
+        class ranges(ElSpiderLidarConfinedCfg.commands.ranges):
+            lin_vel_x = [-1.0, 1.0]
+            lin_vel_y = [-0.4, 0.4]
+            ang_vel_yaw = [-0.6, 0.6]
+
+    class domain_rand(ElSpiderLidarConfinedCfg.domain_rand):
+        randomize_friction = True
+        friction_range = [0.5, 1.5]
+        randomize_base_mass = True
+        added_mass_range = [-5.0, 5.0]
+        push_robots = False
+
+    class rewards(ElSpiderLidarConfinedCfg.rewards):
+        base_height_target = 0.34
+        only_positive_rewards = True
+        multi_stage_rewards = True
+        reward_stage_threshold = 6.0
+        reward_min_stage = 0
+        reward_max_stage = 1
+
+        class scales(ElSpiderLidarConfinedCfg.rewards.scales):
+            termination = -5.0
+            tracking_lin_vel = 1.0
+            tracking_ang_vel = 0.5
+            lin_vel_z = -2.0
+            ang_vel_xy = -0.05
+            orientation = -5.0
+            torques = -0.00001
+            dof_acc = -5e-8
+            base_height = -8.0
+            feet_slip = [-0.0, -0.4]
+            feet_air_time = 0.8
+            gait_2_step = -5.0
+            collision = -1.0
+            action_rate = -0.001
+            stand_still = -0.05
+            dof_pos_limits = -1.0
+            obstacle_avoidance = 0.0
+            collision_penalty = 0.0
+            goal_reaching = 0.0
+            goal_progress = 0.0
+            goal_bonus = 0.0
+            goal_heading = 0.0
+
+
+class ElSpiderLidarMixedTerrainSameDimCfgPPO(ElSpiderLidarConfinedCfgPPO):
+    """PPO config for mixed terrain style stage."""
+
+    class policy(ElSpiderLidarConfinedCfgPPO.policy):
+        actor_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        critic_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        activation = 'elu'
+        init_noise_std = SAME_DIM_INIT_NOISE_STD
+
+    class algorithm(ElSpiderLidarConfinedCfgPPO.algorithm):
+        entropy_coef = 0.004
+        desired_kl = 0.01
+
+    class runner(ElSpiderLidarConfinedCfgPPO.runner):
+        experiment_name = 'elspider_lidar_mixed_terrains_same_dim'
+        max_iterations = 4000
+        multi_stage_rewards = True
+
+
+class ElSpiderLidarNavBarrierSameDimCfg(ElSpiderLidarConfinedCfg):
+    """Stage-D: barrier obstacle-avoidance style task (same obs/action dimensions)."""
+
+    class env(ElSpiderLidarConfinedCfg.env):
+        num_envs = 512
+
+    class sim(ElSpiderLidarConfinedCfg.sim):
+        class physx(ElSpiderLidarConfinedCfg.sim.physx):
+            max_gpu_contact_pairs = 2**24
+            default_buffer_size_multiplier = 6
+
+    class terrain(ElSpiderLidarConfinedCfg.terrain):
+        mesh_type = 'confined_trimesh'
+        curriculum = True
+        max_init_terrain_level = 0
+        num_rows = 1
+        num_cols = 1
+        difficulty_scale = 0.6
+        spawn_area_size = 6.0
+        goal_navigation = False
+        goal_offset_y = 3.0
+        confined_terrain_proportions = [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+
+    class commands(ElSpiderLidarConfinedCfg.commands):
+        goal_directed = False
+        heading_command = False
+        curriculum = False
+        resampling_time = 4.0
+
+        class ranges(ElSpiderLidarConfinedCfg.commands.ranges):
+            lin_vel_x = [0.1, 0.7]
+            lin_vel_y = [-0.15, 0.15]
+            ang_vel_yaw = [-0.6, 0.6]
+
+    class rewards(ElSpiderLidarConfinedCfg.rewards):
+        base_height_target = 0.34
+        safe_obstacle_dist = 0.6
+        danger_obstacle_dist = 0.22
+        collision_threshold = 0.05
+        goal_reach_threshold = 0.25
+        goal_max_distance = 10.0
+        terminate_on_goal_reached = False
+
+        class scales(ElSpiderLidarConfinedCfg.rewards.scales):
+            tracking_lin_vel = 0.8
+            tracking_ang_vel = 0.4
+            collision = -2.0
+            obstacle_avoidance = 1.2
+            collision_penalty = -2.0
+            stand_still = -0.3
+            goal_reaching = 0.0
+            goal_progress = 0.0
+            goal_bonus = 0.0
+            goal_heading = 0.0
+
+
+class ElSpiderLidarNavBarrierSameDimCfgPPO(ElSpiderLidarConfinedCfgPPO):
+    """PPO config for barrier navigation style stage."""
+
+    class policy(ElSpiderLidarConfinedCfgPPO.policy):
+        actor_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        critic_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        activation = 'elu'
+        init_noise_std = SAME_DIM_INIT_NOISE_STD
+
+    class algorithm(ElSpiderLidarConfinedCfgPPO.algorithm):
+        entropy_coef = 0.003
+        desired_kl = 0.01
+
+    class runner(ElSpiderLidarConfinedCfgPPO.runner):
+        experiment_name = 'elspider_lidar_nav_barrier_same_dim'
+        max_iterations = 5000
+
+
+class ElSpiderLidarWalkFlatSameDimCfg(ElSpiderLidarConfinedCfg):
+    """Stage-1: pure locomotion + posture control on flat terrain (same dimensions)."""
+
+    class init_state(ElSpiderLidarConfinedCfg.init_state):
+        pos = [0.0, 0.0, 0.4]  # x,y,z [m]
+        default_joint_angles = {  # = target angles [rad] when action = 0.0
+            "RF_HAA": 0.0,
+            "RM_HAA": 0.0,
+            "RB_HAA": 0.0,
+            "LF_HAA": 0.0,
+            "LM_HAA": 0.0,
+            "LB_HAA": 0.0,
+
+            "RF_HFE": 0.6,
+            "RM_HFE": 0.6,
+            "RB_HFE": 0.6,
+            "LF_HFE": 0.6,
+            "LM_HFE": 0.6,
+            "LB_HFE": 0.6,
+
+            "RF_KFE": 0.6,
+            "RM_KFE": 0.6,
+            "RB_KFE": 0.6,
+            "LF_KFE": 0.6,
+            "LM_KFE": 0.6,
+            "LB_KFE": 0.6,
+        }
+
+    class terrain(ElSpiderLidarConfinedCfg.terrain):
+        mesh_type = 'plane'
+        curriculum = False
+        measure_heights = True
+        goal_navigation = False
+        goal_offset_y = 2.0
+
+    class commands(ElSpiderLidarConfinedCfg.commands):
+        goal_directed = False
+        heading_command = False
+        curriculum = False
+        max_curriculum = 1.0
+        resampling_time = 4.0
+
+        class ranges(ElSpiderLidarConfinedCfg.commands.ranges):
+            lin_vel_x = [0.15, 0.55]
+            lin_vel_y = [-0.08, 0.08]
+            ang_vel_yaw = [-0.4, 0.4]
+
+    class domain_rand(ElSpiderLidarConfinedCfg.domain_rand):
+        randomize_friction = True
+        friction_range = [0.5, 1.5]
+        randomize_base_mass = False
+        push_robots = False
+
+    class control(ElSpiderLidarConfinedCfg.control):
+        stiffness = {'HAA': 80., 'HFE': 80., 'KFE': 80.}
+        damping = {'HAA': 2., 'HFE': 2., 'KFE': 2.}
+        action_scale = 0.5
+        decimation = 4
+        use_actuator_network = True
+        actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
+
+    class rewards(ElSpiderLidarConfinedCfg.rewards):
+        base_height_target = 0.34
+        only_positive_rewards = True
+        multi_stage_rewards = True
+        reward_stage_threshold = 6.0
+        reward_min_stage = 0
+        reward_max_stage = 1
+        goal_reach_threshold = 0.15
+        terminate_on_goal_reached = False
+
+        class scales(ElSpiderLidarConfinedCfg.rewards.scales):
+            tracking_lin_vel = 1.0
+            tracking_ang_vel = 0.5
+            lin_vel_z = -2.0
+            ang_vel_xy = -0.05
+            orientation = -5.0
+            torques = -0.00001
+            dof_acc = -5e-8
+            base_height = -12.0
+            feet_slip = -0.4
+            feet_air_time = 0.8
+            gait_2_step = -5.0
+            collision = -1.0
+            action_rate = -0.001
+            stand_still = -0.0
+            dof_pos_limits = -1.0
+            obstacle_avoidance = 0.0
+            collision_penalty = 0.0
+            goal_reaching = 0.0
+            goal_progress = 0.0
+            goal_bonus = 0.0
+            goal_heading = 0.0
+
+
+class ElSpiderLidarWalkFlatSameDimCfgPPO(ElSpiderLidarConfinedCfgPPO):
+    """PPO config for stage-1 pure locomotion."""
+
+    class policy(ElSpiderLidarConfinedCfgPPO.policy):
+        actor_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        critic_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        activation = 'elu'
+        init_noise_std = 0.20
+
+    class algorithm(ElSpiderLidarConfinedCfgPPO.algorithm):
+        entropy_coef = 0.0005
+        desired_kl = 0.01
+
+    class runner(ElSpiderLidarConfinedCfgPPO.runner):
+        experiment_name = 'elspider_lidar_walk_flat_same_dim'
+        max_iterations = 3000
+        multi_stage_rewards = True
+
+
+class ElSpiderLidarNavFlatSameDimCfg(ElSpiderLidarWalkFlatSameDimCfg):
+    """Stage-2: flat navigation with goal-directed policy (same dimensions)."""
+
+    class terrain(ElSpiderLidarWalkFlatSameDimCfg.terrain):
+        goal_navigation = True
+        goal_offset_y = 3.5
+
+    class commands(ElSpiderLidarWalkFlatSameDimCfg.commands):
+        goal_directed = True
+        heading_command = True
+
+        class ranges(ElSpiderLidarWalkFlatSameDimCfg.commands.ranges):
+            lin_vel_x = [0.0, 0.7]
+            lin_vel_y = [-0.15, 0.15]
+            ang_vel_yaw = [-0.6, 0.6]
+
+    class rewards(ElSpiderLidarWalkFlatSameDimCfg.rewards):
+        base_height_target = 0.34
+        goal_reach_threshold = 0.25
+        goal_max_distance = 10.0
+        terminate_on_goal_reached = True
+
+        class scales(ElSpiderLidarWalkFlatSameDimCfg.rewards.scales):
+            base_height = -12.0
+            tracking_lin_vel = 1.0
+            tracking_ang_vel = 0.5
+            feet_slip = -0.4
+            feet_air_time = 0.8
+            gait_2_step = -5.0
+            action_rate = -0.001
+            stand_still = -0.0
+            goal_reaching = 6.0
+            goal_progress = 4.0
+            goal_bonus = 12.0
+            goal_heading = 1.0
+
+
+class ElSpiderLidarNavFlatSameDimCfgPPO(ElSpiderLidarFlatPretrainCfgPPO):
+    """PPO config for stage-2 flat navigation."""
+
+    class policy(ElSpiderLidarFlatPretrainCfgPPO.policy):
+        actor_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        critic_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        activation = 'elu'
+        init_noise_std = SAME_DIM_INIT_NOISE_STD
+
+    class runner(ElSpiderLidarFlatPretrainCfgPPO.runner):
+        experiment_name = 'elspider_lidar_nav_flat_same_dim'
+        max_iterations = 8000
+
+
+class ElSpiderLidarConfinedEasySameDimCfg(ElSpiderLidarConfinedCfg):
+    """Easy confined stage with same obs/action dimensions for curriculum transfer.
+
+    Stage-2 after flat pretraining and before full confined training.
+    """
+
+    class terrain(ElSpiderLidarConfinedCfg.terrain):
+        mesh_type = 'confined_trimesh'
+        use_terrain_obj = False
+        curriculum = True
+        num_rows = 6
+        num_cols = 4
+        difficulty_scale = 0.12
+        goal_offset_y = 4.5
+        spawn_area_size = 1.0
+        corridor_only = True
+        corridor_width_override = 1.30
+        confined_terrain_proportions = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    class rewards(ElSpiderLidarConfinedCfg.rewards):
+        base_height_target = 0.34
+        goal_max_distance = 6.0
+        safe_obstacle_dist = 0.70
+        danger_obstacle_dist = 0.40
+
+        class scales(ElSpiderLidarConfinedCfg.rewards.scales):
+            goal_reaching = 7.0
+            goal_progress = 3.5
+            goal_bonus = 15.0
+            goal_heading = 0.6
+            corridor_centering = 0.5
+            obstacle_avoidance = 0.30
+            collision = -1.1
+            collision_penalty = -0.30
+
+
+class ElSpiderLidarConfinedEasySameDimCfgPPO(ElSpiderLidarConfinedCfgPPO):
+    """PPO config for easy confined same-dim stage."""
+
+    class policy(ElSpiderLidarConfinedCfgPPO.policy):
+        actor_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        critic_hidden_dims = SAME_DIM_POLICY_HIDDEN_DIMS
+        activation = 'elu'
+        init_noise_std = SAME_DIM_INIT_NOISE_STD
+
+    class runner(ElSpiderLidarConfinedCfgPPO.runner):
+        experiment_name = 'elspider_lidar_confined_easy_same_dim'
+        max_iterations = 12000

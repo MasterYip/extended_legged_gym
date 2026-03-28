@@ -298,6 +298,7 @@ def timber_piles_terrain(terrain_ground, terrain_ceiling, timber_spacing=1.0, ti
         hanging_obstacles: whether to add hanging ceiling obstacles
         position_noise: random offset for tile positions [meters]
     """
+def timber_piles_terrain(terrain_ground, terrain_ceiling, timber_spacing=1.0, timber_size=0.3, pile_height=1.2, hanging_obstacles=False, position_noise=0.2, height_noise=0.1, spawn_platform_height=None):
     # Convert to discrete units
     timber_spacing_px = int(timber_spacing / terrain_ground.horizontal_scale)
     timber_size_px = int(timber_size / terrain_ground.horizontal_scale)
@@ -375,7 +376,11 @@ def confined_gap_terrain(terrain_ground, terrain_ceiling, gap_width=0.8, platfor
     """
     Generate confined gap terrain with central spawn platform and surrounding gaps
     
-    Parameters:
+    # Keep the spawn area flat when requested; otherwise use the pile height
+    if spawn_platform_height is None:
+        platform_height = pile_height_units
+    else:
+        platform_height = int(spawn_platform_height / terrain_ground.vertical_scale)
         terrain_ground: ground SubTerrain object
         terrain_ceiling: ceiling SubTerrain object
         gap_width: width of the gaps around spawn area [meters]
@@ -600,7 +605,8 @@ def wall_with_gap_terrain(terrain_ground, terrain_ceiling,
 def corridor_with_obstacles_terrain(terrain_ground, terrain_ceiling, 
                                      corridor_width=2.0, wall_height=0.5,
                                      obstacle_density=0.3, obstacle_size=0.3,
-                                     obstacle_height=0.3, num_turns=0):
+                                     obstacle_height=0.3, num_turns=0,
+                                     uniform_width=False):
     """
     Generate a corridor-style terrain from start (Y=0) to end (Y=length).
     The robot starts at one end and must navigate to the other end.
@@ -678,16 +684,21 @@ def corridor_with_obstacles_terrain(terrain_ground, terrain_ceiling,
                 
                 current_center = next_center
     
-    # Create start zone (clear area at Y=0 side)
+    # Create start/goal zones.
+    # For uniform corridors, keep the full length at the same corridor width.
     start_zone_length_px = int(1.5 / h_scale)
+    goal_zone_length_px = int(1.5 / h_scale)
     corridor_half = corridor_width_px // 2
-    sx1 = max(0, center_x - corridor_half - int(0.5 / h_scale))
-    sx2 = min(width, center_x + corridor_half + int(0.5 / h_scale))
+    if uniform_width:
+        sx1 = max(0, center_x - corridor_half)
+        sx2 = min(width, center_x + corridor_half)
+    else:
+        sx1 = max(0, center_x - corridor_half - int(0.5 / h_scale))
+        sx2 = min(width, center_x + corridor_half + int(0.5 / h_scale))
+
     terrain_ground.ground_height_field_raw[sx1:sx2, :start_zone_length_px] = 0
     terrain_ceiling.ceiling_height_field_raw[sx1:sx2, :start_zone_length_px] = int(2.0 / v_scale)
-    
-    # Create goal zone (clear area at Y=length side)
-    goal_zone_length_px = int(1.5 / h_scale)
+
     terrain_ground.ground_height_field_raw[sx1:sx2, -goal_zone_length_px:] = 0
     terrain_ceiling.ceiling_height_field_raw[sx1:sx2, -goal_zone_length_px:] = int(2.0 / v_scale)
     
@@ -874,6 +885,8 @@ class TerrainConfined:
         self.cfg = cfg
         self.num_robots = num_robots
         self.type = cfg.mesh_type
+        self.corridor_only = getattr(cfg, 'corridor_only', False)
+        self.corridor_width_override = getattr(cfg, 'corridor_width_override', None)
         
         if self.type in ["none", 'plane']:
             return
@@ -1014,11 +1027,32 @@ class TerrainConfined:
         platform_size = 1.0
 
         # Column obstacles parameters - difficulty now affects these
-        column_spacing = 0.6 - 0.2 * difficulty    # Closer columns = harder
-        column_radius = 0.08 + 0.06 * difficulty   # Larger columns = harder
-        column_height = 0.4 + 0.3 * difficulty     # Taller columns = harder
-        hanging_length = 0.3 + 0.3 * difficulty    # Longer hanging = harder
-        density = 0.4 + 0.3 * difficulty            # More obstacles = harder
+        column_spacing = 1.00 - 0.10 * difficulty   # Wider spacing reduces the number of columns
+        column_radius = 0.045 + 0.02 * difficulty   # Smaller columns are easier to route around
+        column_height = 0.10 + 0.08 * difficulty    # Shorter columns are easier to step over
+        hanging_length = 0.12 + 0.06 * difficulty   # Less aggressive ceiling hang-down
+        density = 0.06 + 0.08 * difficulty          # Fewer columns overall while keeping some variation
+
+        # Optional task-level overrides for sparse, passable pillar fields.
+        column_spacing_override = getattr(self.cfg, 'column_spacing_override', None)
+        column_density_override = getattr(self.cfg, 'column_density_override', None)
+        column_radius_override = getattr(self.cfg, 'column_radius_override', None)
+        column_height_override = getattr(self.cfg, 'column_height_override', None)
+        hanging_length_override = getattr(self.cfg, 'hanging_length_override', None)
+        corridor_obstacle_density_override = getattr(self.cfg, 'corridor_obstacle_density_override', None)
+        corridor_obstacle_size_override = getattr(self.cfg, 'corridor_obstacle_size_override', None)
+        corridor_obstacle_height_override = getattr(self.cfg, 'corridor_obstacle_height_override', None)
+
+        if column_spacing_override is not None:
+            column_spacing = float(column_spacing_override)
+        if column_density_override is not None:
+            density = float(column_density_override)
+        if column_radius_override is not None:
+            column_radius = float(column_radius_override)
+        if column_height_override is not None:
+            column_height = float(column_height_override)
+        if hanging_length_override is not None:
+            hanging_length = float(hanging_length_override)
 
         # Wall with gap parameters - difficulty affects gap size
         wall_gap_width = 2.0 - 0.8 * difficulty    # Narrower gap = harder
@@ -1027,11 +1061,30 @@ class TerrainConfined:
         wall_thickness = 0.1 + 0.05 * difficulty   # Thicker wall = harder
 
         # Corridor parameters - difficulty affects width and obstacle density
-        corridor_width = 2.5 - 1.0 * difficulty    # Narrower with difficulty (2.5m → 1.5m)
-        corridor_obstacle_density = 0.15 + 0.35 * difficulty  # More obstacles with difficulty
-        corridor_obstacle_size = 0.2 + 0.2 * difficulty       # Larger obstacles with difficulty
-        corridor_obstacle_height = 0.2 + 0.2 * difficulty     # Taller obstacles with difficulty
-        corridor_num_turns = int(difficulty * 3)               # More turns with difficulty (0-3)
+        if self.corridor_only:
+            corridor_width = self.corridor_width_override if self.corridor_width_override is not None else 1.15
+            corridor_obstacle_density = 0.05
+            corridor_obstacle_size = 0.10
+            corridor_obstacle_height = 0.10
+            if corridor_obstacle_density_override is not None:
+                corridor_obstacle_density = float(corridor_obstacle_density_override)
+            if corridor_obstacle_size_override is not None:
+                corridor_obstacle_size = float(corridor_obstacle_size_override)
+            if corridor_obstacle_height_override is not None:
+                corridor_obstacle_height = float(corridor_obstacle_height_override)
+            corridor_num_turns = 0
+            corridor_uniform_width = True
+        else:
+            corridor_uniform_width = getattr(self.cfg, 'corridor_uniform_width', False)
+            corridor_width_base = self.corridor_width_override if self.corridor_width_override is not None else 2.1
+            if corridor_uniform_width:
+                corridor_width = corridor_width_base
+            else:
+                corridor_width = corridor_width_base - 0.7 * difficulty    # Narrower, but still feasible for navigation
+            corridor_obstacle_density = 0.06 + 0.18 * difficulty  # Keep fewer distractions in the corridor
+            corridor_obstacle_size = 0.18 + 0.16 * difficulty      # Slightly smaller obstacles
+            corridor_obstacle_height = 0.18 + 0.16 * difficulty    # Slightly lower obstacles
+            corridor_num_turns = 0 if corridor_uniform_width else int(difficulty * 3)  # Keep width constant when requested
 
         if choice < self.proportions[0]:
             # Corridor with obstacles (PRIMARY terrain for goal navigation)
@@ -1041,7 +1094,8 @@ class TerrainConfined:
                 obstacle_density=corridor_obstacle_density,
                 obstacle_size=corridor_obstacle_size,
                 obstacle_height=corridor_obstacle_height,
-                num_turns=corridor_num_turns
+                num_turns=corridor_num_turns,
+                uniform_width=corridor_uniform_width
             )
         elif choice < self.proportions[1]:
             # Timber piles terrain (open area with obstacles)
@@ -1084,14 +1138,15 @@ class TerrainConfined:
                 platform_size=platform_size
             )
         else:
-            # Corridor with obstacles (straight, wider variant)
+            # Corridor with obstacles (straight, same-width fallback)
             terrain_ground, terrain_ceiling = corridor_with_obstacles_terrain(
                 terrain_ground, terrain_ceiling,
-                corridor_width=corridor_width + 0.5,
+                corridor_width=corridor_width,
                 obstacle_density=corridor_obstacle_density * 0.7,
                 obstacle_size=corridor_obstacle_size,
                 obstacle_height=corridor_obstacle_height,
-                num_turns=0
+                num_turns=0,
+                uniform_width=corridor_uniform_width
             )
 
         return terrain_ground, terrain_ceiling

@@ -104,7 +104,15 @@ from .elspider_air.elspider_lidar_confined_config import (
     ElSpiderLidarConfinedCfg, ElSpiderLidarConfinedCfgPPO,
     ElSpiderLidarConfinedSimpleCfg, ElSpiderLidarConfinedSimpleCfgPPO,
     ElSpiderLidarTimberPileCfg, ElSpiderLidarTimberPileCfgPPO,
-    ElSpiderLidarTunnelCfg, ElSpiderLidarTunnelCfgPPO
+    ElSpiderLidarTunnelCfg, ElSpiderLidarTunnelCfgPPO,
+    ElSpiderLidarPoseAdaptSameDimCfg, ElSpiderLidarPoseAdaptSameDimCfgPPO,
+    ElSpiderLidarFlatSkillSameDimCfg, ElSpiderLidarFlatSkillSameDimCfgPPO,
+    ElSpiderLidarMixedTerrainSameDimCfg, ElSpiderLidarMixedTerrainSameDimCfgPPO,
+    ElSpiderLidarNavBarrierSameDimCfg, ElSpiderLidarNavBarrierSameDimCfgPPO,
+    ElSpiderLidarFlatPretrainCfg, ElSpiderLidarFlatPretrainCfgPPO,
+    ElSpiderLidarConfinedEasySameDimCfg, ElSpiderLidarConfinedEasySameDimCfgPPO,
+    ElSpiderLidarWalkFlatSameDimCfg, ElSpiderLidarWalkFlatSameDimCfgPPO,
+    ElSpiderLidarNavFlatSameDimCfg, ElSpiderLidarNavFlatSameDimCfgPPO
 )
 
 from .cyberdog2.c2_standdance_config import CyberStandDanceConfig, CyberStandDanceCfgPPO, CyberStandDanceCfgPPOAug, CyberStandDanceCfgPPOEMLP
@@ -219,3 +227,19 @@ task_registry.register("elspider_lidar_timber_pile", ElSpiderLidar,
                        ElSpiderLidarTimberPileCfg(), ElSpiderLidarTimberPileCfgPPO())
 task_registry.register("elspider_lidar_tunnel", ElSpiderLidar,
                        ElSpiderLidarTunnelCfg(), ElSpiderLidarTunnelCfgPPO())
+task_registry.register("elspider_lidar_pose_adapt_same_dim", ElSpiderLidar,
+                       ElSpiderLidarPoseAdaptSameDimCfg(), ElSpiderLidarPoseAdaptSameDimCfgPPO())
+task_registry.register("elspider_lidar_flat_same_dim", ElSpiderLidar,
+                       ElSpiderLidarFlatSkillSameDimCfg(), ElSpiderLidarFlatSkillSameDimCfgPPO())
+task_registry.register("elspider_lidar_mixed_terrains_same_dim", ElSpiderLidar,
+                       ElSpiderLidarMixedTerrainSameDimCfg(), ElSpiderLidarMixedTerrainSameDimCfgPPO())
+task_registry.register("elspider_lidar_nav_barrier_same_dim", ElSpiderLidar,
+                       ElSpiderLidarNavBarrierSameDimCfg(), ElSpiderLidarNavBarrierSameDimCfgPPO())
+task_registry.register("elspider_lidar_flat_pretrain", ElSpiderLidar,
+                       ElSpiderLidarFlatPretrainCfg(), ElSpiderLidarFlatPretrainCfgPPO())
+task_registry.register("elspider_lidar_walk_flat_same_dim", ElSpiderLidar,
+                       ElSpiderLidarWalkFlatSameDimCfg(), ElSpiderLidarWalkFlatSameDimCfgPPO())
+task_registry.register("elspider_lidar_nav_flat_same_dim", ElSpiderLidar,
+                       ElSpiderLidarNavFlatSameDimCfg(), ElSpiderLidarNavFlatSameDimCfgPPO())
+task_registry.register("elspider_lidar_confined_easy_same_dim", ElSpiderLidar,
+                       ElSpiderLidarConfinedEasySameDimCfg(), ElSpiderLidarConfinedEasySameDimCfgPPO())

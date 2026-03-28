@@ -29,6 +29,8 @@ from legged_gym.utils import GaitScheduler, GaitSchedulerCfg, AsyncGaitScheduler
 from legged_gym.utils.helpers import class_to_dict
 from legged_gym.utils.math_utils import quat_apply_yaw
 
+from legged_gym.utils.gym_visualizer import GymVisualizer
+
 # Import LidarSensor from OmniPerception
 try:
     from LidarSensor.lidar_sensor import LidarSensor
@@ -75,8 +77,13 @@ def cart2sphere(cart: torch.Tensor) -> torch.Tensor:
 
 def downsample_spherical_points_vectorized(sphere_points: torch.Tensor, 
                                            num_theta_bins: int = 10, 
-                                           num_phi_bins: int = 10) -> torch.Tensor:
-    """Downsample spherical points using bin averaging"""
+                                           num_phi_bins: int = 10,
+                                           default_range: float = 5.0) -> torch.Tensor:
+    """Downsample spherical points using minimum distance per bin.
+
+    Using min instead of average helps preserve narrow obstacles such as thin
+    columns that may otherwise be smoothed out by averaging.
+    """
     num_envs = sphere_points.shape[0]
     device = sphere_points.device
     num_bins = num_theta_bins * num_phi_bins
@@ -94,13 +101,9 @@ def downsample_spherical_points_vectorized(sphere_points: torch.Tensor,
     phi_bin = torch.clamp(phi_bin, 0, num_phi_bins - 1)
     bin_indices = theta_bin * num_phi_bins + phi_bin
     
-    r_sum = torch.zeros(num_envs, num_bins, device=device)
-    bin_count = torch.zeros(num_envs, num_bins, device=device)
-    r_sum.scatter_add_(1, bin_indices, r)
-    ones = torch.ones_like(r)
-    bin_count.scatter_add_(1, bin_indices, ones)
-    bin_count = torch.clamp(bin_count, min=1.0)
-    avg_r = r_sum / bin_count
+    # Preserve the nearest obstacle in each bin. Empty bins stay at max range.
+    min_r = torch.full((num_envs, num_bins), default_range, device=device)
+    min_r.scatter_reduce_(1, bin_indices, r, reduce="amin", include_self=True)
     
     theta_centers = torch.linspace(
         theta_min + (theta_max - theta_min) / (2 * num_theta_bins),
@@ -117,7 +120,7 @@ def downsample_spherical_points_vectorized(sphere_points: torch.Tensor,
     phi_centers_flat = phi_grid.reshape(-1)
     
     downsampled = torch.zeros(num_envs, num_bins, 3, device=device)
-    downsampled[:, :, 0] = avg_r
+    downsampled[:, :, 0] = min_r
     downsampled[:, :, 1] = theta_centers_flat.unsqueeze(0)
     downsampled[:, :, 2] = phi_centers_flat.unsqueeze(0)
     return downsampled
@@ -350,22 +353,66 @@ class ElSpiderLidar(ElSpider):
         self.lidar_dist_buf = torch.zeros(
             self.num_envs, total_rays, device=self.device, requires_grad=False
         )
+        self.downsampled_cloud = torch.zeros(
+            self.num_envs, 1, total_rays, 3, device=self.device, requires_grad=False
+        )
         
         # Minimum distance to obstacles (for rewards)
         self.min_obstacle_dist = torch.ones(
             self.num_envs, device=self.device, requires_grad=False
         ) * self.lidar_cfg.max_range
+
+        # Sector-wise obstacle distances for maneuvering decisions
+        self.front_obstacle_dist = torch.ones(
+            self.num_envs, device=self.device, requires_grad=False
+        ) * self.lidar_cfg.max_range
+        self.left_obstacle_dist = torch.ones(
+            self.num_envs, device=self.device, requires_grad=False
+        ) * self.lidar_cfg.max_range
+        self.right_obstacle_dist = torch.ones(
+            self.num_envs, device=self.device, requires_grad=False
+        ) * self.lidar_cfg.max_range
         
         # Goal navigation buffers
+        self.goal_obs_buf = torch.zeros(self.num_envs, 2, device=self.device)  # [angle, dist]
         if self.goal_navigation:
             self.goal_positions = torch.zeros(self.num_envs, 3, device=self.device)  # xyz goal
             self.goal_distance = torch.zeros(self.num_envs, device=self.device)
             self.prev_goal_distance = torch.zeros(self.num_envs, device=self.device)
             self.goal_reached = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-            self.goal_obs_buf = torch.zeros(self.num_envs, 2, device=self.device)  # [angle, dist]
             self.goal_offset_y = getattr(self.cfg.terrain, 'goal_offset_y', 4.0)
 
     def post_physics_step(self):
+        """ check terminations, compute observations and rewards
+            calls self._post_physics_step_callback() for common computations
+            calls self._draw_debug_vis() if needed
+        """
+        self.gym.refresh_actor_root_state_tensor(self.sim)
+        self.gym.refresh_net_contact_force_tensor(self.sim)
+        self.gym.refresh_rigid_body_state_tensor(self.sim)
+
+        self.episode_length_buf += 1
+        self.common_step_counter += 1
+
+        # prepare quantities
+        self.base_pos[:] = self.root_states[:, :3]
+        self.base_quat[:] = self.root_states[:, 3:7]
+        self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        self.base_lin_acc[:] = self.base_lin_acc[:] * self.acc_ema + (1 - self.acc_ema) * \
+            quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10] - self.last_root_vel[:, :3]) / self.dt
+        self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        self.base_ang_acc[:] = self.base_ang_acc[:] * self.acc_ema + (1 - self.acc_ema) * \
+            quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13] - self.last_root_vel[:, 3:]) / self.dt
+        self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+
+        self.foot_positions = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 0:3]
+        self.foot_velocities = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 7:10]
+
+        self._post_physics_step_callback()
+
+
+
+
         """Update after physics step, including LiDAR sensor and goal tracking."""
         # Update sensor pose before parent's post_physics_step
         self._update_sensor_pose()
@@ -379,24 +426,77 @@ class ElSpiderLidar(ElSpider):
         # Update goal distance tracking (before rewards are computed)
         if self.goal_navigation:
             self._update_goal_tracking()
+
+
+
+
+
+        # compute observations, rewards, resets, ...
+        self.check_termination()
+        self.compute_reward()
+        env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
+        self.reset_idx(env_ids)
+        self.compute_observations()  # in some cases a simulation step might be required to refresh some obs (for example body positions)
+
+        self.last_actions[:] = self.actions[:]
+        self.last_dof_vel[:] = self.dof_vel[:]
+        self.last_root_vel[:] = self.root_states[:, 7:13]
+
+        if self.viewer and self.enable_viewer_sync and self.debug_viz:
+            self._draw_debug_vis()
+
+    # def post_physics_step(self):
+    #     """Update after physics step, including LiDAR sensor and goal tracking."""
+    #     # Update sensor pose before parent's post_physics_step
+    #     self._update_sensor_pose()
         
-        # Call parent's post_physics_step
-        super().post_physics_step()
+    #     # Update LiDAR sensor
+    #     self.lidar_update_time += self.dt
+    #     if self.lidar_update_time >= self.lidar_update_interval:
+    #         self._update_lidar()
+    #         self.lidar_update_time = 0.0
+        
+    #     # Update goal distance tracking (before rewards are computed)
+    #     if self.goal_navigation:
+    #         self._update_goal_tracking()
+        
+    #     # Call parent's post_physics_step
+    #     super().post_physics_step()
 
     def _update_lidar(self):
         """Update LiDAR sensor and process observations."""
         # Get raw LiDAR data
         lidar_points, lidar_dist = self.lidar_sensor.update()
-        
-        # Reshape data: (num_envs, num_sensors, v_lines, h_lines, 3) -> (num_envs, total_rays, 3)
+
+        # Reshape data robustly using actual sensor output shape
+        lidar_points = lidar_points.contiguous().view(self.num_envs, -1, 3)
+        lidar_dist = lidar_dist.contiguous().view(self.num_envs, -1)
+
+        if lidar_points.shape[1] > 0:
+            self.downsampled_cloud = farthest_point_sampling(
+                lidar_points.unsqueeze(1), sample_size=1
+            )
+        else:
+            self.downsampled_cloud = torch.zeros(
+                self.num_envs, 1, 1, 3, device=self.device, requires_grad=False
+            )
+
+        # Keep fixed-size buffers by truncating or padding with safe defaults
         total_rays = self.lidar_cfg.horizontal_line_num * self.lidar_cfg.vertical_line_num
-        self.lidar_points_buf[:] = lidar_points.view(self.num_envs, -1, 3)[:, :total_rays, :]
-        self.lidar_dist_buf[:] = lidar_dist.view(self.num_envs, -1)[:, :total_rays]
+        used_rays = min(total_rays, lidar_points.shape[1])
+
+        self.lidar_points_buf.zero_()
+        self.lidar_dist_buf.fill_(self.lidar_cfg.max_range)
+        self.lidar_points_buf[:, :used_rays, :] = lidar_points[:, :used_rays, :]
+        self.lidar_dist_buf[:, :used_rays] = lidar_dist[:, :used_rays]
         
         # Compute minimum obstacle distance (vectorized, no Python loop)
-        # Replace out-of-range values with max_range so they don't affect min
+        # Treat invalid returns as no-hit max-range so they don't trigger false collision
+        valid_hit = (self.lidar_dist_buf > self.lidar_cfg.min_range) & (
+            self.lidar_dist_buf < self.lidar_cfg.max_range
+        )
         clamped_dist = torch.where(
-            self.lidar_dist_buf < self.lidar_cfg.max_range,
+            valid_hit,
             self.lidar_dist_buf,
             torch.full_like(self.lidar_dist_buf, self.lidar_cfg.max_range)
         )
@@ -405,8 +505,29 @@ class ElSpiderLidar(ElSpider):
         # Convert to spherical coordinates and downsample for observation
         sphere_points = cart2sphere(self.lidar_points_buf.view(-1, 3)).view(self.num_envs, -1, 3)
         downsampled = downsample_spherical_points_vectorized(
-            sphere_points, self.num_theta_bins, self.num_phi_bins
+            sphere_points, self.num_theta_bins, self.num_phi_bins, self.lidar_cfg.max_range
         )
+
+        # Sector distances: front / left / right. These help the policy learn
+        # when it should back up or sidestep instead of pushing straight ahead.
+        bin_r = downsampled[:, :, 0]
+        bin_theta = downsampled[:, :, 1]
+        bin_phi = downsampled[:, :, 2]
+        sector_max = self.lidar_cfg.max_range
+
+        front_mask = (torch.abs(bin_theta) <= 0.52) & (torch.abs(bin_phi) <= 0.35)
+        left_mask = (bin_theta > 0.52) & (bin_theta <= 2.62) & (torch.abs(bin_phi) <= 0.35)
+        right_mask = (bin_theta < -0.52) & (bin_theta >= -2.62) & (torch.abs(bin_phi) <= 0.35)
+
+        self.front_obstacle_dist[:] = torch.where(
+            front_mask, bin_r, torch.full_like(bin_r, sector_max)
+        ).min(dim=1)[0]
+        self.left_obstacle_dist[:] = torch.where(
+            left_mask, bin_r, torch.full_like(bin_r, sector_max)
+        ).min(dim=1)[0]
+        self.right_obstacle_dist[:] = torch.where(
+            right_mask, bin_r, torch.full_like(bin_r, sector_max)
+        ).min(dim=1)[0]
         
         # Use normalized distance as observation (0 = close, 1 = far/no hit)
         self.lidar_obs_buf[:] = downsampled[:, :, 0].clamp(0, self.lidar_cfg.max_range) / self.lidar_cfg.max_range
@@ -435,9 +556,8 @@ class ElSpiderLidar(ElSpider):
         # Add LiDAR observations
         obs_parts = [base_obs, self.lidar_obs_buf]
         
-        # Add goal observations if enabled
-        if self.goal_navigation:
-            obs_parts.append(self.goal_obs_buf)
+        # Keep fixed observation dimension by always reserving goal observation slots
+        obs_parts.append(self.goal_obs_buf)
         
         self.obs_buf = torch.cat(obs_parts, dim=-1)
         
@@ -478,6 +598,34 @@ class ElSpiderLidar(ElSpider):
         
         return noise_vec
 
+    def _reset_root_states(self, env_ids):
+        """Reset root states with a goal-facing spawn bias for confined navigation."""
+        super()._reset_root_states(env_ids)
+
+        if len(env_ids) == 0 or not self.goal_navigation:
+            return
+
+        if self.custom_origins and getattr(self.cfg.terrain, 'corridor_uniform_width', False):
+            x_jitter = torch.empty(len(env_ids), device=self.device).uniform_(-0.12, 0.12)
+            y_jitter = torch.empty(len(env_ids), device=self.device).uniform_(-0.25, 0.25)
+            self.root_states[env_ids, 0] = self.env_origins[env_ids, 0] + x_jitter
+            self.root_states[env_ids, 1] = self.env_origins[env_ids, 1] + y_jitter
+
+        yaw = torch.full((len(env_ids),), np.pi * 0.5, device=self.device)
+        yaw += torch.empty(len(env_ids), device=self.device).uniform_(-0.15, 0.15)
+        zeros = torch.zeros_like(yaw)
+        self.root_states[env_ids, 3:7] = quat_from_euler_xyz_tensor(zeros, zeros, yaw)
+
+        self.root_states[env_ids, 7:13] = torch.empty((len(env_ids), 6), device=self.device).uniform_(-0.05, 0.05)
+
+        env_ids_int32 = env_ids.to(dtype=torch.int32)
+        self.gym.set_actor_root_state_tensor_indexed(
+            self.sim,
+            gymtorch.unwrap_tensor(self.root_states),
+            gymtorch.unwrap_tensor(env_ids_int32),
+            len(env_ids_int32)
+        )
+
     def reset_idx(self, env_ids):
         """Reset environments including LiDAR sensor and goal positions."""
         # Log goal stats before reset (while data is still valid)
@@ -511,8 +659,11 @@ class ElSpiderLidar(ElSpider):
         self.goal_positions[env_ids, 1] = self.env_origins[env_ids, 1] + self.goal_offset_y  # Forward Y
         self.goal_positions[env_ids, 2] = self.env_origins[env_ids, 2]  # Same Z
         
-        # Add small random variation to goal position (within corridor width)
-        self.goal_positions[env_ids, 0] += torch_rand_float(-0.5, 0.5, (len(env_ids), 1), device=self.device).squeeze(1)
+        # Add a small random variation only when the terrain is not a straight corridor.
+        # In corridor-only training, keep the goal centered so the policy learns to move forward.
+        corridor_only = getattr(self.cfg.terrain, 'corridor_only', False)
+        if not corridor_only:
+            self.goal_positions[env_ids, 0] += (2.0 * torch.rand(len(env_ids), device=self.device) - 1.0) * 0.5
         
         # Initialize goal distances
         self.goal_distance[env_ids] = torch.norm(
@@ -588,9 +739,9 @@ class ElSpiderLidar(ElSpider):
             self.commands[:, 2] = torch.clip(0.8 * heading_error, -1., 1.)
             
             # Forward velocity: obstacle-aware goal speed
-            # When facing goal: higher speed; near obstacles: automatically slow down
+            # When facing goal: higher speed; near obstacles: slow down or back up
             max_vel = self.command_ranges["lin_vel_x"][1]  # 1.2 m/s
-            min_vel = 0.1
+            min_vel = 0.15
             
             # facing_factor: 1.0 when facing goal, 0.0 when perpendicular, -1 when away
             cos_heading = torch.cos(heading_error)
@@ -598,17 +749,36 @@ class ElSpiderLidar(ElSpider):
             speed_factor = (cos_heading + 1.0) / 2.0  # 0~1
             goal_speed = min_vel + (max_vel - min_vel) * speed_factor
 
-            # Obstacle-aware speed scaling using LiDAR minimum distance
+            # Obstacle-aware speed scaling using LiDAR sector distances
             safe_dist = getattr(self.cfg.rewards, 'safe_obstacle_dist', 0.5)
             danger_dist = getattr(self.cfg.rewards, 'danger_obstacle_dist', 0.15)
             obs_speed_scale = torch.clamp(
                 (self.min_obstacle_dist - danger_dist) / (safe_dist - danger_dist + 1e-6),
                 0.0, 1.0
             )
-            self.commands[:, 0] = goal_speed * obs_speed_scale
+
+            front_pressure = torch.clamp(
+                (safe_dist - self.front_obstacle_dist) / (safe_dist - danger_dist + 1e-6),
+                0.0,
+                1.0,
+            )
+
+            # If the front is blocked, back off a bit instead of insisting forward.
+            backoff_speed = -0.02 * front_pressure
+            forward_speed = goal_speed * torch.clamp(obs_speed_scale, 0.35, 1.0) * (1.0 - 0.5 * front_pressure)
+            self.commands[:, 0] = torch.where(front_pressure > 0.92, backoff_speed, forward_speed)
             
-            # Lateral velocity: small nudge to help navigate around obstacles
-            self.commands[:, 1] = torch.clip(-0.3 * torch.sin(heading_error), -0.3, 0.3)
+            # Lateral velocity: turn toward the clearer side when blocked.
+            side_clearance = torch.clamp(
+                (self.right_obstacle_dist - self.left_obstacle_dist) / (safe_dist + 1e-6),
+                -1.0,
+                1.0,
+            )
+            self.commands[:, 1] = torch.clip(
+                -0.3 * torch.sin(heading_error) + 0.20 * side_clearance * front_pressure,
+                -0.3,
+                0.3,
+            )
         else:
             # Default heading command conversion
             if self.cfg.commands.heading_command:
@@ -680,8 +850,9 @@ class ElSpiderLidar(ElSpider):
         collision_termination = collision & (self.episode_length_buf > min_steps)
         self.reset_buf |= collision_termination
         
-        # Terminate (success) when goal is reached
-        if self.goal_navigation:
+        # Terminate (success) when goal is reached (can be disabled for walk-only pretraining)
+        terminate_on_goal_reached = getattr(self.cfg.rewards, 'terminate_on_goal_reached', True)
+        if self.goal_navigation and terminate_on_goal_reached:
             self.reset_buf |= self.goal_reached
 
     # ============== Reward Functions ==============
@@ -772,6 +943,65 @@ class ElSpiderLidar(ElSpider):
             return torch.zeros(self.num_envs, device=self.device)
         
         return self.goal_reached.float()
+
+    def _reward_corridor_centering(self):
+        """Reward staying near the corridor centerline during confined navigation."""
+        if not self.goal_navigation:
+            return torch.zeros(self.num_envs, device=self.device)
+
+        corridor_width = getattr(self.cfg.terrain, 'corridor_width_override', 1.6)
+        half_width = max(float(corridor_width) * 0.5, 1e-3)
+        center_offset = torch.abs(self.root_states[:, 0] - self.env_origins[:, 0])
+
+        centering_reward = 1.0 - center_offset / half_width
+        return torch.clamp(centering_reward, 0.0, 1.0)
+
+    def _reward_obstacle_maneuvering(self):
+        """Reward active maneuvering when obstacles are near.
+
+        This encourages the policy to turn or sidestep instead of only pushing
+        forward when the corridor is blocked.
+        """
+        if not self.goal_navigation:
+            return torch.zeros(self.num_envs, device=self.device)
+
+        safe_dist = getattr(self.cfg.rewards, 'safe_obstacle_dist', 0.5)
+        danger_dist = getattr(self.cfg.rewards, 'danger_obstacle_dist', 0.15)
+
+        # 0 when far from obstacles, 1 when within the danger zone.
+        obstacle_pressure = torch.clamp(
+            (safe_dist - self.min_obstacle_dist) / (safe_dist - danger_dist + 1e-6),
+            0.0,
+            1.0,
+        )
+
+        # Encourage turning and small lateral motion around blocked obstacles.
+        yaw_activity = torch.abs(self.base_ang_vel[:, 2])
+        lateral_activity = torch.abs(self.base_lin_vel[:, 1])
+        maneuver_activity = 0.6 * yaw_activity + 0.4 * lateral_activity
+
+        return torch.clamp(maneuver_activity * obstacle_pressure, 0.0, 1.0)
+
+    def _reward_retreat(self):
+        """Reward backing up when the front sector is blocked.
+
+        This helps the policy learn to actively step away from a small pillar
+        instead of pausing in place or trying to climb over it.
+        """
+        if not self.goal_navigation:
+            return torch.zeros(self.num_envs, device=self.device)
+
+        safe_dist = getattr(self.cfg.rewards, 'safe_obstacle_dist', 0.5)
+        danger_dist = getattr(self.cfg.rewards, 'danger_obstacle_dist', 0.15)
+        front_pressure = torch.clamp(
+            (safe_dist - self.front_obstacle_dist) / (safe_dist - danger_dist + 1e-6),
+            0.0,
+            1.0,
+        )
+
+        # local x velocity < 0 means moving backward in the robot frame
+        retreat_speed = torch.clamp(-self.base_lin_vel[:, 0], 0.0, 0.25)
+        return torch.clamp(retreat_speed * front_pressure, 0.0, 1.0)
     
     def _reward_goal_heading(self):
         """Reward for facing toward goal AND moving forward.
@@ -804,7 +1034,7 @@ class ElSpiderLidar(ElSpider):
         """Draw debug visualization including LiDAR points and goal markers."""
         super()._draw_debug_vis()
         
-        # Draw LiDAR points for first environment
+        # Draw LiDAR points
         if not self.headless and hasattr(self, 'lidar_points_buf'):
             self._draw_lidar_points()
         
@@ -825,23 +1055,98 @@ class ElSpiderLidar(ElSpider):
             gymutil.draw_lines(sphere, self.gym, self.viewer, self.envs[env_idx], pose)
 
     def _draw_lidar_points(self):
-        """Visualize LiDAR point cloud."""
+        """Visualize LiDAR point clouds for all (or selected number of) environments."""
         if not hasattr(self, 'viewer') or self.viewer is None:
             return
+
+        max_envs_to_draw = int(getattr(self.cfg.viewer, 'lidar_vis_num_envs', self.num_envs))
+        max_envs_to_draw = max(1, min(max_envs_to_draw, self.num_envs))
+        max_points = int(getattr(self.cfg.viewer, 'lidar_vis_max_points', 180))
+        near_geom = gymutil.WireframeSphereGeometry(0.012, 4, 4, None, color=(1, 0, 0))
+        far_geom = gymutil.WireframeSphereGeometry(0.012, 4, 4, None, color=(0, 1, 0))
+        near_threshold = 0.6
+
+        for env_idx in range(max_envs_to_draw):
+            points_local = self.lidar_points_buf[env_idx]
+            dists = self.lidar_dist_buf[env_idx]
+            valid_mask = (dists > self.lidar_cfg.min_range) & (dists < self.lidar_cfg.max_range)
+            if not torch.any(valid_mask):
+                continue
+
+            points_local = points_local[valid_mask]
+            dists = dists[valid_mask]
+
+            if points_local.shape[0] > max_points:
+                idx = torch.linspace(0, points_local.shape[0] - 1, max_points, device=self.device).long()
+                points_local = points_local[idx]
+                dists = dists[idx]
+
+            sensor_pos = self.sensor_pos_tensor[env_idx]
+            sensor_quat = self.sensor_quat_tensor[env_idx]
+            sensor_quat_expand = sensor_quat.unsqueeze(0).expand(points_local.shape[0], -1)
+            world_points = sensor_pos.unsqueeze(0) + quat_apply(sensor_quat_expand, points_local)
+
+            for point_idx in range(world_points.shape[0]):
+                pos = world_points[point_idx]
+                geom = near_geom if dists[point_idx] < near_threshold else far_geom
+                pose = gymapi.Transform(gymapi.Vec3(float(pos[0]), float(pos[1]), float(pos[2])), r=None)
+                gymutil.draw_lines(geom, self.gym, self.viewer, self.envs[env_idx], pose)
+
+    def create_viewer(self):
+        # create viewer
+        if self.headless == True:
+            self.viewer = None
+            print("Running in headless mode")
+        else:
+            self.debug_viz = True
+            self.viewer = self.gym.create_viewer(
+                self.sim, gymapi.CameraProperties())
+            if self.viewer is None:
+                print("*** Failed to create viewer")
+                quit()
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_ESCAPE, "QUIT") # 按 Esc 关闭仿真窗口。
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_V, "toggle_viewer_sync") # 焦点在仿真与显示之间切换
+            
+            self.vis = GymVisualizer(self.gym, self.sim, self.viewer, self.envs)
+
+def farthest_point_sampling(point_cloud, sample_size):
+    """
+    Sample points using the farthest point sampling algorithm
+    Args:
+        point_cloud: Tensor of shape (num_envs, 1, num_points,1, 3)
+        sample_size: Number of points to sample
+    Returns:
+        Downsampled point cloud of shape (num_envs, 1, sample_size, 3)
+    """
+    num_envs, _, num_points, _ = point_cloud.shape
+    device = point_cloud.device
+    result = []
+    
+    for env_idx in range(num_envs):
+        points = point_cloud[env_idx, 0]  # (num_points, 3)
         
-        # Only draw for selected environment
-        env_idx = 0
-        points = self.lidar_points_buf[env_idx]
-        sensor_pos = self.sensor_pos_tensor[env_idx]
-        sensor_quat = self.sensor_quat_tensor[env_idx]
+        # Initialize with a random point
+        sampled_indices = torch.zeros(sample_size, dtype=torch.long, device=device)
+        sampled_indices[0] = torch.randint(0, num_points, (1,), device=device)
         
-        # Transform points to world frame
-        world_points = sensor_pos + quat_apply(sensor_quat.unsqueeze(0), points)
+        # Calculate distances
+        distances = torch.norm(points - points[sampled_indices[0]], dim=1)
         
-        # Draw subset of points (for performance)
-        step = max(1, points.shape[0] // 100)
-        for i in range(0, points.shape[0], step):
-            pos = world_points[i].cpu().numpy()
-            sphere = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(0, 1, 0))
-            pose = gymapi.Transform(gymapi.Vec3(*pos), r=None)
-            gymutil.draw_lines(sphere, self.gym, self.viewer, self.envs[env_idx], pose)
+        # Iteratively select farthest points
+        for i in range(1, sample_size):
+            # Select the farthest point
+            sampled_indices[i] = torch.argmax(distances)
+            
+            # Update distances
+            if i < sample_size - 1:
+                new_distances = torch.norm(points - points[sampled_indices[i]], dim=1)
+                distances = torch.min(distances, new_distances)
+        
+        # Get the sampled points
+        sampled_points = points[sampled_indices]
+        result.append(sampled_points.unsqueeze(0))  # Add sensor dimension back
+    
+    return torch.stack(result)
+
