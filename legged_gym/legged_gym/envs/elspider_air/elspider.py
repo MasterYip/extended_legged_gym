@@ -46,6 +46,7 @@ from legged_gym.utils import GaitScheduler, GaitSchedulerCfg, AsyncGaitScheduler
     SimpleRaibertPlannerConfig, SimpleRaibertPlanner, RaibertPlanner, RaibertPlannerConfig
 from legged_gym.utils.helpers import class_to_dict
 from legged_gym.utils.math_utils import quat_apply_yaw
+from legged_gym.utils.gym_visualizer import GymVisualizer
 
 @torch.no_grad()
 def get_symmetric_observation_action(obs: torch.Tensor = None, actions: torch.Tensor = None, env = None, obs_type: str = "policy") -> Tuple[torch.Tensor, torch.Tensor]:
@@ -264,6 +265,9 @@ class ElSpider(LeggedRobot):
                                                        self.num_envs,
                                                        self.device,
                                                        cfg)
+        
+        self.create_viewer()
+
 
     def _draw_debug_vis(self):
         # draw base vel
@@ -341,8 +345,17 @@ class ElSpider(LeggedRobot):
         """
         super().check_termination()
         
+        # Get protection steps (grace period during early training)
+        if hasattr(self.cfg.rewards, 'allow_initial_contact_steps'):
+            min_steps = self.cfg.rewards.allow_initial_contact_steps
+        else:
+            min_steps = 5  # Default: 5 steps grace period
+        
         # Add new termination condition - terminate if robot is upside down (z-component of projected gravity > 0)
-        self.reset_buf |= (self.projected_gravity[:, 2] > 0)
+        # Only check after grace period to avoid early termination due to initialization
+        upside_down = self.projected_gravity[:, 2] > 0
+        upside_down_termination = upside_down & (self.episode_length_buf > min_steps)
+        self.reset_buf |= upside_down_termination
 
     def _reward_gait_scheduler(self):
         # Reward for tracking the gait scheduler
@@ -729,3 +742,22 @@ class StandElSpider(ElSpider):
         second_foot_contact = contact_filt[:, 1]
         reward = ~(first_foot_contact | second_foot_contact)
         return reward
+
+    def create_viewer(self):
+        # create viewer
+        if self.headless == True:
+            self.viewer = None
+            print("Running in headless mode")
+        else:
+            self.debug_viz = True
+            self.viewer = self.gym.create_viewer(
+                self.sim, gymapi.CameraProperties())
+            if self.viewer is None:
+                print("*** Failed to create viewer")
+                quit()
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_ESCAPE, "QUIT") # 按 Esc 关闭仿真窗口。
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_V, "toggle_viewer_sync") # 焦点在仿真与显示之间切换
+            
+            self.vis = GymVisualizer(self.gym, self.sim, self.viewer, self.envs)

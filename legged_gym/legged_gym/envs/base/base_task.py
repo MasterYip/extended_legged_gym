@@ -90,16 +90,16 @@ class BaseTask():
         self.viewer = None
 
         # if running with a viewer, set up keyboard shortcuts and camera
-        if self.headless == False:
-            # subscribe to keyboard shortcuts
-            self.viewer = self.gym.create_viewer(
-                self.sim, gymapi.CameraProperties())
-            self.gym.subscribe_viewer_keyboard_event(
-                self.viewer, gymapi.KEY_ESCAPE, "QUIT")
-            self.gym.subscribe_viewer_keyboard_event(
-                self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
+        # if self.headless == False:
+        #     # subscribe to keyboard shortcuts
+        #     self.viewer = self.gym.create_viewer(
+        #         self.sim, gymapi.CameraProperties())
+        #     self.gym.subscribe_viewer_keyboard_event(
+        #         self.viewer, gymapi.KEY_ESCAPE, "QUIT")
+        #     self.gym.subscribe_viewer_keyboard_event(
+        #         self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
             
-            self.vis = GymVisualizer(self.gym, self.sim, self.viewer, self.envs)
+        #     self.vis = GymVisualizer(self.gym, self.sim, self.viewer, self.envs)
             
 
     def get_observations(self):
