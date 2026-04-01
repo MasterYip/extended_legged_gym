@@ -107,7 +107,7 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         flip_visual_attachments = False
 
     class init_state(ElSpiderAirRoughCfg.init_state):
-        pos = [0.0, 0.0, 0.47]  # x,y,z [m]
+        pos = [0.0, 0.0, 0.45]  # x,y,z [m]
         default_joint_angles = {  # = target angles [rad] when action = 0.0
             "RF_HAA": 0.0,
             "RM_HAA": 0.0,
@@ -133,8 +133,8 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
 
     ## Rewards V1 (normal dof_acc)
     class rewards(ElSpiderAirRoughCfg.rewards):
-        max_contact_force = 300.
-        base_height_target = 0.5
+        max_contact_force = 250.
+        base_height_target = 0.45
         only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
@@ -147,28 +147,28 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         class scales:
 
             termination = -0.0
-            tracking_lin_vel = [6,5.5]
-            tracking_ang_vel = [5.5,4.5]
+            tracking_lin_vel = 6
+            tracking_ang_vel = 5.5
             lin_vel_z = -5
             ang_vel_xy = -0.5
-            orientation = [-5, -10]
-            torques = [-0.0001, -0.0002]
-            dof_vel = [-0.0001, -0.0005]
-            dof_acc = [-1e-6, -1.5e-6]
-            base_height = -150
-            feet_slip = [-0.0, -0.0]  # Before feet_air_time
-            feet_air_time = [1.0, 1.5]
+            orientation = -5
+            torques = -0.0001
+            dof_vel = -0.0001
+            dof_acc = -1e-6
+            base_height = -50
+            feet_slip = -0.1 
+            feet_air_time = 3
             collision = -1.
             feet_stumble = -1
             action_rate = -0.01
-            stand_still = -3  # May affect spot turning
+            stand_still = -5  
             dof_pos_limits = -0.1
             dof_vel_limits = -1.
             torque_limits = -0.01
-            feet_contact_forces = -0.01
-            shank_vertical = -2
-            feet_async = -10
-            feet_sync = -10
+            feet_contact_forces = -0.03
+            shank_vertical = -1
+            feet_async = -2
+            feet_sync = -2
 
     class commands(ElSpiderAirRoughCfg.commands):
         curriculum = True

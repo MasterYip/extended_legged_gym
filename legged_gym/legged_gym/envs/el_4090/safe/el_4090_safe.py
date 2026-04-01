@@ -171,6 +171,7 @@ class EL_4090_Safe(EL_4090):
         u_safe, u_mu, atacom_info = self.atacom.forward(s, actions, ang_vel_body=ang_vel_base)
 
         self.u_mu = u_mu
+        # print(u_mu)
 
         # 聚合标量（可选，会触发 GPU 同步）
         if self._atacom_log_info:

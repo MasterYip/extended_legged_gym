@@ -17,6 +17,8 @@ ATACOM 安全层实现（投影优化版）
 """
 
 from typing import Tuple, Dict, Optional
+import argparse
+import time
 import torch
 
 
@@ -25,7 +27,7 @@ import torch
 # ---------------------------------------------------------------------------
 S = 58    # 运行时状态维度
 U = 18    # 控制输入维度（关节数）
-K = 77    # 约束总数：36 + 18 + 18 + 2 + 3
+K = 77    # 约束总数：36 （位置） + 18（速度） + 18（力矩） + 2（高度） + 3（倾角）
 U_EXT = U + K   # 增广控制维度 = 95
 
 
@@ -633,3 +635,367 @@ class ATACOMSafetyLayer:
             'psi_norm': psi.norm(dim=1).mean().item(),
             'step': info['step'],
         }
+
+
+def _sync_if_cuda(device: torch.device) -> None:
+    if device.type == 'cuda':
+        torch.cuda.synchronize(device)
+
+
+def _build_demo_robot_params(device: torch.device, dtype: torch.dtype) -> Dict:
+    q_max = torch.full((U,), 1.2, device=device, dtype=dtype)
+    return {
+        'q_max': q_max,
+        'q_min': -q_max,
+        'dq_max': torch.full((U,), 8.0, device=device, dtype=dtype),
+        'tau_max': torch.full((U,), 25.0, device=device, dtype=dtype),
+        'phi_max': torch.tensor([0.6, 0.6, 0.8], device=device, dtype=dtype),
+        'z_max': 0.65,
+        'z_min': 0.15,
+    }
+
+
+def _build_demo_batch(
+    num_envs: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    rp: Dict,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    s = torch.zeros((num_envs, S), device=device, dtype=dtype)
+
+    q_scale = 1.1 * rp['q_max'].unsqueeze(0)
+    dq_scale = 1.1 * rp['dq_max'].unsqueeze(0)
+    tau_scale = 1.1 * rp['tau_max'].unsqueeze(0)
+    phi_scale = 1.1 * rp['phi_max'].unsqueeze(0)
+
+    s[:, 0:18] = (torch.rand((num_envs, U), device=device, dtype=dtype) * 2.0 - 1.0) * q_scale
+    s[:, 18:36] = (torch.rand((num_envs, U), device=device, dtype=dtype) * 2.0 - 1.0) * dq_scale
+    s[:, 36:54] = (torch.rand((num_envs, U), device=device, dtype=dtype) * 2.0 - 1.0) * tau_scale
+    s[:, 54:57] = (torch.rand((num_envs, 3), device=device, dtype=dtype) * 2.0 - 1.0) * phi_scale
+
+    z_low = rp['z_min'] - 0.03
+    z_high = rp['z_max'] + 0.03
+    s[:, 57] = torch.rand((num_envs,), device=device, dtype=dtype) * (z_high - z_low) + z_low
+
+    u_nominal = torch.randn((num_envs, U), device=device, dtype=dtype) * 4.0
+    ang_vel_body = torch.randn((num_envs, 3), device=device, dtype=dtype) * 0.2
+    return s, u_nominal, ang_vel_body
+
+
+def _run_profile(num_envs: int = 4096, warmup: int = 10, iters: int = 50) -> None:
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    dtype = torch.float32
+    torch.manual_seed(42)
+
+    rp = _build_demo_robot_params(device=device, dtype=dtype)
+    layer = ATACOMSafetyLayer(
+        robot_params=rp,
+        lambda_retract=1.0,
+        beta=1.0,
+        dt=0.01,
+        debug_mode=False,
+    )
+
+    s, u_nominal, ang_vel_body = _build_demo_batch(num_envs, device, dtype, rp)
+    layer._ensure_on_device(device)
+    _sync_if_cuda(device)
+
+    # 预热（避免首次 kernel/内存分配影响）
+    for _ in range(warmup):
+        layer.forward(s, u_nominal, ang_vel_body=ang_vel_body)
+    _sync_if_cuda(device)
+
+    time_keys = [
+        'constraints',
+        'mu_and_c',
+        'jacobian',
+        'drift_and_G',
+        'psi',
+        'A',
+        'J_u',
+        'pinv',
+        'projection',
+        'finite_check_and_info',
+        'manual_total',
+        'forward_total',
+    ]
+    times = {k: 0.0 for k in time_keys}
+
+    for _ in range(iters):
+        t_total = time.perf_counter()
+
+        t0 = time.perf_counter()
+        k = layer.compute_constraints(s)
+        _sync_if_cuda(device)
+        times['constraints'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        mu = torch.clamp(-k, min=1e-6, max=layer.mu_max)
+        c = k + mu
+        _sync_if_cuda(device)
+        times['mu_and_c'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        J_k = layer.compute_constraint_jacobian(s)
+        _sync_if_cuda(device)
+        times['jacobian'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        f = layer.compute_drift_f(s, ang_vel_body=ang_vel_body)
+        G = layer.compute_input_gain_G(s)
+        _sync_if_cuda(device)
+        times['drift_and_G'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        psi = torch.clamp(torch.bmm(J_k, f.unsqueeze(-1)).squeeze(-1), min=0.0)
+        _sync_if_cuda(device)
+        times['psi'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        A = layer.compute_slack_dynamics_A(mu)
+        _sync_if_cuda(device)
+        times['A'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        J_G = torch.bmm(J_k, G)
+        J_u = torch.cat([J_G, A], dim=2)
+        _sync_if_cuda(device)
+        times['J_u'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        J_u_pinv = layer._robust_pinv(J_u)
+        _sync_if_cuda(device)
+        times['pinv'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        zeros_K = torch.zeros((num_envs, K), device=device)
+        u_nom_ext = torch.cat([u_nominal, zeros_K], dim=1)
+        J_u_u_nom = torch.bmm(J_u, u_nom_ext.unsqueeze(-1)).squeeze(-1)
+        rhs = -(psi + layer.lam * c)
+        combined_rhs = (rhs + J_u_u_nom).unsqueeze(-1)
+        u_ext = u_nom_ext - torch.bmm(J_u_pinv, combined_rhs).squeeze(-1)
+        u_safe = u_ext[:, :U]
+        u_mu = u_ext[:, U:]
+        _sync_if_cuda(device)
+        times['projection'] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        u_safe_valid = torch.isfinite(u_safe).all()
+        u_mu_valid = torch.isfinite(u_mu).all()
+        if not u_safe_valid:
+            u_safe = torch.zeros_like(u_safe)
+        if not u_mu_valid:
+            u_mu = torch.zeros_like(u_mu)
+        info = {'k': k, 'mu': mu, 'psi': psi, 'u_mu': u_mu, 'step': layer._step_count}
+        _ = ATACOMSafetyLayer.compute_info_scalars(info)
+        _sync_if_cuda(device)
+        times['finite_check_and_info'] += time.perf_counter() - t0
+
+        times['manual_total'] += time.perf_counter() - t_total
+
+        t0 = time.perf_counter()
+        layer.forward(s, u_nominal, ang_vel_body=ang_vel_body)
+        _sync_if_cuda(device)
+        times['forward_total'] += time.perf_counter() - t0
+
+    print("\n[ATACOM Benchmark] 结果（平均每次调用，单位 ms）")
+    print(f"  device={device}, dtype={dtype}, num_envs={num_envs}, warmup={warmup}, iters={iters}")
+    print("-" * 78)
+    for key in [
+        'constraints',
+        'mu_and_c',
+        'jacobian',
+        'drift_and_G',
+        'psi',
+        'A',
+        'J_u',
+        'pinv',
+        'projection',
+        'finite_check_and_info',
+        'manual_total',
+        'forward_total',
+    ]:
+        print(f"  {key:<24s}: {times[key] * 1000.0 / iters:9.4f} ms")
+    print("-" * 78)
+    print("提示：`pinv` 通常是主要瓶颈，GPU 上请关注 batch 大小时的吞吐变化。")
+
+
+def _print_tensor(name: str, t: torch.Tensor, max_rows: int = 6, max_cols: int = 10) -> None:
+    """用于示例打印：小张量全量，大张量打印左上角 + 统计量。"""
+    print(f"\n[{name}] shape={tuple(t.shape)}, dtype={t.dtype}, device={t.device}")
+    if t.numel() <= max_rows * max_cols:
+        print(t)
+        return
+
+    if t.ndim == 1:
+        print(t[:max_cols])
+    elif t.ndim == 2:
+        print(t[:max_rows, :max_cols])
+    elif t.ndim >= 3:
+        # 打印第 0 个 batch 的左上角
+        print(t[0, :max_rows, :max_cols])
+
+    finite = torch.isfinite(t)
+    if finite.any():
+        tv = t[finite]
+        print(
+            f"stats: min={tv.min().item():.4e}, max={tv.max().item():.4e}, "
+            f"mean={tv.mean().item():.4e}, norm={tv.norm().item():.4e}"
+        )
+    else:
+        print("stats: all values are non-finite")
+
+
+def _run_step_by_step_example() -> None:
+    """单环境具体示例：逐步打印 ATACOM 每一步结果，并进行正确性验证。"""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    dtype = torch.float32
+    torch.manual_seed(7)
+
+    rp = _build_demo_robot_params(device=device, dtype=dtype)
+    layer = ATACOMSafetyLayer(
+        robot_params=rp,
+        lambda_retract=1.0,
+        beta=1.0,
+        dt=0.01,
+        debug_mode=False,
+    )
+    layer._ensure_on_device(device)
+
+    # ---- 构造一个“明确有约束违反”的单环境样本 ----
+    s = torch.zeros((1, S), device=device, dtype=dtype)
+    s[:, 0:18] = rp['q_max'].unsqueeze(0) * 1.05                 # 部分超位置上限
+    s[:, 18:36] = rp['dq_max'].unsqueeze(0) * -1.10              # 速度超限
+    s[:, 36:54] = rp['tau_max'].unsqueeze(0) * 0.95              # 力矩接近上限
+    s[:, 54:57] = torch.tensor([[0.66, -0.62, 0.10]], device=device, dtype=dtype)  # roll/pitch 超限
+    s[:, 57] = torch.tensor([rp['z_min'] - 0.02], device=device, dtype=dtype)      # 高度低于下限
+
+    u_nominal = torch.linspace(-3.0, 3.0, U, device=device, dtype=dtype).unsqueeze(0)
+    ang_vel_body = torch.tensor([[0.2, -0.1, 0.15]], device=device, dtype=dtype)
+
+    _sync_if_cuda(device)
+    print("\n========== ATACOM 逐步示例（N=1）==========")
+    _print_tensor("输入状态 s", s)
+    _print_tensor("名义动作 u_nominal", u_nominal)
+    _print_tensor("机体系角速度 ang_vel_body", ang_vel_body)
+
+    # Step 1
+    k = layer.compute_constraints(s)
+    _sync_if_cuda(device)
+    _print_tensor("Step1: k", k)
+
+    # Step 2 / 3
+    mu = torch.clamp(-k, min=1e-6, max=layer.mu_max)
+    c = k + mu
+    _sync_if_cuda(device)
+    _print_tensor("Step2: mu", mu)
+    _print_tensor("Step3: c = k + mu", c)
+
+    # Step 4
+    J_k = layer.compute_constraint_jacobian(s)
+    _sync_if_cuda(device)
+    _print_tensor("Step4: J_k", J_k)
+
+    # Step 5
+    f = layer.compute_drift_f(s, ang_vel_body=ang_vel_body)
+    G = layer.compute_input_gain_G(s)
+    _sync_if_cuda(device)
+    _print_tensor("Step5: f", f)
+    _print_tensor("Step5: G", G)
+
+    # Step 6
+    psi = torch.clamp(torch.bmm(J_k, f.unsqueeze(-1)).squeeze(-1), min=0.0)
+    _sync_if_cuda(device)
+    _print_tensor("Step6: psi", psi)
+
+    # Step 7
+    A = layer.compute_slack_dynamics_A(mu)
+    _sync_if_cuda(device)
+    _print_tensor("Step7: A", A)
+
+    # Step 8
+    J_G = torch.bmm(J_k, G)
+    J_u = torch.cat([J_G, A], dim=2)
+    _sync_if_cuda(device)
+    _print_tensor("Step8: J_G", J_G)
+    _print_tensor("Step8: J_u", J_u)
+
+    # Step 9
+    J_u_pinv = layer._robust_pinv(J_u)
+    _sync_if_cuda(device)
+    _print_tensor("Step9: J_u_pinv", J_u_pinv)
+
+    # Step 10~14
+    zeros_K = torch.zeros((1, K), device=device, dtype=dtype)
+    u_nom_ext = torch.cat([u_nominal, zeros_K], dim=1)
+    J_u_u_nom = torch.bmm(J_u, u_nom_ext.unsqueeze(-1)).squeeze(-1)
+    rhs = -(psi + layer.lam * c)
+    combined_rhs = (rhs + J_u_u_nom).unsqueeze(-1)
+    u_ext = u_nom_ext - torch.bmm(J_u_pinv, combined_rhs).squeeze(-1)
+    u_safe_manual = u_ext[:, :U]
+    u_mu_manual = u_ext[:, U:]
+    _sync_if_cuda(device)
+    _print_tensor("Step10: u_nom_ext", u_nom_ext)
+    _print_tensor("Step11: J_u_u_nom", J_u_u_nom)
+    _print_tensor("Step12: rhs", rhs)
+    _print_tensor("Step13: u_ext", u_ext)
+    _print_tensor("Step14: u_safe", u_safe_manual)
+    _print_tensor("Step14: u_mu", u_mu_manual)
+
+    # ---- 与 forward() 结果对比 ----
+    u_safe_fw, u_mu_fw, info_fw = layer.forward(s, u_nominal, ang_vel_body=ang_vel_body)
+    _sync_if_cuda(device)
+
+    # 验证 1：逐步计算 vs forward 一致性
+    diff_u = (u_safe_manual - u_safe_fw).abs().max().item()
+    diff_mu = (u_mu_manual - u_mu_fw).abs().max().item()
+    diff_k = (k - info_fw['k']).abs().max().item()
+    diff_psi = (psi - info_fw['psi']).abs().max().item()
+
+    # 验证 2：投影等式残差（按当前实现：J_u u_ext ≈ psi + λc）
+    residual = torch.bmm(J_u, u_ext.unsqueeze(-1)).squeeze(-1) - (psi + layer.lam * c)
+    residual_norm = residual.norm().item()
+    residual_max = residual.abs().max().item()
+
+    # 验证 3：目标残差是否降低（名义动作 -> 安全动作）
+    # 使用同一目标：target = psi + λc
+    nom_res = torch.bmm(J_u, u_nom_ext.unsqueeze(-1)).squeeze(-1) - (psi + layer.lam * c)
+    safe_res = torch.bmm(J_u, u_ext.unsqueeze(-1)).squeeze(-1) - (psi + layer.lam * c)
+    nom_res_norm = nom_res.norm().item()
+    safe_res_norm = safe_res.norm().item()
+
+    print("\n========== 正确性验证 ==========")
+    print(f"[一致性] max|u_safe_manual - u_safe_forward| = {diff_u:.4e}")
+    print(f"[一致性] max|u_mu_manual   - u_mu_forward|   = {diff_mu:.4e}")
+    print(f"[一致性] max|k_manual      - k_forward|      = {diff_k:.4e}")
+    print(f"[一致性] max|psi_manual    - psi_forward|    = {diff_psi:.4e}")
+    print(f"[投影残差] ||J_u u_ext - (psi + λc)||_2 = {residual_norm:.4e}")
+    print(f"[投影残差] max abs residual          = {residual_max:.4e}")
+    print(f"[目标残差] 名义动作残差范数 = {nom_res_norm:.4e}")
+    print(f"[目标残差] 安全动作残差范数 = {safe_res_norm:.4e}")
+
+    ok_consistency = diff_u < 1e-4 and diff_mu < 1e-4 and diff_k < 1e-6 and diff_psi < 1e-6
+    ok_projection = residual_max < 1e-3
+    ok_improve = safe_res_norm <= nom_res_norm + 1e-6
+    print(
+        f"结论: 一致性={'通过' if ok_consistency else '未通过'}, "
+        f"投影方程={'通过' if ok_projection else '未通过'}, "
+        f"目标残差改进={'通过' if ok_improve else '未通过'}"
+    )
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description='ATACOM demo / profiler')
+    parser.add_argument('--mode', type=str, default='example', choices=['example', 'profile'])
+    parser.add_argument('--num_envs', type=int, default=4096)
+    parser.add_argument('--warmup', type=int, default=10)
+    parser.add_argument('--iters', type=int, default=50)
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    args = _parse_args()
+    if args.mode == 'example':
+        _run_step_by_step_example()
+    else:
+        _run_profile(num_envs=args.num_envs, warmup=args.warmup, iters=args.iters)

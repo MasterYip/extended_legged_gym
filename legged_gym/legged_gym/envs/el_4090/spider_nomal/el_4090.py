@@ -46,7 +46,6 @@ from legged_gym.utils.terrain import Terrain
 from legged_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
 from legged_gym.utils.helpers import class_to_dict
 from legged_gym import LEGGED_GYM_ROOT_DIR
-from .el_4090_config import EL_4090_Cfg,EL_4090_PPO
 from legged_gym.envs.elspider_air.elspider import ElSpider
 
 from legged_gym.envs.el_4090.spider_nomal.el4090_spider_config import El4090SpiderCfg
@@ -115,6 +114,46 @@ class EL_4090(ElSpider):
         for i in range(len(shank_names)):
             self.shank_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], shank_names[i])
 
+
+    def _compute_torques(self, actions):
+        # pd controller
+        actions_scaled = actions * self.cfg.control.action_scale
+
+        control_type = self.cfg.control.control_type
+        if control_type == "P":
+            torques = self.p_gains*(actions_scaled + self.default_dof_pos - self.dof_pos) - self.d_gains*self.dof_vel
+        elif control_type == "V":
+            torques = self.p_gains*(actions_scaled - self.dof_vel) - self.d_gains * \
+                (self.dof_vel - self.last_dof_vel)/self.sim_params.dt
+        elif control_type == "T":
+            torques = actions_scaled
+        elif control_type == "DELAY":
+            # First-order lag actuator model (no FIFO/discrete pure delay):
+            #   y_dot = (u - y) / tau
+            # with exact discrete update:
+            #   y[k] = y[k-1] + alpha * (u[k] - y[k-1]), alpha = 1 - exp(-dt/tau)
+            tau = 0.015  # seconds
+            dt = self.sim_params.dt
+
+            if not hasattr(self, "_delay_action_state"):
+                self._delay_action_state = actions_scaled.clone()
+
+            alpha = 1.0 - math.exp(-dt / max(tau, 1e-8))
+            self._delay_action_state += alpha * (actions_scaled - self._delay_action_state)
+
+            # Prevent cross-episode leakage for reset envs.
+            if hasattr(self, "reset_buf"):
+                reset_mask = self.reset_buf.bool()
+                if torch.any(reset_mask):
+                    self._delay_action_state[reset_mask] = actions_scaled[reset_mask]
+
+            delayed_actions = self._delay_action_state
+
+            # Use lagged target action in the same P-controller form as "P" mode.
+            torques = self.p_gains*(delayed_actions + self.default_dof_pos - self.dof_pos) - self.d_gains*self.dof_vel
+        else:
+            raise NameError(f"Unknown controller type: {control_type}")
+        return torch.clip(torques, -self.torque_limits, self.torque_limits)
 
 
     def _debug_info(self):
@@ -322,6 +361,7 @@ class EL_4090(ElSpider):
         
 
         return horizontal_dist
+
     
     def _reward_haa_tripod_symmetry(self):
         """
@@ -381,6 +421,28 @@ class EL_4090(ElSpider):
         super().post_physics_step()
         # Call debug info after all computations are done
         self._debug_info()
+
+
+    def _reward_stand_on_six_legs(self):
+        # 低命令下：鼓励六条腿全部着地
+
+        lin_cmd_small = torch.norm(self.commands[:, :2], dim=1) < self.speed_min
+        if self.cfg.commands.heading_command:
+            yaw_or_heading_small = torch.abs(self.commands[:, 3]) < self.speed_min
+        else:
+            yaw_or_heading_small = torch.abs(self.commands[:, 2]) < self.speed_min
+        small_command_mask = torch.logical_and(lin_cmd_small, yaw_or_heading_small)
+
+        # 足端接触（法向力阈值 1N）
+        foot_contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        num_feet_in_contact = torch.sum(foot_contact.float(), dim=1)
+
+        # 惩罚未着地的脚数量；六足都着地时为 0
+        missing_contact_penalty = len(self.feet_indices) - num_feet_in_contact
+
+        return missing_contact_penalty * small_command_mask.float()
+
+    
     
 
 # Bodies:  ['base_link', 'LB_HIP', 'LB_THIGH', 'LB_SHANK', 'LB_FOOT', 'LF_HIP', 'LF_THIGH', 'LF_SHANK', 'LF_FOOT', 

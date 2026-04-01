@@ -10,7 +10,7 @@ class LeggedRobotRewMixin:
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.speed_min = 0.15  # Minimum speed for some rewards
+        self.speed_min = 0.1  # Minimum speed for some rewards
 
     def _get_reward_scales(self, stage=0):
         self.reward_scales_dict = class_to_dict(self.cfg.rewards.scales)
@@ -161,7 +161,7 @@ class LeggedRobotRewMixin:
         first_contact = (self.feet_air_time > 0.) * contact_filt
         self.feet_air_time += self.dt
         self.feet_contact_time += self.dt
-        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1)  # reward only on first contact with the ground
+        rew_airTime = torch.sum((self.feet_air_time - 0.2) * first_contact, dim=1)  # reward only on first contact with the ground
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > self.speed_min  # no reward for zero command
         self.feet_air_time *= ~contact_filt
         self.feet_contact_time *= contact_filt

@@ -137,10 +137,11 @@ def play(args):
             lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
         # 限制范围
         lin_vel_x = np.clip(lin_vel_x, -1.5, 1.5)
-        lin_vel_x = 1.0
+        # lin_vel_x = 1.0
         lin_vel_y = np.clip(lin_vel_y, -1.0, 1.0)
-        lin_vel_y = 0.2
+        # lin_vel_y = 0.2
         ang_vel_yaw = np.clip(ang_vel_yaw, -1.5, 1.5)
+        # ang_vel_yaw = 1.0
         heading = np.clip(heading, -1.0, 1.0)
         command = [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
         import torch
