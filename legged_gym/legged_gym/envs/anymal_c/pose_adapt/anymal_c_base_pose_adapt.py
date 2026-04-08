@@ -71,7 +71,7 @@ class AnymalCBasePoseAdaptCfg(BasePoseAdaptCfg):
         spherical_num_elevation: int = 8
         max_distance: float = 2.0
         # Use terrain file or add obstacles programmatically
-        terrain_file: str = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"
+        terrain_file: str = "legged_gym/resources/terrains/confined/confined_terrain.obj"
         offset_pos: list = (0.0, 0.0, 0.0)
         attach_yaw_only: bool = False
 

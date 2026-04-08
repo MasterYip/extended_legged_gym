@@ -114,6 +114,9 @@ class TerrainObj:
         self.verbose_print(
             f"Minimum corner at: {new_bounds[0][0:2]}, should be close to: [{-self.border_size}, {-self.border_size}]")
 
+        self.spawn_height_offset = getattr(self.cfg, 'spawn_height_offset', 0.35)
+        self.spawn_height_clearance = getattr(self.cfg, 'spawn_height_clearance', 0.10)
+
         # Initialize ray mesh intersector for height evaluation
         self.ray_intersector = trimesh.ray.ray_triangle.RayMeshIntersector(self.terrain_mesh)
 
@@ -132,8 +135,14 @@ class TerrainObj:
                 env_origin_x = j * self.env_length - 0.5 * self.border_size
                 env_origin_y = i * self.env_width - 0.5 * self.border_size
 
-                # Get terrain height at this position (currently set to 0)
-                height = 10.0
+                floor_height = self.get_height(env_origin_x, env_origin_y, cast_dir=1)
+                ceiling_height = self.get_height(env_origin_x, env_origin_y, cast_dir=-1)
+
+                if ceiling_height > floor_height:
+                    available_clearance = max(ceiling_height - floor_height - self.spawn_height_clearance, 0.0)
+                    height = floor_height + min(self.spawn_height_offset, available_clearance)
+                else:
+                    height = floor_height + self.spawn_height_offset
 
                 # Store the environment origin
                 self.env_origins[i, j] = [env_origin_x, env_origin_y, height]

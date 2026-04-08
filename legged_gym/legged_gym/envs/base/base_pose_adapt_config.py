@@ -59,7 +59,7 @@ class BasePoseAdaptCfg(BaseConfig):
     class terrain:
         use_terrain_obj: bool = True  # use TerrainObj class to create terrain
         # path to the terrain file
-        terrain_file: str = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"
+        terrain_file: str = "legged_gym/resources/terrains/confined/confined_terrain.obj"
         mesh_type: str = 'trimesh'  # "heightfield" # none, plane, heightfield or trimesh
         horizontal_scale: float = 0.1  # [m]
         vertical_scale: float = 0.005  # [m]

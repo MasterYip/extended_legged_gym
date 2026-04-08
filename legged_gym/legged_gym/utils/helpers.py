@@ -119,7 +119,10 @@ def get_load_path(root, load_run=-1, checkpoint=-1):
     if load_run == -1:
         load_run = last_run
     else:
-        load_run = os.path.join(root, load_run)
+        if os.path.isabs(load_run) or os.path.isdir(load_run):
+            load_run = load_run
+        else:
+            load_run = os.path.join(root, load_run)
 
     if checkpoint == -1:
         models = [file for file in os.listdir(load_run) if 'model' in file]

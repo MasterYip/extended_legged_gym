@@ -80,7 +80,7 @@ class Go2BatchRolloutCfg(RobotBatchRolloutPerceptCfg):
     class terrain(RobotBatchRolloutPerceptCfg.terrain):
         use_terrain_obj = True  # use TerrainObj class to create terrain
         # path to the terrain file
-        terrain_file = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"
+        terrain_file = "legged_gym/resources/terrains/confined/confined_terrain.obj"
         measure_heights = False
         curriculum = False
         # Origin generation method
@@ -96,7 +96,7 @@ class Go2BatchRolloutCfg(RobotBatchRolloutPerceptCfg):
         ray_pattern = "spherical"    # Options: single, grid, cone, spherical
         num_rays = 10           # Number of rays for cone pattern
         ray_angle = 30.0        # Cone angle in degrees
-        terrain_file = "/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"       # Path to terrain mesh file
+        terrain_file = "legged_gym/resources/terrains/confined/confined_terrain.obj"       # Path to terrain mesh file
         max_distance = 10.0     # Maximum ray cast distance
         attach_yaw_only = False  # If True, only yaw rotation is applied to rays
         offset_pos = [0.0, 0.0, 0.0]  # Offset from robot base
@@ -108,7 +108,7 @@ class Go2BatchRolloutCfg(RobotBatchRolloutPerceptCfg):
     class sdf:
         enable_sdf = True      # Set to True to enable SDF calculations
         # Paths to mesh files for SDF calculation
-        mesh_paths = ["/home/user/CodeSpace/Python/terrains/confined_terrain2.obj"]
+        mesh_paths = ["legged_gym/resources/terrains/confined/confined_terrain.obj"]
         max_distance = 10.0     # Maximum SDF distance to compute
         enable_caching = True   # Enable SDF query caching for performance
         update_freq = 5         # Update SDF values every N steps
