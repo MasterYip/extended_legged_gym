@@ -79,9 +79,9 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
 
     class control(ElSpiderAirRoughCfg.control):
         # PD Drive parameters matching Anymal:
-        stiffness = {'HAA': 120., 
-                     'HFE': 120., 
-                     'KFE': 120.}  # [N*m/rad]
+        stiffness = {'HAA': 100., 
+                     'HFE': 100., 
+                     'KFE': 100.}  # [N*m/rad]
         damping = {'HAA': 1.2, 
                    'HFE': 1.2, 
                    'KFE': 1.2}     # [N*m*s/rad]
@@ -134,7 +134,7 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
     ## Rewards V1 (normal dof_acc)
     class rewards(ElSpiderAirRoughCfg.rewards):
         max_contact_force = 250.
-        base_height_target = 0.45
+        base_height_target = 0.47
         only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
@@ -147,28 +147,33 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         class scales:
 
             termination = -0.0
-            tracking_lin_vel = 6
+
+            tracking_lin_vel = 8
             tracking_ang_vel = 5.5
-            lin_vel_z = -5
-            ang_vel_xy = -0.5
+            lateral_lin_vel_y = -1
+
+            lin_vel_z = -2
+            ang_vel_xy = -1
             orientation = -5
             torques = -0.0001
             dof_vel = -0.0001
-            dof_acc = -1e-6
+            dof_acc = -1e-7
             base_height = -50
-            feet_slip = -0.1 
-            feet_air_time = 3
+            feet_slip = -0.05 
+            feet_air_time = 1.5
             collision = -1.
             feet_stumble = -1
-            action_rate = -0.01
-            stand_still = -5  
-            dof_pos_limits = -0.1
-            dof_vel_limits = -1.
+            action_rate = -0.03
+            stand_still = -3  
+            dof_pos_limits = -0.5
+            dof_vel_limits = -0.1
             torque_limits = -0.01
-            feet_contact_forces = -0.03
-            shank_vertical = -1
-            feet_async = -2
-            feet_sync = -2
+            feet_contact_forces = -0.04
+            # stand_on_six_legs = -1
+            shank_vertical = -4
+            feet_async = -3
+            feet_sync = -3
+
 
     class commands(ElSpiderAirRoughCfg.commands):
         curriculum = True
@@ -178,10 +183,12 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         resampling_time = 4.  # time before command are changed[s]
         heading_command = False  # if true: compute ang vel command from heading error
 
+        small_command_radio = True
+
         class ranges(ElSpiderAirRoughCfg.commands.ranges):
-            lin_vel_x = [-1.5, 1.5]  # min max [m/s]
-            lin_vel_y = [-1, 1]   # min max [m/s]
-            ang_vel_yaw = [-1.5, 1.5]    # min max [rad/s]
+            lin_vel_x = [-4.0, 4.0]  # min max [m/s]
+            lin_vel_y = [-1.5, 1.5]   # min max [m/s]
+            ang_vel_yaw = [-2.0, 2.0]    # min max [rad/s]
             heading = [-1, 1]
 
     class domain_rand(ElSpiderAirRoughCfg.domain_rand):
@@ -189,7 +196,7 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         randomize_friction = True
         friction_range = [0.3, 1.25]
         randomize_base_mass = True
-        added_mass_range = [-5., 5.]
+        added_mass_range = [-10., 10.]
         push_robots = True
         push_interval_s = 3
         max_push_vel_xy = 1.
@@ -200,10 +207,10 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
 
         class noise_scales:
             dof_pos = 0.05
-            dof_vel = 1.5
-            lin_vel = 0.8
-            ang_vel = 0.8
-            gravity = 0.5
+            dof_vel = 1.0
+            lin_vel = 1.2
+            ang_vel = 1.2
+            gravity = 1.2
             height_measurements = 0.1
 
     class safety:
@@ -213,13 +220,13 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         warmup_steps = 0                  # 前 N 步跳过 ATACOM（用于调试）
 
         # 算法超参数
-        lambda_retract = 1.0              # 收缩增益 λ：控制向约束流形收缩的速率
+        lambda_retract = 0.8              # 收缩增益 λ：控制向约束流形收缩的速率
         beta = 2.0                        # 松弛变量动力学系数
         dt = 0.005                        # 控制步长（s），建议与仿真 dt 保持一致
 
         # 关节限位（列表长度须为 18）
-        q_max = [2.95] * 18               # 关节位置上限（rad）
-        q_min = [-2.95] * 18              # 关节位置下限（rad）
+        q_max = [1.57] * 18               # 关节位置上限（rad）
+        q_min = [-1.57] * 18              # 关节位置下限（rad）
         dq_max = [14.2] * 18               # 关节速度上限（rad/s）
         tau_max = [76] * 18               # 关节力矩上限（N·m）
 

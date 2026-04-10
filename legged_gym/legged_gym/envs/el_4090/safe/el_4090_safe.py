@@ -1,6 +1,8 @@
 from typing import Dict, Tuple
 
 import torch
+from torch import Tensor
+import numpy as np
 
 from legged_gym.envs.el_4090.spider_nomal.el_4090 import EL_4090
 from legged_gym.utils.math_utils import quat_rotate_inverse
@@ -27,11 +29,13 @@ class EL_4090_Safe(EL_4090):
     """
 
     _BASE_OBS_DIM = 66
+    cfg: El4090SafeCfg
 
-    def __init__(self, cfg, sim_params, physics_engine, sim_device, headless,
-                 task_name="el4090_spider"):
+    def __init__(self, cfg: El4090SafeCfg, sim_params, physics_engine, sim_device, headless,
+                 task_name="el_4090_safe"):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless,
                          task_name=task_name)
+
 
         safety_cfg = getattr(self.cfg, 'safety', El4090SafeCfg.safety)
 
@@ -180,3 +184,86 @@ class EL_4090_Safe(EL_4090):
             self.extras['atacom'] = ATACOMSafetyLayer.compute_info_scalars(atacom_info)
 
         return super().step(u_safe, *args, **kwargs)
+    
+
+    def update_command_curriculum(self, env_ids):
+        """ Implements a curriculum of increasing commands
+
+        Args:
+            env_ids (List[int]): ids of environments being reset
+        """
+        # If the tracking reward is above 80% of the maximum, increase the range of commands
+        if torch.mean(self.episode_sums["tracking_lin_vel"][env_ids]) / self.max_episode_length > 0.8 * self.reward_scales["tracking_lin_vel"]:
+            print("command has been updated!")
+            self.command_ranges["lin_vel_x"][0] = np.clip(
+                self.command_ranges["lin_vel_x"][0] - 0.5, -self.cfg.commands.max_curriculum, 0.)
+            self.command_ranges["lin_vel_x"][1] = np.clip(
+                self.command_ranges["lin_vel_x"][1] + 0.5, 0., self.cfg.commands.max_curriculum)
+            
+
+    def _resample_commands(self, env_ids):
+        """ Randommly select commands of some environments
+
+        Args:
+            env_ids (List[int]): Environments ids for which new commands are needed
+        """
+        super()._resample_commands(env_ids)
+        if len(env_ids) == 0:
+            return
+        # print(f"Resampling small commands for {len(env_ids)} envs (total reward: {mean_total_reward:.3f}, lin reward: {mean_lin_reward:.3f})")
+        
+        if self.cfg.commands.small_command_radio:
+            small_ratio = 0.01
+            small_mask = torch.rand(len(env_ids), device=self.device) < small_ratio
+            if not torch.any(small_mask):
+                return
+
+            small_env_ids = env_ids[small_mask]
+            n_small = len(small_env_ids)
+
+            # 小线速度命令：[-0.1, 0.1]
+            self.commands[small_env_ids, 0] = (torch.rand(n_small, device=self.device) * 2.0 - 1.0) * 0.1
+            self.commands[small_env_ids, 1] = (torch.rand(n_small, device=self.device) * 2.0 - 1.0) * 0.1
+            # 小转向命令：[-0.1, 0.1]
+            if self.cfg.commands.heading_command:
+                self.commands[small_env_ids, 3] = (torch.rand(n_small, device=self.device) * 2.0 - 1.0) * 0.1
+            else:
+                self.commands[small_env_ids, 2] = (torch.rand(n_small, device=self.device) * 2.0 - 1.0) * 0.1
+
+            
+
+
+
+    def _reward_stand_on_six_legs(self):
+        # 低命令下：鼓励六条腿全部着地
+
+        lin_cmd_small = torch.norm(self.commands[:, :2], dim=1) < self.speed_min
+        if self.cfg.commands.heading_command:
+            yaw_or_heading_small = torch.abs(self.commands[:, 3]) < self.speed_min
+        else:
+            yaw_or_heading_small = torch.abs(self.commands[:, 2]) < self.speed_min
+        small_command_mask = torch.logical_and(lin_cmd_small, yaw_or_heading_small)
+
+        # 足端接触（法向力阈值 1N）
+        foot_contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        num_feet_in_contact = torch.sum(foot_contact.float(), dim=1)
+
+        # 惩罚未着地的脚数量；六足都着地时为 0
+        missing_contact_penalty = len(self.feet_indices) - num_feet_in_contact
+
+        return missing_contact_penalty * small_command_mask.float()
+    
+    def _reward_lateral_lin_vel_y(self):
+        """
+        Penalize lateral (y-axis) velocity tracking error.
+        Stronger penalty when forward command |cmd_x| is larger.
+        """
+        y_error = self.commands[:, 1] - self.base_lin_vel[:, 1]
+
+        # 可在 cfg.rewards 中配置，没配就用默认值
+        gain_with_cmd_x = getattr(self.cfg.rewards, "tracking_lin_vel_y_cmdx_gain", 0.25)
+
+        # |cmd_x| 越大，惩罚越强（例如 cmd_x=4 时权重约 2x）
+        dynamic_weight = 1.0 + gain_with_cmd_x * torch.abs(self.commands[:, 0])
+
+        return dynamic_weight * torch.square(y_error)
