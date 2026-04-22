@@ -15,8 +15,8 @@ setup(
                       'trimesh',
                       'rtree',
                       'warp-lang==1.7.0',
-                      'numpy==1.22',
-                      'opencv-python'  # pin numpy to avoid compatibility issues with isaacgym
-                      
+                      'numpy==1.22', # pin numpy to avoid compatibility issues with isaacgym
+                      'opencv-python',
+                      'tensorboard'
                       ]
 )

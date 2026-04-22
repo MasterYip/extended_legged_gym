@@ -58,14 +58,7 @@ For specific commands and detailed training profiles, see the individual task do
 
 ## BUG Report
 
-1. **Issue**: Looks like the less rollout environments it is set, the `step_rollout` is faster (main_env*rollout_envs=Const).
-
-**Problem Location**: For rollout environments, too much robot gather together, causing the following warning:
-/buildAgent/work/99bede84aa0a52c2/source/gpubroadphase/src/PxgAABBManager.cpp (1048) : invalid parameter : The application needs to increase PxgDynamicsMemoryConfig::foundLostAggregatePairsCapacity to 779948463 , otherwise, the simulation will miss interactions
-
-Detailed information about 0 env spacing can be found in the [issue discussion](https://forums.developer.nvidia.com/t/issue-with-environment-spacing-and-pxgdynamicsmemoryconfig-foundlostaggregatepairscapacity/198272/9).
-
-**TODO**: For rollout envs, try to set slightly different position.
+See [Troubleshooting](doc/trouble_shooting.md) for known issues and fixes.
 
 ## RSL-RL Training Guides
 
