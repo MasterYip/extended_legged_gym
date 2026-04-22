@@ -8,6 +8,15 @@ conda activate pdplanner
 
 ## Basic Tasks
 
+### ElSpider4090
+
+```bash
+python legged_gym/scripts/train.py --task=el4090_spider --num_envs=4096 --headless --resume
+python legged_gym/scripts/play.py --task=el4090_spider --num_envs=48 --checkpoint=-1  --load_run=Dec02_20-16-21_ --resume
+python legged_gym/scripts/train.py --task=el4090_mammal --num_envs=4096 --headless --resume
+python legged_gym/scripts/play.py --task=el4090_mammal --num_envs=48 --checkpoint=-1  --load_run=Dec02_20-16-21_ --resume
+```
+
 ### ElSpiderAir Flat Terrain
 
 **Training Epoch:** ~300

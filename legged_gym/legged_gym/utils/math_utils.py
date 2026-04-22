@@ -36,6 +36,31 @@ from typing import Tuple
 
 # @ torch.jit.script
 
+def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """将向量 v 从世界系旋转到四元数 q 所表示的机体系。
+
+    等价于用 q 的共轭（逆）旋转 v。
+
+    Args:
+        q: 单位四元数 (num_envs, 4)，格式为 (x, y, z, w)
+        v: 待旋转向量 (num_envs, 3)
+    Returns:
+        v_body: 机体系下的向量 (num_envs, 3)
+    """
+    # 拆分四元数分量
+    qx, qy, qz, qw = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+
+    # 用公式 v' = q* ⊗ v ⊗ q 展开（纯四元数旋转的解析形式）
+    # 等价于旋转矩阵 R^T @ v，其中 R 是 q 对应的旋转矩阵
+    t = 2.0 * torch.stack([
+        qy * v[:, 2] - qz * v[:, 1],
+        qz * v[:, 0] - qx * v[:, 2],
+        qx * v[:, 1] - qy * v[:, 0],
+    ], dim=1)  # = 2 * (q_vec × v)
+
+    return v - qw.unsqueeze(1) * t + torch.cross(
+        torch.stack([qx, qy, qz], dim=1), t, dim=1
+    )
 
 def quat_apply_yaw(quat, vec):
     quat_yaw = quat.clone().view(-1, 4)

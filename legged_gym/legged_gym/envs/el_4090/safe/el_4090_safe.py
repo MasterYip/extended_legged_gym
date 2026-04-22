@@ -1,0 +1,182 @@
+from typing import Dict, Tuple
+
+import torch
+
+from legged_gym.envs.el_4090.spider_nomal.el_4090 import EL_4090
+from legged_gym.utils.math_utils import quat_rotate_inverse
+from legged_gym.utils.atacom import ATACOMSafetyLayer
+from .el_4090_safe_config import El4090SafeCfg
+
+
+class EL_4090_Safe(EL_4090):
+    """EL_4090 + ATACOM 安全层。
+
+    step(action) 接收 RL 名义动作，经 ATACOM 转换为安全动作后再传给父类仿真。
+
+    运行时状态布局（S=58）：
+        [0 :18)   dof_pos          关节位置
+        [18:36)   dof_vel          关节速度
+        [36:54)   torques          关节实际力矩（self.torques，上一步）
+        [54:57)   base_euler       机身欧拉角（roll, pitch, yaw），ZYX 旋转顺序
+        [57:58)   base_pos_z       机身高度
+
+    性能说明：
+        - ATACOM forward 的 info 字典不再含 .item()，不触发 GPU 同步
+        - 标量聚合由 ATACOMSafetyLayer.compute_info_scalars(info) 负责
+        - log_interval 控制聚合频率（默认每 100 步一次），大幅减少同步开销
+    """
+
+    _BASE_OBS_DIM = 66
+
+    def __init__(self, cfg, sim_params, physics_engine, sim_device, headless,
+                 task_name="el4090_spider"):
+        super().__init__(cfg, sim_params, physics_engine, sim_device, headless,
+                         task_name=task_name)
+
+        safety_cfg = getattr(self.cfg, 'safety', El4090SafeCfg.safety)
+
+        def _to_tensor_18(x, default):
+            val = getattr(safety_cfg, x, default)
+            if isinstance(val, (int, float)):
+                val = [val] * 18
+            return torch.tensor(val, device=self.device, dtype=torch.float32)
+
+        def _to_tensor_3(x, default):
+            val = getattr(safety_cfg, x, default)
+            if isinstance(val, (int, float)):
+                val = [val] * 3
+            return torch.tensor(val, device=self.device, dtype=torch.float32)
+
+        robot_params: Dict = {
+            'q_max'  : _to_tensor_18('q_max',   [2.95]  * 18),
+            'q_min'  : _to_tensor_18('q_min',   [-2.95] * 18),
+            'dq_max' : _to_tensor_18('dq_max',  [14.2]  * 18),
+            'tau_max': _to_tensor_18('tau_max',  [76]    * 18),
+            'phi_max': _to_tensor_3( 'phi_max',  [0.14, 0.14, 3.14]),
+            'z_max'  : float(getattr(safety_cfg, 'z_max',  0.8)),
+            'z_min'  : float(getattr(safety_cfg, 'z_min',  0.2)),
+        }
+
+        # 初始化 ATACOM 安全层
+        self.atacom = ATACOMSafetyLayer(
+            robot_params=robot_params,
+            lambda_retract=float(getattr(safety_cfg, 'lambda_retract', 1.0)),
+            beta=float(getattr(safety_cfg, 'beta', 2.0)),
+            dt=float(getattr(safety_cfg, 'dt', self.dt)),
+            debug_mode=bool(getattr(safety_cfg, 'debug_mode', False)),
+            debug_level=getattr(safety_cfg, 'debug_level', 'basic'),
+            debug_interval=int(getattr(safety_cfg, 'debug_interval', 100)),
+        )
+
+        self._atacom_enabled      = bool(getattr(safety_cfg, 'enable_atacom',        True))
+        self._atacom_clip_nominal = bool(getattr(safety_cfg, 'clip_nominal_actions',  True))
+        self._atacom_warmup       = int(getattr(safety_cfg,  'warmup_steps',          0))
+        self._atacom_log_info     = bool(getattr(safety_cfg, 'log_info',              False))
+
+    # ------------------------------------------------------------------
+    # 状态拼装
+    # ------------------------------------------------------------------
+
+    def _build_atacom_state(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """从仿真 buffer 拼装 ATACOM 运行时状态 s，(num_envs, 58)。
+
+        Returns:
+            s            : ATACOM 状态向量 (num_envs, 58)
+            ang_vel_base : 机体系角速度 (num_envs, 3)
+        """
+        num_envs = self.num_envs
+        device   = self.device
+        s = torch.zeros((num_envs, 58), device=device)
+
+        s[:, 0:18]  = self.dof_pos[:, :18]
+        s[:, 18:36] = self.dof_vel[:, :18]
+
+        if hasattr(self, 'torques') and self.torques is not None:
+            s[:, 36:54] = self.torques[:, :18]
+
+        base_quat     = self.root_states[:, 3:7]
+        ang_vel_world = self.root_states[:, 10:13]
+        ang_vel_base  = quat_rotate_inverse(base_quat, ang_vel_world)
+
+        qx, qy, qz, qw = base_quat[:, 0], base_quat[:, 1], base_quat[:, 2], base_quat[:, 3]
+
+        roll  = torch.atan2(2.0 * (qw * qx + qy * qz),
+                            1.0 - 2.0 * (qx * qx + qy * qy))
+        pitch = torch.asin(torch.clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0))
+        yaw   = torch.atan2(2.0 * (qw * qz + qx * qy),
+                            1.0 - 2.0 * (qy * qy + qz * qz))
+
+        s[:, 54:57] = torch.stack([roll, pitch, yaw], dim=1)
+        s[:, 57]    = self.root_states[:, 2]
+
+        return s, ang_vel_base
+
+    # ------------------------------------------------------------------
+    # buffer 初始化
+    # ------------------------------------------------------------------
+
+    def _init_buffers(self):
+        super()._init_buffers()
+        self.u_mu = torch.zeros(
+            (self.num_envs, 77), device=self.device, dtype=torch.float32
+        )
+
+    # ------------------------------------------------------------------
+    # 观测计算
+    # ------------------------------------------------------------------
+
+    def _get_noise_scale_vec(self, cfg):
+        """覆写父类，强制按父类原始 66 维构造噪声向量。"""
+        original_obs_buf = self.obs_buf
+        self.obs_buf = torch.zeros(
+            (self.num_envs, self._BASE_OBS_DIM),
+            device=self.device, dtype=torch.float32
+        )
+        noise_vec    = super()._get_noise_scale_vec(cfg)
+        self.obs_buf = original_obs_buf
+        return noise_vec
+
+    def compute_observations(self):
+        """在父类观测基础上追加 u_mu（77维）→ obs_buf 共 143 维。"""
+        if self.obs_buf.shape[1] != self._BASE_OBS_DIM:
+            self.obs_buf = self.obs_buf[:, :self._BASE_OBS_DIM].contiguous()
+        super().compute_observations()
+        self.obs_buf = torch.cat([self.obs_buf, self.u_mu], dim=-1)
+
+    # ------------------------------------------------------------------
+    # step
+    # ------------------------------------------------------------------
+
+    def step(self, actions, *args, **kwargs) -> Tuple:
+        """ATACOM 安全过滤后转发给父类 step。"""
+
+        if (not self._atacom_enabled
+                or self.common_step_counter < self._atacom_warmup):
+            return super().step(actions, *args, **kwargs)
+
+        if not torch.is_tensor(actions):
+            actions = torch.tensor(actions, dtype=torch.float32, device=self.device)
+        else:
+            actions = actions.to(self.device)
+
+        if self._atacom_clip_nominal:
+            clip_val = getattr(self.cfg.normalization, 'clip_actions', None)
+            if clip_val is not None:
+                actions = torch.clamp(actions, -clip_val, clip_val)
+
+        if actions.ndim == 1:
+            actions = actions.unsqueeze(0).expand(self.num_envs, -1)
+
+        s, ang_vel_base = self._build_atacom_state()
+        u_safe, u_mu, atacom_info = self.atacom.forward(s, actions, ang_vel_body=ang_vel_base)
+
+        self.u_mu = u_mu
+        # print(u_mu)
+
+        # 聚合标量（可选，会触发 GPU 同步）
+        if self._atacom_log_info:
+            if not hasattr(self, 'extras'):
+                self.extras = {}
+            self.extras['atacom'] = ATACOMSafetyLayer.compute_info_scalars(atacom_info)
+
+        return super().step(u_safe, *args, **kwargs)
