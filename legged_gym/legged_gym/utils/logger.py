@@ -102,8 +102,13 @@ class Logger:
         a.legend()
         # plot base vel z
         a = axs[1, 2]
-        if log["base_vel_z"]: a.plot(time, log["base_vel_z"], label='measured')
-        a.set(xlabel='time [s]', ylabel='base lin vel [m/s]', title='Base velocity z')
+        # if log["base_vel_z"]: a.plot(time, log["base_vel_z"], label='measured')
+        # a.set(xlabel='time [s]', ylabel='base lin vel [m/s]', title='Base velocity z')
+        if log["dof_vel"]!=[]: a.plot(time, log["dof_vel"], label='dof_vel')
+        if log["dof_vel_1"]!=[]: a.plot(time, log["dof_vel_1"], label='dof_vel_1')
+        if log["dof_vel_2"]!=[]: a.plot(time, log["dof_vel_2"], label='dof_vel_2')
+        a.set(xlabel='time [s]', ylabel='Joint vel [rad/s]', title='Joint Velocity')
+
         a.legend()
         # plot contact forces
         a = axs[2, 0]
@@ -120,7 +125,10 @@ class Logger:
         a.legend()
         # plot torques
         a = axs[2, 2]
-        if log["dof_torque"]!=[]: a.plot(time, log["dof_torque"], label='measured')
+        if log["dof_torque_1"]!=[]: a.plot(time, log["dof_torque_1"], label='dof_torque_1')
+        if log["dof_torque_2"]!=[]: a.plot(time, log["dof_torque_2"], label='dof_torque_2')
+        if log["dof_torque"]!=[]: a.plot(time, log["dof_torque"], label='dof_torque')
+
         a.set(xlabel='time [s]', ylabel='Joint Torque [Nm]', title='Torque')
         a.legend()
         plt.show()
