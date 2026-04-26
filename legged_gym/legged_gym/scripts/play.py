@@ -43,7 +43,7 @@ import isaacgym.gymapi as gymapi
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 10)
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 100)
     env_cfg.terrain.num_rows = 5
     env_cfg.terrain.num_cols = 5
     env_cfg.terrain.curriculum = False
@@ -137,9 +137,9 @@ def play(args):
             lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
         # 限制范围
         lin_vel_x = np.clip(lin_vel_x, -5.0, 5.0)
-        # lin_vel_x = 4.0
+        lin_vel_x = 2.5
         lin_vel_y = np.clip(lin_vel_y, -1.5, 1.5)
-        # lin_vel_y = 0.2
+        # lin_vel_y = 1.0
         ang_vel_yaw = np.clip(ang_vel_yaw, -2.0, 2.0)
         # ang_vel_yaw = 1.0
         heading = np.clip(heading, -1.0, 1.0)

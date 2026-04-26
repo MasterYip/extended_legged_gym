@@ -74,6 +74,7 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
         difficulty_scale = 0.0
         terrain_proportions = [0., 1., 0., 0., 0.]
+        # terrain_proportions = [0.2, 0.15, 0.15, 0.2, 0.3]
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
 
@@ -150,7 +151,7 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
 
             tracking_lin_vel = 8
             tracking_ang_vel = 5.5
-            lateral_lin_vel_y = -1
+            # lateral_lin_vel_y = -1
 
             lin_vel_z = -2
             ang_vel_xy = -1
@@ -164,7 +165,7 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
             collision = -1.
             feet_stumble = -1
             action_rate = -0.03
-            stand_still = -3  
+            stand_still = -1.5  
             dof_pos_limits = -0.5
             dof_vel_limits = -0.1
             torque_limits = -0.01
@@ -229,6 +230,10 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         q_min = [-1.57] * 18              # 关节位置下限（rad）
         dq_max = [14.2] * 18               # 关节速度上限（rad/s）
         tau_max = [76] * 18               # 关节力矩上限（N·m）
+        # q_max = [3.0] * 18               # 关节位置上限（rad）
+        # q_min = [-3.0] * 18              # 关节位置下限（rad）
+        # dq_max = [20] * 18               # 关节速度上限（rad/s）
+        # tau_max = [80] * 18               # 关节力矩上限（N·m）
 
         # 机身限位
         phi_max = [0.14, 0.14, 3.14]      # roll, pitch, yaw 上限（rad）
@@ -237,6 +242,10 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
 
         # 日志配置
         log_info = False                  # 是否将 forward() 返回的 info 聚合为标量（触发 GPU 同步）
+        record_violation = True           # 训练时记录约束违反信息到 safe/data/*.csv
+        record_violation_interval = 1     # 每 N 个环境步记录一次
+        record_violation_detail = True    # 是否记录“哪些约束违反了”（索引/名称/top-k）
+        record_violation_topk = 5         # 每步记录违反量最大的前 K 个约束
 
         # 调试日志配置
         debug_mode = False                # 是否启用调试日志

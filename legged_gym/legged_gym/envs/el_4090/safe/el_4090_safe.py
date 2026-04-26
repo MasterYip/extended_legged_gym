@@ -1,4 +1,7 @@
 from typing import Dict, Tuple
+import csv
+import os
+from datetime import datetime
 
 import torch
 from torch import Tensor
@@ -76,6 +79,156 @@ class EL_4090_Safe(EL_4090):
         self._atacom_clip_nominal = bool(getattr(safety_cfg, 'clip_nominal_actions',  True))
         self._atacom_warmup       = int(getattr(safety_cfg,  'warmup_steps',          0))
         self._atacom_log_info     = bool(getattr(safety_cfg, 'log_info',              False))
+
+        # 约束违反记录配置
+        self._record_violation = bool(getattr(safety_cfg, 'record_violation', True))
+        self._record_interval = max(1, int(getattr(safety_cfg, 'record_violation_interval', 1)))
+        self._record_violation_detail = bool(getattr(safety_cfg, 'record_violation_detail', True))
+        self._record_violation_topk = max(1, int(getattr(safety_cfg, 'record_violation_topk', 5)))
+        self._violation_global_max = 0.0
+        self._violation_csv_file = None
+        self._violation_csv_writer = None
+        self._constraint_names = self._build_constraint_names()
+
+        if self._record_violation:
+            self._init_violation_recorder()
+
+    def _init_violation_recorder(self):
+        """初始化约束违反记录器，输出到当前文件同目录的 data/ 下。"""
+        data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        file_name = f'constraint_violation_{timestamp}.csv'
+        file_path = os.path.join(data_dir, file_name)
+
+        self._violation_csv_file = open(file_path, 'w', newline='')
+        self._violation_csv_writer = csv.writer(self._violation_csv_file)
+        header = [
+            'common_step',
+            'atacom_step',
+            'constraint_violation',
+            'max_violation',
+            'global_max_violation',
+            'safe_ratio',
+        ]
+        if self._record_violation_detail:
+            header.extend([
+                'violated_constraint_count',
+                'violated_constraint_indices',
+                'violated_constraint_names',
+                'topk_violations',
+            ])
+        self._violation_csv_writer.writerow(header)
+        self._violation_csv_file.flush()
+
+    def _build_constraint_names(self):
+        """按 ATACOM k 向量顺序构造约束名称（共 77 项）。"""
+        names = []
+
+        # [0:36) 关节位置限制（上下限交错）
+        for j in range(18):
+            names.append(f"q[{j}]_upper")
+            names.append(f"q[{j}]_lower")
+
+        # [36:54) 关节速度限制
+        for j in range(18):
+            names.append(f"dq[{j}]_abs")
+
+        # [54:72) 关节力矩限制
+        for j in range(18):
+            names.append(f"tau[{j}]_abs")
+
+        # [72:74) 机身高度限制
+        names.extend(['z_upper', 'z_lower'])
+
+        # [74:77) 机身倾角限制
+        names.extend(['phi_roll_abs', 'phi_pitch_abs', 'phi_yaw_abs'])
+
+        return names
+
+    def _build_violation_detail(self, k_viol: torch.Tensor):
+        """构造违反约束详情字符串（按当前 step 聚合所有环境）。"""
+        # 每个约束在所有环境上的最大违反量
+        k_max_per = k_viol.max(dim=0).values
+        violated_mask = k_max_per > 0
+        violated_indices_tensor = torch.nonzero(violated_mask, as_tuple=False).squeeze(-1)
+
+        if violated_indices_tensor.numel() == 0:
+            return 0, '', '', ''
+
+        violated_indices = [int(i) for i in violated_indices_tensor.tolist()]
+        violated_names = [self._constraint_names[i] if i < len(self._constraint_names) else f"k[{i}]"
+                          for i in violated_indices]
+
+        topk = min(self._record_violation_topk, len(violated_indices))
+        top_vals, top_idx = torch.topk(k_max_per, k=topk)
+        topk_parts = []
+        for val, idx in zip(top_vals.tolist(), top_idx.tolist()):
+            if val <= 0:
+                continue
+            name = self._constraint_names[idx] if idx < len(self._constraint_names) else f"k[{idx}]"
+            topk_parts.append(f"{idx}:{name}:{val:.6f}")
+
+        return (
+            len(violated_indices),
+            '|'.join(str(i) for i in violated_indices),
+            '|'.join(violated_names),
+            '|'.join(topk_parts),
+        )
+
+    def _record_constraint_violation(self, atacom_info: Dict):
+        """记录约束违反程度与最大违反值。"""
+        if (not self._record_violation
+                or self._violation_csv_writer is None
+                or (self.common_step_counter % self._record_interval) != 0):
+            return
+
+        k = atacom_info['k']
+        k_viol = torch.clamp(k, min=0)
+
+        constraint_violation = k_viol.sum(dim=1).mean().item()
+        max_violation = k_viol.max().item()
+        safe_ratio = (k <= 0).all(dim=1).float().mean().item()
+
+        if max_violation > self._violation_global_max:
+            self._violation_global_max = max_violation
+
+        row = [
+            int(self.common_step_counter),
+            int(atacom_info.get('step', -1)),
+            float(constraint_violation),
+            float(max_violation),
+            float(self._violation_global_max),
+            float(safe_ratio),
+        ]
+
+        if self._record_violation_detail:
+            viol_count, viol_indices, viol_names, topk_viol = self._build_violation_detail(k_viol)
+            row.extend([
+                int(viol_count),
+                viol_indices,
+                viol_names,
+                topk_viol,
+            ])
+
+        self._violation_csv_writer.writerow(row)
+
+        # 降低 IO 开销：每 100 条刷盘一次
+        if (self.common_step_counter % (self._record_interval * 100)) == 0:
+            self._violation_csv_file.flush()
+
+    def _close_violation_recorder(self):
+        if self._violation_csv_file is not None:
+            try:
+                self._violation_csv_file.flush()
+                self._violation_csv_file.close()
+            finally:
+                self._violation_csv_file = None
+                self._violation_csv_writer = None
+
+    def __del__(self):
+        self._close_violation_recorder()
 
     # ------------------------------------------------------------------
     # 状态拼装
@@ -175,6 +328,7 @@ class EL_4090_Safe(EL_4090):
         u_safe, u_mu, atacom_info = self.atacom.forward(s, actions, ang_vel_body=ang_vel_base)
 
         self.u_mu = u_mu
+        self._record_constraint_violation(atacom_info)
         # print(u_mu)
 
         # 聚合标量（可选，会触发 GPU 同步）
