@@ -215,7 +215,6 @@ task_registry.register("elspider_air_rough_student", ElSpiderStudent, ElSpiderAi
 task_registry.register("franka", Franka, FrankaCfg(), FrankaCfgPPO())
 task_registry.register("franka_batch_rollout", FrankaBatchRollout, FrankaBatchRolloutCfg(), FrankaBatchRolloutCfgPPO)
 
-
-
+# Register EL_4090 environments
 task_registry.register("el4090_spider_normal", EL_4090, El4090SpiderCfg(), El4090SpiderCfgPPO())
 task_registry.register("el_4090_safe", EL_4090_Safe, El4090SafeCfg(), El4090SafeCfgPPO())
