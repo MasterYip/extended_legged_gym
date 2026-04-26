@@ -61,3 +61,7 @@ runs
 # other
 *.egg-info
 __pycache__
+
+# local pictures/assets
+legged_gym/utils/picutres/
+legged_gym/envs/el_4090/safe/data/

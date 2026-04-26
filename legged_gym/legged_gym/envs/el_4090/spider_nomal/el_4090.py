@@ -347,8 +347,8 @@ class EL_4090(ElSpider):
         return total_variance_penalty
 
     def _reward_shank_vertical(self):
-  
-        # 获取小腿的刚体状态: [num_envs, num_shanks, 13]
+
+         # 获取小腿的刚体状态: [num_envs, num_shanks, 13]
         # 13维度: pos(3), quat(4), lin_vel(3), ang_vel(3)
         shank_states = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.shank_indices, :]
         foot_states = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, :]
@@ -358,63 +358,44 @@ class EL_4090(ElSpider):
         
         # 计算小腿方向向量在XY平面的投影长度    
         horizontal_dist = torch.sum(torch.sqrt(x_error**2 + y_error**2), dim=1)
+
         
+    #     """仅对落地腿计算小腿垂直性惩罚。
+
+    #     思路：
+    #     - 先用足端法向接触力判断每条腿是否落地；
+    #     - 对落地腿计算 shank->foot 向量在 XY 平面的投影长度，投影越小越接近竖直；
+    #     - 仅累计落地腿的误差，并按落地腿数量做归一化。
+    #     """
+    #     # 获取小腿与足端刚体状态: [num_envs, num_legs, 13]
+    #     # 13维度: pos(3), quat(4), lin_vel(3), ang_vel(3)
+    #     rb_states = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)
+    #     shank_states = rb_states[:, self.shank_indices, :]
+    #     foot_states = rb_states[:, self.feet_indices, :]
+
+    #     x_error = shank_states[:, :, 0] - foot_states[:, :, 0]
+    #     y_error = shank_states[:, :, 1] - foot_states[:, :, 1]
+
+    #     # 每条腿在 XY 平面的投影长度（越小越垂直）
+    #     horizontal_dist_each_leg = torch.sqrt(x_error**2 + y_error**2)
+
+    #     # 仅对落地腿生效
+    #     contact_mask = (self.contact_forces[:, self.feet_indices, 2] > 1.0).float()
+    #     weighted_error = horizontal_dist_each_leg * contact_mask
+
+    #     # 按落地腿数量归一化，避免“落地腿越多惩罚天然越大”
+    #     num_contacts = torch.sum(contact_mask, dim=1)
+    #     vertical_penalty = torch.sum(weighted_error, dim=1) / (num_contacts + 1e-6)
+
+    #     # 无落地腿时不施加该项惩罚
+    #     vertical_penalty = vertical_penalty * (num_contacts > 0).float()
+
+    #     return vertical_penalty
+       
+
 
         return horizontal_dist
 
-    
-    def _reward_haa_tripod_symmetry(self):
-        """
-        奖励三角步态的HAA对称性。
-        
-        要求:
-        - Group 1 (LF, RM, LB): 组内HAA角度应该相同
-        - Group 2 (RF, LM, RB): 组内HAA角度应该相同
-        - 两组之间HAA角度应该相反
-        
-        DOF顺序 (18个DOF, 每条腿3个关节):
-        LB: HAA(0), HFE(1), KFE(2)
-        LF: HAA(3), HFE(4), KFE(5)
-        LM: HAA(6), HFE(7), KFE(8)
-        RB: HAA(9), HFE(10), KFE(11)
-        RF: HAA(12), HFE(13), KFE(14)
-        RM: HAA(15), HFE(16), KFE(17)
-        
-        Returns:
-            torch.Tensor: 惩罚值,当HAA不对称时返回正值
-        """
-        # 获取各腿的HAA角度
-        LB_HAA = self.dof_pos[:, 0]   # LB
-        LF_HAA = self.dof_pos[:, 3]   # LF
-        LM_HAA = self.dof_pos[:, 6]   # LM
-        RB_HAA = self.dof_pos[:, 9]   # RB
-        RF_HAA = self.dof_pos[:, 12]  # RF
-        RM_HAA = self.dof_pos[:, 15]  # RM
-        
-        # Group 1 (LF, RM, LB): 组内应该角度相同
-        # 计算组内两两之间的角度差的平方
-        g1_penalty = torch.square(LF_HAA - RM_HAA) + \
-                     torch.square(LF_HAA - LB_HAA) + \
-                     torch.square(RM_HAA - LB_HAA)
-        
-        # Group 2 (RF, LM, RB): 组内应该角度相同
-        g2_penalty = torch.square(RF_HAA - LM_HAA) + \
-                     torch.square(RF_HAA - RB_HAA) + \
-                     torch.square(LM_HAA - RB_HAA)
-        
-        # 两组之间应该相反: G1的平均值 + G2的平均值 ≈ 0
-        # 计算两组的平均HAA角度
-        g1_mean = (LF_HAA + RM_HAA + LB_HAA) / 3.0
-        g2_mean = (RF_HAA + LM_HAA + RB_HAA) / 3.0
-        
-        # 两组平均值应该相反(和接近0)
-        inter_group_penalty = torch.square(g1_mean + g2_mean)
-        
-        # 总惩罚
-        total_penalty = g1_penalty + g2_penalty + inter_group_penalty
-        
-        return total_penalty
-    
     
     def post_physics_step(self):
         """Override post_physics_step to add debug info"""
