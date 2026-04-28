@@ -94,61 +94,59 @@ def play(args):
 
         step_start_time = time.time()
 
-        # 键盘控制指令（wasdqe控制）
-        import sys, select, termios, tty
-        def get_key(timeout=0.01):
-            fd = sys.stdin.fileno()
-            old_settings = termios.tcgetattr(fd)
-            try:
-                tty.setraw(fd)
-                rlist, _, _ = select.select([fd], [], [], timeout)
-                if rlist:
-                    key = sys.stdin.read(1)
-                else:
-                    key = ''
-            finally:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            return key
+        # # 键盘控制指令（wasdqe控制）
+        # import sys, select, termios, tty
+        # def get_key(timeout=0.01):
+        #     fd = sys.stdin.fileno()
+        #     old_settings = termios.tcgetattr(fd)
+        #     try:
+        #         tty.setraw(fd)
+        #         rlist, _, _ = select.select([fd], [], [], timeout)
+        #         if rlist:
+        #             key = sys.stdin.read(1)
+        #         else:
+        #             key = ''
+        #     finally:
+        #         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        #     return key
 
-        # 初始命名变量
-        if i == 0:
-            lin_vel_x = 0.0  # 前进/后退速度
-            lin_vel_y = 0.0  # 侧移速度
-            ang_vel_yaw = 0.0  # 偏航角速度
-            heading = 0.0  # 预留
-        key = get_key()
-        # 速度步长
-        lin_step = 0.1
-        yaw_step = 0.1
-        # 按键映射
-        if key == 'w':
-            lin_vel_x += lin_step
-        elif key == 's':
-            lin_vel_x -= lin_step
-        elif key == 'a':
-            lin_vel_y += lin_step
-        elif key == 'd':
-            lin_vel_y -= lin_step
-        elif key == 'q':
-            ang_vel_yaw += yaw_step
-        elif key == 'e':
-            ang_vel_yaw -= yaw_step
-        elif key == 'z':
-            lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
-        # 限制范围
-        lin_vel_x = np.clip(lin_vel_x, -5.0, 5.0)
-        lin_vel_x = 2.5
-        lin_vel_y = np.clip(lin_vel_y, -1.5, 1.5)
+        # # 初始命名变量
+        # if i == 0:
+        #     lin_vel_x = 0.0  # 前进/后退速度
+        #     lin_vel_y = 0.0  # 侧移速度
+        #     ang_vel_yaw = 0.0  # 偏航角速度
+        #     heading = 0.0  # 预留
+        # key = get_key()
+        # # 速度步长
+        # lin_step = 0.1
+        # yaw_step = 0.1
+        # # 按键映射
+        # if key == 'w':
+        #     lin_vel_x += lin_step
+        # elif key == 's':
+        #     lin_vel_x -= lin_step
+        # elif key == 'a':
+        #     lin_vel_y += lin_step
+        # elif key == 'd':
+        #     lin_vel_y -= lin_step
+        # elif key == 'q':
+        #     ang_vel_yaw += yaw_step
+        # elif key == 'e':
+        #     ang_vel_yaw -= yaw_step
+        # elif key == 'z':
+        #     lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
+        # # 限制范围
+        # lin_vel_x = np.clip(lin_vel_x, -5.0, 5.0)
+        # lin_vel_x = 2.5
+        # lin_vel_y = np.clip(lin_vel_y, -1.5, 1.5)
         # lin_vel_y = 1.0
-        ang_vel_yaw = np.clip(ang_vel_yaw, -2.0, 2.0)
-        # ang_vel_yaw = 1.0
-        heading = np.clip(heading, -1.0, 1.0)
-        command = [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
-        import torch
-        env.commands[:] = torch.tensor(command, dtype=env.commands.dtype, device=env.commands.device)
-
-
-        print(f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f}", end="\r")
+        # ang_vel_yaw = np.clip(ang_vel_yaw, -2.0, 2.0)
+        # # ang_vel_yaw = 1.0
+        # heading = np.clip(heading, -1.0, 1.0)
+        # command = [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
+        # import torch
+        # env.commands[:] = torch.tensor(command, dtype=env.commands.dtype, device=env.commands.device)
+        # print(f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f}", end="\r")
 
         actions = policy(obs.detach())
         obs, _, rews, dones, infos = env.step(actions.detach())
