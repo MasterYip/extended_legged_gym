@@ -154,6 +154,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
 
             shank_perp2ground = -0.05
             gait_2_step = [-0.5, -0.0]
+            # gait_3_step = [-0.5, -0.0]
 
 
     class commands(ElSpiderAirRoughCfg.commands):
@@ -207,7 +208,7 @@ class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
         run_name = ''
         experiment_name = 'el4090_spider_normal'
         load_run = -1
-        max_iterations = 3000
+        max_iterations = 8000
         multi_stage_rewards = True
 
     class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
