@@ -218,3 +218,12 @@ task_registry.register("franka_batch_rollout", FrankaBatchRollout, FrankaBatchRo
 # Register EL_4090 environments
 task_registry.register("el4090_spider_normal", EL_4090, El4090SpiderCfg(), El4090SpiderCfgPPO())
 task_registry.register("el_4090_safe", EL_4090_Safe, El4090SafeCfg(), El4090SafeCfgPPO())
+
+# Data-collection environments
+from .elspider_air.elspider_data_collect import ElSpiderDataCollect
+from .elspider_air.data_collect.elspider_flat_collect_config import ElSpiderFlatCollectCfg, ElSpiderFlatCollectCfgPPO
+from .el_4090.data_collect.el4090_collect import EL4090DataCollect
+from .el_4090.data_collect.el4090_flat_collect_config import El4090FlatCollectCfg, El4090FlatCollectCfgPPO
+
+task_registry.register("elspider_flat_collect", ElSpiderDataCollect, ElSpiderFlatCollectCfg(), ElSpiderFlatCollectCfgPPO())
+task_registry.register("el4090_flat_collect", EL4090DataCollect, El4090FlatCollectCfg(), El4090FlatCollectCfgPPO())
