@@ -111,6 +111,11 @@ class EL_4090_Safe(EL_4090):
             'max_violation',
             'global_max_violation',
             'safe_ratio',
+            'u_nom_norm',
+            'u_safe_norm',
+            'action_delta_norm',
+            'action_delta_mean_abs',
+            'action_delta_max_abs',
         ]
         if self._record_violation_detail:
             header.extend([
@@ -118,6 +123,7 @@ class EL_4090_Safe(EL_4090):
                 'violated_constraint_indices',
                 'violated_constraint_names',
                 'topk_violations',
+                'topk_action_delta',
             ])
         self._violation_csv_writer.writerow(header)
         self._violation_csv_file.flush()
@@ -177,8 +183,22 @@ class EL_4090_Safe(EL_4090):
             '|'.join(topk_parts),
         )
 
-    def _record_constraint_violation(self, atacom_info: Dict):
-        """记录约束违反程度与最大违反值。"""
+    def _build_action_delta_detail(self, action_delta: torch.Tensor):
+        """构造动作修正详情：按关节平均绝对修正量输出 top-k。"""
+        if action_delta.numel() == 0:
+            return ''
+
+        mean_abs_per_joint = action_delta.abs().mean(dim=0)
+        topk = min(self._record_violation_topk, int(mean_abs_per_joint.shape[0]))
+        if topk <= 0:
+            return ''
+
+        vals, idxs = torch.topk(mean_abs_per_joint, k=topk)
+        parts = [f"j{int(i)}:{float(v):.6f}" for v, i in zip(vals.tolist(), idxs.tolist()) if float(v) > 0]
+        return '|'.join(parts)
+
+    def _record_constraint_violation(self, atacom_info: Dict, u_nominal: torch.Tensor, u_safe: torch.Tensor):
+        """记录约束违反程度 + 动作修正量（u_safe 相对 u_nominal）。"""
         if (not self._record_violation
                 or self._violation_csv_writer is None
                 or (self.common_step_counter % self._record_interval) != 0):
@@ -191,6 +211,13 @@ class EL_4090_Safe(EL_4090):
         max_violation = k_viol.max().item()
         safe_ratio = (k <= 0).all(dim=1).float().mean().item()
 
+        action_delta = u_safe - u_nominal
+        u_nom_norm = u_nominal.norm(dim=1).mean().item()
+        u_safe_norm = u_safe.norm(dim=1).mean().item()
+        action_delta_norm = action_delta.norm(dim=1).mean().item()
+        action_delta_mean_abs = action_delta.abs().mean().item()
+        action_delta_max_abs = action_delta.abs().max().item()
+
         if max_violation > self._violation_global_max:
             self._violation_global_max = max_violation
 
@@ -201,15 +228,22 @@ class EL_4090_Safe(EL_4090):
             float(max_violation),
             float(self._violation_global_max),
             float(safe_ratio),
+            float(u_nom_norm),
+            float(u_safe_norm),
+            float(action_delta_norm),
+            float(action_delta_mean_abs),
+            float(action_delta_max_abs),
         ]
 
         if self._record_violation_detail:
             viol_count, viol_indices, viol_names, topk_viol = self._build_violation_detail(k_viol)
+            topk_action_delta = self._build_action_delta_detail(action_delta)
             row.extend([
                 int(viol_count),
                 viol_indices,
                 viol_names,
                 topk_viol,
+                topk_action_delta,
             ])
 
         self._violation_csv_writer.writerow(row)
@@ -328,7 +362,7 @@ class EL_4090_Safe(EL_4090):
         u_safe, u_mu, atacom_info = self.atacom.forward(s, actions, ang_vel_body=ang_vel_base)
 
         self.u_mu = u_mu
-        self._record_constraint_violation(atacom_info)
+        self._record_constraint_violation(atacom_info, actions, u_safe)
         # print(u_mu)
 
         # 聚合标量（可选，会触发 GPU 同步）
