@@ -33,7 +33,7 @@ import os
 
 import isaacgym
 from legged_gym.envs import *
-from legged_gym.utils import  get_args, export_policy_as_jit, task_registry, Logger
+from legged_gym.utils import  get_args, export_policy_as_jit, task_registry, Logger, get_load_path
 
 import numpy as np
 import torch
@@ -69,7 +69,18 @@ def play(args):
         export_policy_as_jit(ppo_runner.alg.policy, path)
         print('Exported policy as jit script to: ', path)
 
-    logger = Logger(env.dt)
+    log_root = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name)
+    try:
+        load_path = get_load_path(
+            log_root,
+            load_run=train_cfg.runner.load_run,
+            checkpoint=train_cfg.runner.checkpoint,
+        )
+        load_run_dir = os.path.dirname(load_path)
+    except Exception:
+        load_run_dir = log_root
+
+    logger = Logger(env.dt, output_root=load_run_dir)
     robot_index = 0 # which robot is used for logging
     joint_index = 0 # which joint is used for logging
     stop_state_log = 200 # number of steps before plotting states

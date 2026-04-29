@@ -36,12 +36,13 @@ from collections import defaultdict
 from multiprocessing import Process, Value
 
 class Logger:
-    def __init__(self, dt):
+    def __init__(self, dt, output_root: Path = None):
         self.state_log = defaultdict(list)
         self.rew_log = defaultdict(list)
         self.dt = dt
         self.num_episodes = 0
         self.plot_process = None
+        self.output_root = Path(output_root) if output_root is not None else None
 
     def log_state(self, key, value):
         self.state_log[key].append(value)
@@ -65,12 +66,13 @@ class Logger:
         self.plot_process.start()
 
     def _save_vector_plots(self, fig, log, time):
-        output_dir = Path(__file__).resolve().parent / "picutres"
+        if self.output_root is not None:
+            output_dir = self.output_root / "picture"
+        else:
+            output_dir = Path(__file__).resolve().parent / "picutres"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        overview_path = output_dir / f"{timestamp}_states_overview.svg"
-        fig.savefig(overview_path, format='svg')
 
         def _save_single_plot(name, plot_func):
             single_fig, single_ax = plt.subplots(figsize=(6, 4))
