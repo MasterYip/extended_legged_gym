@@ -13,10 +13,27 @@ class El4090HighStandTrotCfg(El4090SpiderCfg):
     class rewards(El4090SpiderCfg.rewards):
         base_height_target = 0.56
 
-        class scales(El4090SpiderCfg.rewards.scales):
+        class scales:
+            termination = -0.0
+            tracking_lin_vel = 1.0
+            tracking_ang_vel = 0.5
+            lin_vel_z = -3.0
+            ang_vel_xy = -0.2
             gait_2_step = [-0.35, -0.0]
             gait_3_step = 0.0
+            torques = -0.0001
+            dof_vel = [-0.0002, -0.0004]
+            dof_acc = [-5e-8, -1.5e-7]
             base_height = [-3.0, -1.5]
+            feet_slip = [-0.0, -0.2]
+            feet_air_time = [0.5, 0.1]
+            collision = -1.0
+            feet_stumble = [-0.0, -0.2]
+            action_rate = [-0.005, -0.005]
+            stand_still2 = -0.6
+            dof_pos_limits = -1.0
+            feet_contact_forces = [-0.1, -0.5]
+            shank_perp2ground = -0.05
             orientation = [-6.0, -4.0]
             stand_on_six_legs = -0.2
 
