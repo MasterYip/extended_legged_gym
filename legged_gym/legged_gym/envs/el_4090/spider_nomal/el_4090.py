@@ -498,6 +498,28 @@ class EL_4090(ElSpider):
         stand_penalty = self._stand_contact_penalty()
         return torch.where(movement_mask, movement_penalty, stand_penalty)
 
+    def _reward_haa_guidance_mammal(self):
+        if not hasattr(self, 'haa_indices'):
+            self.haa_indices = [self.dof_names.index(name) for name in [
+                'RF_HAA', 'RM_HAA', 'RB_HAA', 'LF_HAA', 'LM_HAA', 'LB_HAA']]
+
+        target_haa = getattr(self.cfg.rewards, 'mammal_haa_target', 1.57)
+        target = torch.full((len(self.haa_indices),), target_haa, device=self.device)
+
+        movement_mask = self._movement_command_mask().float()
+        current_deviation = torch.square(self.dof_pos[:, self.haa_indices] - target).mean(dim=1)
+
+        ema = getattr(self.cfg.rewards, 'mammal_haa_guidance_ema', 0.01)
+        self.haa_guidance_mammal_ema = getattr(
+            self,
+            'haa_guidance_mammal_ema',
+            torch.zeros(self.num_envs, device=self.device),
+        )
+        self.haa_guidance_mammal_ema = (
+            ema * current_deviation + (1.0 - ema) * self.haa_guidance_mammal_ema
+        )
+        return self.haa_guidance_mammal_ema * movement_mask
+
 
     def _reward_stand_on_six_legs(self):
         # 低命令下：鼓励六条腿全部着地
