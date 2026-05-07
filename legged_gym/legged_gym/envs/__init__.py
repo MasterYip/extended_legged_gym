@@ -120,6 +120,12 @@ from .anymal_c.anymal import AnymalStudent
 
 from .el_4090.spider_nomal.el_4090 import EL_4090
 from .el_4090.spider_nomal.el4090_spider_config import El4090SpiderCfg, El4090SpiderCfgPPO
+from .el_4090.spider_nomal.el4090_tripod2_config import El4090Tripod2Cfg, El4090Tripod2CfgPPO
+from .el_4090.spider_nomal.el4090_tripod3_config import El4090Tripod3Cfg, El4090Tripod3CfgPPO
+from .el_4090.spider_nomal.el4090_high_stand_trot_config import El4090HighStandTrotCfg, El4090HighStandTrotCfgPPO
+from .el_4090.spider_nomal.el4090_wave_config import El4090WaveCfg, El4090WaveCfgPPO
+from .el_4090.spider_nomal.el4090_jump_config import El4090JumpCfg, El4090JumpCfgPPO
+from .el_4090.spider_nomal.el4090_mammal_config import El4090MammalCfg, El4090MammalCfgPPO
 
 from .el_4090.safe.el_4090_safe import EL_4090_Safe
 from .el_4090.safe.el_4090_safe_config import El4090SafeCfg, El4090SafeCfgPPO
@@ -217,6 +223,12 @@ task_registry.register("franka_batch_rollout", FrankaBatchRollout, FrankaBatchRo
 
 # Register EL_4090 environments
 task_registry.register("el4090_spider_normal", EL_4090, El4090SpiderCfg(), El4090SpiderCfgPPO())
+task_registry.register("el4090_tripod2", EL_4090, El4090Tripod2Cfg(), El4090Tripod2CfgPPO())
+task_registry.register("el4090_tripod3", EL_4090, El4090Tripod3Cfg(), El4090Tripod3CfgPPO())
+task_registry.register("el4090_high_stand_trot", EL_4090, El4090HighStandTrotCfg(), El4090HighStandTrotCfgPPO())
+task_registry.register("el4090_wave", EL_4090, El4090WaveCfg(), El4090WaveCfgPPO())
+task_registry.register("el4090_jump", EL_4090, El4090JumpCfg(), El4090JumpCfgPPO())
+task_registry.register("el4090_mammal", EL_4090, El4090MammalCfg(), El4090MammalCfgPPO())
 task_registry.register("el_4090_safe", EL_4090_Safe, El4090SafeCfg(), El4090SafeCfgPPO())
 
 # Data-collection environments
@@ -224,6 +236,18 @@ from .elspider_air.elspider_data_collect import ElSpiderDataCollect
 from .elspider_air.data_collect.elspider_flat_collect_config import ElSpiderFlatCollectCfg, ElSpiderFlatCollectCfgPPO
 from .el_4090.data_collect.el4090_collect import EL4090DataCollect
 from .el_4090.data_collect.el4090_flat_collect_config import El4090FlatCollectCfg, El4090FlatCollectCfgPPO
+from .el_4090.data_collect.el4090_tripod2_collect_config import El4090Tripod2CollectCfg, El4090Tripod2CollectCfgPPO
+from .el_4090.data_collect.el4090_tripod3_collect_config import El4090Tripod3CollectCfg, El4090Tripod3CollectCfgPPO
+from .el_4090.data_collect.el4090_high_stand_trot_collect_config import El4090HighStandTrotCollectCfg, El4090HighStandTrotCollectCfgPPO
+from .el_4090.data_collect.el4090_wave_collect_config import El4090WaveCollectCfg, El4090WaveCollectCfgPPO
+from .el_4090.data_collect.el4090_jump_collect_config import El4090JumpCollectCfg, El4090JumpCollectCfgPPO
+from .el_4090.data_collect.el4090_mammal_collect_config import El4090MammalCollectCfg, El4090MammalCollectCfgPPO
 
 task_registry.register("elspider_flat_collect", ElSpiderDataCollect, ElSpiderFlatCollectCfg(), ElSpiderFlatCollectCfgPPO())
 task_registry.register("el4090_flat_collect", EL4090DataCollect, El4090FlatCollectCfg(), El4090FlatCollectCfgPPO())
+task_registry.register("el4090_tripod2_collect", EL4090DataCollect, El4090Tripod2CollectCfg(), El4090Tripod2CollectCfgPPO())
+task_registry.register("el4090_tripod3_collect", EL4090DataCollect, El4090Tripod3CollectCfg(), El4090Tripod3CollectCfgPPO())
+task_registry.register("el4090_high_stand_trot_collect", EL4090DataCollect, El4090HighStandTrotCollectCfg(), El4090HighStandTrotCollectCfgPPO())
+task_registry.register("el4090_wave_collect", EL4090DataCollect, El4090WaveCollectCfg(), El4090WaveCollectCfgPPO())
+task_registry.register("el4090_jump_collect", EL4090DataCollect, El4090JumpCollectCfg(), El4090JumpCollectCfgPPO())
+task_registry.register("el4090_mammal_collect", EL4090DataCollect, El4090MammalCollectCfg(), El4090MammalCollectCfgPPO())
