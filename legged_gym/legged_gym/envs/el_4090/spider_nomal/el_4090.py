@@ -504,7 +504,10 @@ class EL_4090(ElSpider):
                 'RF_HAA', 'RM_HAA', 'RB_HAA', 'LF_HAA', 'LM_HAA', 'LB_HAA']]
 
         target_haa = getattr(self.cfg.rewards, 'mammal_haa_target', 1.57)
-        target = torch.full((len(self.haa_indices),), target_haa, device=self.device)
+        if isinstance(target_haa, (list, tuple)):
+            target = torch.tensor(target_haa, dtype=torch.float, device=self.device)
+        else:
+            target = torch.full((len(self.haa_indices),), target_haa, device=self.device)
 
         movement_mask = self._movement_command_mask().float()
         current_deviation = torch.square(self.dof_pos[:, self.haa_indices] - target).mean(dim=1)
