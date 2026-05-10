@@ -523,6 +523,14 @@ class EL_4090(ElSpider):
         )
         return self.haa_guidance_mammal_ema * movement_mask
 
+    def _reward_shank_perp2ground(self):
+        if not hasattr(self, 'hfe_indices'):
+            self.hfe_indices = [self.dof_names.index(name) for name in [
+                'RF_HFE', 'RM_HFE', 'RB_HFE', 'LF_HFE', 'LM_HFE', 'LB_HFE']]
+        if not hasattr(self, 'kfe_indices'):
+            self.kfe_indices = [self.dof_names.index(name) for name in [
+                'RF_KFE', 'RM_KFE', 'RB_KFE', 'LF_KFE', 'LM_KFE', 'LB_KFE']]
+        return torch.square(self.dof_pos[:, self.hfe_indices] + self.dof_pos[:, self.kfe_indices]).sum(dim=1)
 
     def _reward_stand_on_six_legs(self):
         # 低命令下：鼓励六条腿全部着地
