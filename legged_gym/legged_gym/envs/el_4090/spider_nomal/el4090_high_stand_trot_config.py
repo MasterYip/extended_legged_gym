@@ -17,23 +17,23 @@ class El4090HighStandTrotCfg(El4090SpiderCfg):
             "LM_HAA": 0.0,
             "LB_HAA": 0.0,
 
-            "RF_HFE": 1.4,
-            "RM_HFE": 1.4,
-            "RB_HFE": 1.4,
-            "LF_HFE": 1.4,
-            "LM_HFE": 1.4,
-            "LB_HFE": 1.4,
+            "RF_HFE": 1.0,
+            "RM_HFE": 1.0,
+            "RB_HFE": 1.0,
+            "LF_HFE": 1.0,
+            "LM_HFE": 1.0,
+            "LB_HFE": 1.0,
 
-            "RF_KFE": -1.4,
-            "RM_KFE": -1.4,
-            "RB_KFE": -1.4,
-            "LF_KFE": -1.4,
-            "LM_KFE": -1.4,
-            "LB_KFE": -1.4,
+            "RF_KFE": -1.0,
+            "RM_KFE": -1.0,
+            "RB_KFE": -1.0,
+            "LF_KFE": -1.0,
+            "LM_KFE": -1.0,
+            "LB_KFE": -1.0,
         }
     class rewards(El4090SpiderCfg.rewards):
         max_contact_force = 500.
-        base_height_target = 0.60
+        base_height_target = 0.57
         only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
@@ -49,12 +49,12 @@ class El4090HighStandTrotCfg(El4090SpiderCfg):
             tracking_ang_vel = 0.5
             lin_vel_z = -3.0
             ang_vel_xy = -0.2
-            orientation = [-5.0, -3.0]
+            orientation = [-8.0, -5.0]
             torques = -0.0001
             dof_vel = [-0.0002, -0.0004]
             dof_acc = [-5e-8, -1.5e-7]
-            base_height = [-2.0, -0.4]
-            feet_slip = [-0.0, -0.2]  # Before feet_air_time
+            base_height = [-5.0, -0.4]
+            feet_slip = [-0.1, -0.2]  # Before feet_air_time
             feet_air_time = [0.5, 0.1]
             collision = -1.
             feet_stumble = [-0.0, -0.2]

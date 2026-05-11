@@ -50,7 +50,7 @@ class El4090MammalCfg(El4090SpiderCfg):
 
     class rewards(El4090SpiderCfg.rewards):
         max_contact_force = 500.
-        base_height_target = 0.50
+        base_height_target = 0.45
         only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
@@ -83,7 +83,7 @@ class El4090MammalCfg(El4090SpiderCfg):
             dof_pos_limits = -1.0
             feet_contact_forces = [-0.1, -0.3]
 
-            # shank_perp2ground = -0.05
+            shank_perp2ground = -0.05
             gait_2_step = [-0.2, -0.0]
             haa_guidance_mammal = -1.0
             # stand_on_six_legs = -0.15
