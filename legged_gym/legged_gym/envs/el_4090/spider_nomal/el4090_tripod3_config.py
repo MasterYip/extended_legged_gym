@@ -8,6 +8,17 @@ class El4090Tripod3Cfg(El4090SpiderCfg):
     """EL4090 3-group gait with front/middle/rear synchronization pairs."""
 
     class rewards(El4090SpiderCfg.rewards):
+        max_contact_force = 500.
+        base_height_target = 0.47
+        only_positive_rewards = False
+        # Multi-stage
+        # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
+        # Stage 1: Correct DOF and FootZ positions / Prevent Slip
+        multi_stage_rewards = True  # if true, reward scales should be list
+        reward_stage_threshold = 2.0
+        reward_min_stage = 0  # Start from 0
+        reward_max_stage = 1
+
         class scales:
             termination = -0.0
             tracking_lin_vel = 1.0
@@ -19,18 +30,34 @@ class El4090Tripod3Cfg(El4090SpiderCfg):
             dof_vel = [-0.0002, -0.0004]
             dof_acc = [-5e-8, -1.5e-7]
             base_height = [-2.0, -0.4]
-            feet_slip = [-0.0, -0.2]
+            feet_slip = [-0.0, -0.2]  # Before feet_air_time
             feet_air_time = [0.5, 0.1]
-            collision = -1.0
+            collision = -1.
             feet_stumble = [-0.0, -0.2]
             action_rate = [-0.005, -0.005]
-            stand_still2 = -0.6
+            stand_still2 = -0.6  # May affect spot turning
             dof_pos_limits = -1.0
             feet_contact_forces = [-0.1, -0.5]
+
             shank_perp2ground = -0.05
-            gait_2_step = 0.0
+            # gait_2_step = [-0.5, -0.0]
             gait_3_step = [-0.5, -0.0]
 
+    class commands(El4090SpiderCfg.commands):
+        curriculum = True
+        max_curriculum = 1.5
+        # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
+        num_commands = 4
+        resampling_time = 4.  # time before command are changed[s]
+        heading_command = False  # if true: compute ang vel command from heading error
+
+        small_command_radio = True
+
+        class ranges(El4090SpiderCfg.commands.ranges):
+            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
+            lin_vel_y = [-0.7, 0.7]   # min max [m/s]
+            ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
+            heading = [-3.14, 3.14]
 
 class El4090Tripod3CfgPPO(El4090SpiderCfgPPO):
     class runner(El4090SpiderCfgPPO.runner):
