@@ -450,23 +450,34 @@ class EL_4090(ElSpider):
         return torch.where(movement_mask, movement_penalty, stand_penalty)
 
     def _reward_jump_sync(self):
-        # Jumping/hopping: encourage all legs to move in sync and avoid partial-contact phases.
+        # Jumping/hopping: encourage all legs to move in sync.
+        # Foot index: LB(0), LF(1), LM(2), RB(3), RF(4), RM(5)
         movement_mask = self._movement_command_mask()
-        foot_contact = self.contact_forces[:, self.feet_indices, 2] > 1.0
-        num_contacts = torch.sum(foot_contact.float(), dim=1)
 
-        partial_contact_penalty = torch.minimum(num_contacts, torch.abs(num_contacts - len(self.feet_indices)))
-        movement_penalty = self._sync_all_legs_penalty() + partial_contact_penalty
+        # All 15 pair-wise sync penalties for 6 legs
+        sync_all_pairs = [
+            self._sync_reward_func(0, 1), self._sync_reward_func(0, 2), self._sync_reward_func(0, 3),
+            self._sync_reward_func(0, 4), self._sync_reward_func(0, 5),
+            self._sync_reward_func(1, 2), self._sync_reward_func(1, 3),
+            self._sync_reward_func(1, 4), self._sync_reward_func(1, 5),
+            self._sync_reward_func(2, 3), self._sync_reward_func(2, 4),
+            self._sync_reward_func(2, 5), self._sync_reward_func(3, 4),
+            self._sync_reward_func(3, 5), self._sync_reward_func(4, 5),
+        ]
+        sync_all_reward = sum(sync_all_pairs) / len(sync_all_pairs)
+
         stand_penalty = self._stand_contact_penalty()
-        return torch.where(movement_mask, movement_penalty, stand_penalty)
+        return torch.where(movement_mask, sync_all_reward, stand_penalty)
 
     def _reward_jump_takeoff(self):
         movement_mask = self._movement_command_mask().float()
+
+        # Push phase: detect when (nearly) all legs are in contact using sync state
         foot_contact = self.contact_forces[:, self.feet_indices, 2] > 1.0
         num_contacts = torch.sum(foot_contact.float(), dim=1)
+        push_phase_mask = (num_contacts >= len(self.feet_indices) - 1).float()
 
         jump_target_vertical_velocity = getattr(self.cfg.rewards, "jump_target_vertical_velocity", 0.8)
-        push_phase_mask = (num_contacts >= len(self.feet_indices) - 1).float()
         vertical_velocity_deficit = torch.relu(jump_target_vertical_velocity - self.base_lin_vel[:, 2])
         return torch.square(vertical_velocity_deficit) * movement_mask * push_phase_mask
 
