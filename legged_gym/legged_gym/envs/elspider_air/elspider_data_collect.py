@@ -56,9 +56,8 @@ class ElSpiderDataCollect(ElSpider):
             ).float(),
             # [N, 6] time since last liftoff per foot, s
             "feet_air_time": self.feet_air_time.clone(),
-            # [N, 18] absolute joint positions in radians (independent of default_dof_pos bias)
-            # BUG: action_unbiased is not dof_pos, is action + default_dof_pos, which is the absolute joint position without the default pose bias.  This is a legacy naming issue that should be fixed in the future.
-            "action_unbiased": self.dof_pos.clone(),
+            # [N, 18] absolute target joint positions = action + default_dof_pos
+            "action_unbiased": (self.actions + self.default_dof_pos).clone(),
             # [N, D] fixed task-identity descriptor broadcast over all envs
             "task_vec": self._task_vec.expand(self.num_envs, -1).clone(),
         }
