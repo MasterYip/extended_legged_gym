@@ -24,13 +24,28 @@ class El4090Tripod2Cfg(El4090SpiderCfg):
             collision = -1.0
             feet_stumble = [-0.0, -0.2]
             action_rate = [-0.005, -0.005]
-            stand_still2 = -0.6
+            stand_still2 = -0.3
             dof_pos_limits = -1.0
             feet_contact_forces = [-0.1, -0.5]
             shank_perp2ground = -0.05
             gait_2_step = [-0.5, -0.0]
             gait_3_step = 0.0
 
+    class commands(El4090SpiderCfg.commands):
+        curriculum = True
+        max_curriculum = 3.0
+        # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
+        num_commands = 4
+        resampling_time = 4.  # time before command are changed[s]
+        heading_command = False  # if true: compute ang vel command from heading error
+
+        small_command_radio = False
+
+        class ranges(El4090SpiderCfg.commands.ranges):
+            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
+            lin_vel_y = [-1.2, 1.2]   # min max [m/s]
+            ang_vel_yaw = [-2.0, 2.0]    # min max [rad/s]
+            heading = [-3.14, 3.14]
 
 class El4090Tripod2CfgPPO(El4090SpiderCfgPPO):
     class runner(El4090SpiderCfgPPO.runner):
