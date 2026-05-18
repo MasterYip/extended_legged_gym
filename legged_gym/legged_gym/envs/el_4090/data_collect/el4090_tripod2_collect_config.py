@@ -15,12 +15,12 @@ class El4090Tripod2CollectCfg(El4090Tripod2Cfg):
         resampling_time = 4.  # time before command are changed[s]
         heading_command = False  # if true: compute ang vel command from heading error
 
-        small_command_radio = True
+        small_command_radio = False
 
         class ranges(El4090Tripod2Cfg.commands.ranges):
-            lin_vel_x = [-3, 3]  # min max [m/s]
-            lin_vel_y = [-1.5, 1.5]   # min max [m/s]
-            ang_vel_yaw = [-2.0, 2.0]    # min max [rad/s]
+            lin_vel_x = [-3.0, 3.0]  # min max [m/s]
+            lin_vel_y = [-1.0, 1.0]   # min max [m/s]
+            ang_vel_yaw = [-1.2, 1.2]    # min max [rad/s]
             heading = [-3.14, 3.14]
 
 class El4090Tripod2CollectCfgPPO(El4090Tripod2CfgPPO):
