@@ -44,6 +44,8 @@ class ElSpiderDataCollect(ElSpider):
             "commands": self.commands[:, :3].clone(),
             # [N, 18] joint position error relative to default pose, rad
             "dof_pos": (self.dof_pos - self.default_dof_pos).clone(),
+            # [N, 18] absolute joint positions (raw, without default bias removed)
+            "dof_pos_unbiased": self.dof_pos.clone(),
             # [N, 18] joint velocities, rad/s
             "dof_vel": self.dof_vel.clone(),
             # [N, 18] last policy actions
