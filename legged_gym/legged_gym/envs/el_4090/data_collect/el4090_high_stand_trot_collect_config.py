@@ -6,7 +6,7 @@ from legged_gym.envs.el_4090.spider_nomal.el4090_high_stand_trot_config import (
 
 class El4090HighStandTrotCollectCfg(El4090HighStandTrotCfg):
     class collect:
-        task_vec = [1.0, 4.0, 0.0]
+        task_vec = [1.0, 2.0, 0.0]
     class commands(El4090HighStandTrotCfg.commands):
         curriculum = True
         max_curriculum = 1.5

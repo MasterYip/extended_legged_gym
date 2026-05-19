@@ -27,7 +27,7 @@ class El4090Tripod3Cfg(El4090SpiderCfg):
             ang_vel_xy = -0.2
             orientation = [-5.0, -3.0]
             torques = -0.0001
-            dof_vel = [-0.0002, -0.0004]
+            dof_vel = [-0.0002]
             dof_acc = [-5e-8, -1.5e-7]
             base_height = [-2.0, -0.4]
             feet_slip = [-0.0, -0.2]  # Before feet_air_time

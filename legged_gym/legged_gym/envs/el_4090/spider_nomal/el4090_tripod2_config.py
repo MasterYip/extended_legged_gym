@@ -34,7 +34,7 @@ class El4090Tripod2Cfg(El4090SpiderCfg):
             collision = -1.0
             feet_stumble = [-0.0, -0.2]
             action_rate = [-0.005, -0.005]
-            stand_still2 = -0.3
+            stand_still2 = -0.6
             dof_pos_limits = -1.0
             feet_contact_forces = [-0.05, -0.25]
             shank_perp2ground = -0.05

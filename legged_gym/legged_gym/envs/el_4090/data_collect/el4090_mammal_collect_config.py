@@ -6,7 +6,8 @@ from legged_gym.envs.el_4090.spider_nomal.el4090_mammal_config import (
 
 class El4090MammalCollectCfg(El4090MammalCfg):
     class collect:
-        task_vec = [1.0, 5.0, 0.0]
+        task_vec = [1.0, 3.0, 0.0]
+
     class commands(El4090MammalCfg.commands):
         curriculum = True
         max_curriculum = 1.5

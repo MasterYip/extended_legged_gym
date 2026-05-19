@@ -25,10 +25,10 @@ conda activate isaacgym
 | Normal EL4090 baseline | `el4090_spider_normal` | `el4090_flat_collect` | `[1., 0., 0.]` | Flat collect alias currently points to tripod-2 semantics |
 | Tripod 2-gait trot | `el4090_tripod2` | `el4090_tripod2_collect` | `[1., 0., 0.]` | Two synchronized tripod groups |
 | Tripod 3-gait trot | `el4090_tripod3` | `el4090_tripod3_collect` | `[1., 1., 0.]` | Three alternating foot-pair groups |
-| High-standing trot | `el4090_high_stand_trot` | `el4090_high_stand_trot_collect` | `[1., 4., 0.]` | Taller base-height target and posture shaping |
+| High-standing trot | `el4090_high_stand_trot` | `el4090_high_stand_trot_collect` | `[1., 2., 0.]` | Taller base-height target and posture shaping |
 | Wave gait | `el4090_wave` | `el4090_wave_collect` | `[1., 2., 0.]` | Slow stable stepping with one-foot swing emphasis |
 | Jump / hop | `el4090_jump` | `el4090_jump_collect` | `[1., 3., 0.]` | Synchronized push-off and aerial phase shaping |
-| Mammal gait | `el4090_mammal` | `el4090_mammal_collect` | `[1., 5., 0.]` | Left-right alternating gait approximation |
+| Mammal gait | `el4090_mammal` | `el4090_mammal_collect` | `[1., 3., 0.]` | Left-right alternating gait approximation |
 | Safety task | `el_4090_safe` | - | - | Existing safety-oriented baseline |
 
 ---

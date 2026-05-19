@@ -58,6 +58,8 @@ class ElSpiderDataCollect(ElSpider):
             "feet_air_time": self.feet_air_time.clone(),
             # [N, 18] absolute target joint positions = action + default_dof_pos
             "action_unbiased": (self.actions + self.default_dof_pos).clone(),
+            # [N, 18] last policy actions in absolute joint positions (unbiased)
+            "last_actions_unbiased": (self.actions + self.default_dof_pos).clone(),
             # [N, D] fixed task-identity descriptor broadcast over all envs
             "task_vec": self._task_vec.expand(self.num_envs, -1).clone(),
         }
