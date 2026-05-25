@@ -84,10 +84,8 @@ class ElSpiderDataCollect(ElSpider):
             ).float(),
             # [N, 6] time since last liftoff per foot, s
             "feet_air_time": self.feet_air_time.clone(),
-            # [N, 18] absolute target joint positions = actions * action_scale + default_dof_pos
-            "action_unbiased": action_unbiased,
             # [N, 18] same as action_unbiased — serves as the obs-space last_actions term
-            "last_actions_unbiased": action_unbiased.clone(),
+            "last_actions_unbiased": action_unbiased,
             # [N, D] fixed task-identity descriptor broadcast over all envs
             "task_vec": self._task_vec.expand(self.num_envs, -1).clone(),
         }
