@@ -41,7 +41,7 @@ from typing import Tuple, Dict
 
 from legged_gym.envs import LeggedRobot
 from legged_gym import LEGGED_GYM_ROOT_DIR
-from .mixed_terrains.elspider_air_rough_config import ElSpiderAirRoughCfg
+# from .mixed_terrains.elspider_air_rough_config import ElSpiderAirRoughCfg
 from legged_gym.utils import GaitScheduler, GaitSchedulerCfg, AsyncGaitSchedulerCfg, AsyncGaitScheduler, \
     SimpleRaibertPlannerConfig, SimpleRaibertPlanner, RaibertPlanner, RaibertPlannerConfig
 from legged_gym.utils.helpers import class_to_dict

@@ -36,7 +36,6 @@ from isaacgym.torch_utils import *
 from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
-from torch import nn
 # from torch.tensor import Tensor
 from typing import Tuple, Dict
 from legged_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
@@ -49,64 +48,13 @@ from legged_gym.utils.helpers import class_to_dict
 from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs.elspider_air.elspider import ElSpider
 
-from legged_gym.envs.el_4090.spider_nomal.el4090_spider_config import El4090SpiderCfg
+from legged_gym.envs.el_4090.spider_mammal.el4090_spider_config import El4090MammalCfg,El4090MammalCfgPPO
 
 
-def tau_f_stribeck(vel, tau_c, B_v, tau_s, omega_s):
-    sgn = torch.sign(vel)
-    absvel = torch.abs(vel)
-    cond = absvel > omega_s
-    term1 = tau_c * sgn + (B_v + tau_s * torch.exp(-absvel / omega_s)) * vel
-    term2 = tau_c * sgn + B_v * vel + tau_s * (vel / omega_s)
-    return torch.where(cond, term1, term2)
-
-
-def phymodel(i_curr, q_des, q_curr, q_curr_vel, phy_theta, dt=0.002, k_cmd=1.0):
-    # constants
-    K_e_const = 2.1
-    K_t_const = 2.1
-
-    # phy_theta: [R_a, L_a, N, tau_c, B_v, tau_s, omega_s, k2, k3, k_g]
-    R_a, L_a, N, tau_c, B_v, tau_s, omega_s, k2, k3, k_g = phy_theta
-
-    # motor angular velocity (motor shaft) = N * load velocity
-    omega_m = N * q_curr_vel
-
-    # approximate actuator voltage from position error (simple proportional controller)
-    V_a = k_cmd * (q_des - q_curr)
-
-    # electrical dynamics: dI = (V_a - R_a * I - K_e * omega_m) / L_a
-    dI = (V_a - R_a * i_curr - K_e_const * omega_m) / L_a
-    i_next = i_curr + dt * dI
-
-    # compute friction current needed to overcome load-side摩擦: I_f = (N * tau_f) / K_t
-    tau_f = tau_f_stribeck(q_curr_vel, tau_c, B_v, tau_s, omega_s)
-    I_f = (N * tau_f) / K_t_const
-
-    # PD-like feed terms converted to equivalent current (k2, k3)
-    I_pd = (k2 / K_t_const) * (q_des - q_curr) - (k3 / K_t_const) * q_curr_vel
-
-    # gravity term
-    return i_next + I_f + I_pd + k_g
-
-
-class ResidualNN(nn.Module):
-    def __init__(self, input_dim=5, hidden=32, layers=2):
-        super().__init__()
-        mods = [nn.Linear(input_dim, hidden), nn.ReLU()]
-        for _ in range(layers - 1):
-            mods += [nn.Linear(hidden, hidden), nn.ReLU()]
-        mods += [nn.Linear(hidden, 1)]
-        self.net = nn.Sequential(*mods)
-
-    def forward(self, x):
-        return self.net(x).squeeze(-1)
-
-
-class EL_4090(ElSpider):
-    cfg : El4090SpiderCfg
+class EL_4090_Mammal(ElSpider):
+    cfg : El4090MammalCfg
      # env Init
-    def __init__(self, cfg: El4090SpiderCfg, sim_params, physics_engine, sim_device, headless,task_name="el4090_spider"):
+    def __init__(self, cfg: El4090MammalCfg, sim_params, physics_engine, sim_device, headless,task_name="el4090_mammal"):
         """ Parses the provided config file,Parses the provided config file,
             calls create_sim() (which creates, simulation, terrain and environments),
             initilizes pytorch buffers used during training
@@ -139,79 +87,13 @@ class EL_4090(ElSpider):
         # Debug counters
         self.debug_step_counter = 0
 
-        # Delay/friction model parameters (defaults)
-        # 实测总时滞约 0.05s
-        self.delay_tau = 0.15  # seconds
+        # Delay/friction model parameters (defaults, can be moved to cfg if needed)
+        self.delay_tau = 0.015  # seconds
         self.friction_tau_c = 0.1
         self.friction_b_v = 0.01
         self.friction_tau_s = 0.2
         self.friction_omega_s = 0.05
 
-        # Load phy+residual NN for torque control
-        phy_nn_dir = os.path.join(os.path.dirname(__file__), "phy_nn")
-        phy_theta_path = os.path.join(phy_nn_dir, "phy_theta.pt")
-        nn_path = os.path.join(phy_nn_dir, "residual_nn.pt")
-        if not os.path.exists(phy_theta_path) or not os.path.exists(nn_path):
-            raise FileNotFoundError(f"phy_nn weights not found in {phy_nn_dir}")
-
-        self.nn = {}
-        self.nn["phy_theta"] = torch.load(phy_theta_path, map_location=self.device)
-        if not isinstance(self.nn["phy_theta"], torch.Tensor):
-            self.nn["phy_theta"] = torch.tensor(self.nn["phy_theta"], dtype=torch.float, device=self.device)
-        else:
-            self.nn["phy_theta"] = self.nn["phy_theta"].to(self.device).float()
-
-        self.nn["residual_nn"] = ResidualNN().to(self.device)
-        self.nn["residual_nn"].load_state_dict(torch.load(nn_path, map_location=self.device))
-        self.nn["residual_nn"].eval()
-
-        # NN internal state and joint index mapping
-        # Mapping given by user (Isaac Gym index -> real motor id). Training index follows real motor id order.
-        # Convert to 0-based: sim index -> training index = (real motor id - 1)
-        # sim_to_train_idx maps simulation DOF order -> training index (0-based)
-        sim_to_train_idx = [
-            3,  # sim 0  (1)  -> real 4  -> train 3
-            5,  # sim 1  (2)  -> real 6  -> train 5
-            4,  # sim 2  (3)  -> real 5  -> train 4
-            15, # sim 3  (4)  -> real 16 -> train 15
-            14, # sim 4  (5)  -> real 15 -> train 14
-            13, # sim 5  (6)  -> real 14 -> train 13
-            9,  # sim 6  (7)  -> real 10 -> train 9
-            10, # sim 7  (8)  -> real 11 -> train 10
-            11, # sim 8  (9)  -> real 12 -> train 11
-            0,  # sim 9  (10) -> real 1  -> train 0
-            2,  # sim 10 (11) -> real 3  -> train 2
-            1,  # sim 11 (12) -> real 2  -> train 1
-            12, # sim 12 (13) -> real 13 -> train 12
-            17, # sim 13 (14) -> real 18 -> train 17
-            16, # sim 14 (15) -> real 17 -> train 16
-            6,  # sim 15 (16) -> real 7  -> train 6
-            8,  # sim 16 (17) -> real 9  -> train 8
-            7,  # sim 17 (18) -> real 8  -> train 7
-        ]
-        # keep mapping available on the instance for reordering logic
-        self.sim_to_train_idx = sim_to_train_idx
-        # real_ids (1-based real motor ids as in comment): useful if you want to feed real ids directly
-        real_ids = [4, 6, 5, 16, 15, 14, 10, 11, 12, 1, 3, 2, 13, 18, 17, 7, 9, 8]
-
-        # Toggle: set to True to use real motor ids as `joint_idx` input to the residual NN.
-        # NOTE: The residual NN was originally trained with `joint_idx` being the training index (0..17).
-        # Using real ids will change the input distribution and likely requires retraining the NN.
-        self.use_real_joint_idx = False
-
-        # If True, reorder NN inputs to train-order before calling the residual NN
-        # and then reorder outputs back to sim-order. Default False (use sim-order inputs).
-        self.reorder_residual_to_train_input = True
-
-        if self.use_real_joint_idx:
-            # convert to float tensor (real ids kept as 1-based as an input feature)
-            self.nn["joint_idx"] = torch.tensor(real_ids, device=self.device, dtype=torch.float).unsqueeze(0).repeat(self.num_envs, 1)
-        else:
-            # default: use training indices (0-based) — matches how the NN was trained
-            self.nn["joint_idx"] = torch.tensor(sim_to_train_idx, device=self.device, dtype=torch.float).unsqueeze(0).repeat(self.num_envs, 1)
-
-        # i_curr is derived from simulator-applied torques each step
- 
     def _init_buffers(self):
         """ Initialize torch tensors which will contain simulation states and processed quantities
         """
@@ -263,11 +145,17 @@ class EL_4090(ElSpider):
 
             delayed_actions = self._delay_action_state
 
-            # 2) PD in the delay channel (original behavior)
+            # 2) PD in the delay channel (target is lagged)
             tau_pd = self.p_gains * (delayed_actions + self.default_dof_pos - self.dof_pos) - self.d_gains * self.dof_vel
 
             # 3) Nonlinear friction (Stribeck + Coulomb + viscous)
-            tau_f = tau_f_stribeck(self.dof_vel, self.friction_tau_c, self.friction_b_v, self.friction_tau_s, self.friction_omega_s)
+            vel = self.dof_vel
+            sgn = torch.sign(vel)
+            absvel = torch.abs(vel)
+            cond = absvel > self.friction_omega_s
+            term1 = self.friction_tau_c * sgn + (self.friction_b_v + self.friction_tau_s * torch.exp(-absvel / self.friction_omega_s)) * vel
+            term2 = self.friction_tau_c * sgn + self.friction_b_v * vel + self.friction_tau_s * (vel / self.friction_omega_s)
+            tau_f = torch.where(cond, term1, term2)
 
             # 4) Actuator lag on torque itself (models execution delay/阻碍)
             if not hasattr(self, "_delay_torque_state"):
@@ -281,77 +169,20 @@ class EL_4090(ElSpider):
                     self._delay_torque_state[reset_mask] = tau_pd[reset_mask]
 
             torques = self._delay_torque_state - tau_f
-
-        elif control_type == "NN":
-            # Use phy+residual NN to predict current, then convert to torque
-            with torch.no_grad():
-                q_des = actions_scaled + self.default_dof_pos
-                q_curr = self.dof_pos
-                q_curr_vel = self.dof_vel
-
-                # constants
-                K_t = 2.1
-                KP = 150.0
-                KD = 1.0
-                spd_des = 0.0
-
-                # matrices in sim order: (num_envs, num_dof)
-                i_mat = (self.torques / K_t).view(self.num_envs, self.num_dof)
-                q_des_mat = q_des.view(self.num_envs, self.num_dof)
-                q_curr_mat = q_curr.view(self.num_envs, self.num_dof)
-                q_vel_mat = q_curr_vel.view(self.num_envs, self.num_dof)
-
-                if self.reorder_residual_to_train_input:
-                    sim_to_train = torch.tensor(self.sim_to_train_idx, device=self.device, dtype=torch.long)
-                    sim_in_train_order = torch.argsort(sim_to_train)
-
-                    # reorder to train order
-                    i_train = i_mat[:, sim_in_train_order]
-                    q_des_train = q_des_mat[:, sim_in_train_order]
-                    q_curr_train = q_curr_mat[:, sim_in_train_order]
-                    q_vel_train = q_vel_mat[:, sim_in_train_order]
-
-                    joint_idx_train = torch.arange(self.num_dof, device=self.device, dtype=torch.float).unsqueeze(0).repeat(self.num_envs, 1)
-
-                    i_flat = i_train.reshape(-1)
-                    q_des_flat = q_des_train.reshape(-1)
-                    q_curr_flat = q_curr_train.reshape(-1)
-                    q_vel_flat = q_vel_train.reshape(-1)
-                    joint_idx_flat = joint_idx_train.reshape(-1)
-
-                    phy_out = phymodel(i_flat, q_des_flat, q_curr_flat, q_vel_flat, self.nn["phy_theta"], dt=self.sim_params.dt)
-                    nn_in = torch.stack([i_flat, q_des_flat, q_curr_flat, q_vel_flat, joint_idx_flat], dim=-1)
-                    nn_out = self.nn["residual_nn"](nn_in)
-
-                    pred_current_train = (phy_out + nn_out).reshape(self.num_envs, self.num_dof)
-                    pred_torque_train = K_t * pred_current_train + KP * (q_des_train - q_curr_train) - KD * (spd_des - q_vel_train)
-                    # pred_torque_train = K_t * pred_current_train 
-
-                    # map back to sim order
-                    pred_torque_sim = torch.empty_like(pred_torque_train)
-                    pred_torque_sim[:, sim_in_train_order] = pred_torque_train
-                    torques = torch.clip(pred_torque_sim, -self.torque_limits, self.torque_limits)
-                else:
-                    # sim order processing
-                    i_flat = i_mat.reshape(-1)
-                    q_des_flat = q_des_mat.reshape(-1)
-                    q_curr_flat = q_curr_mat.reshape(-1)
-                    q_vel_flat = q_vel_mat.reshape(-1)
-                    joint_idx_flat = self.nn["joint_idx"].reshape(-1)
-
-                    phy_out = phymodel(i_flat, q_des_flat, q_curr_flat, q_vel_flat, self.nn["phy_theta"], dt=self.sim_params.dt)
-                    nn_in = torch.stack([i_flat, q_des_flat, q_curr_flat, q_vel_flat, joint_idx_flat], dim=-1)
-                    nn_out = self.nn["residual_nn"](nn_in)
-
-                    pred_current = (phy_out + nn_out).reshape(self.num_envs, self.num_dof)
-                    pred_torque = K_t * pred_current - KP * (q_des_mat - q_curr_mat) - KD * (spd_des - q_vel_mat)
-                    torques = torch.clip(pred_torque, -self.torque_limits, self.torque_limits)
         else:
             raise NameError(f"Unknown controller type: {control_type}")
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
+    
+        
+            
+        
+
 
     def _debug_info(self):
         """Print debug information for the specified environment(s)"""
+
+        # print("env_base_height:",self.base_pos[:,2])
+
         if not self.cfg.env.debug_mode:
             return
         
@@ -474,75 +305,6 @@ class EL_4090(ElSpider):
         """
         Penalize synchronization between the two tripod groups by summing all pair-wise async errors.
 
-                            # target position in sim space (consistent with P controller target)
-                            q_des = actions_scaled + self.default_dof_pos
-                            q_curr = self.dof_pos
-                            q_curr_vel = self.dof_vel
-
-                            # estimate current from simulator-applied torques (sim order)
-                            K_t = 2.1
-                            i_mat = (self.torques / K_t).view(self.num_envs, self.num_dof)
-
-                            # desired/actual/vel in sim order
-                            q_des_mat = q_des.view(self.num_envs, self.num_dof)
-                            q_curr_mat = q_curr.view(self.num_envs, self.num_dof)
-                            q_vel_mat = q_curr_vel.view(self.num_envs, self.num_dof)
-
-                            # controller gains to convert predicted current to torque command (user-provided values)
-                            KP = 150.0
-                            KD = 1.0
-                            spd_des = 0.0
-
-                            if self.reorder_residual_to_train_input:
-                                sim_to_train = torch.tensor(self.sim_to_train_idx, device=self.device, dtype=torch.long)
-                                # sim_in_train_order[train_idx] = sim_index
-                                sim_in_train_order = torch.argsort(sim_to_train)
-
-                                # reorder columns to train order
-                                i_train = i_mat[:, sim_in_train_order]
-                                q_des_train = q_des_mat[:, sim_in_train_order]
-                                q_curr_train = q_curr_mat[:, sim_in_train_order]
-                                q_vel_train = q_vel_mat[:, sim_in_train_order]
-
-                                # joint idx for train-ordered inputs is 0..num_dof-1
-                                joint_idx_train = torch.arange(self.num_dof, device=self.device, dtype=torch.float).unsqueeze(0).repeat(self.num_envs, 1)
-
-                                # flatten to (num_envs*num_dof,)
-                                i_flat = i_train.reshape(-1)
-                                q_des_flat = q_des_train.reshape(-1)
-                                q_curr_flat = q_curr_train.reshape(-1)
-                                q_vel_flat = q_vel_train.reshape(-1)
-                                joint_idx_flat = joint_idx_train.reshape(-1)
-
-                                phy_out = phymodel(i_flat, q_des_flat, q_curr_flat, q_vel_flat, self.nn["phy_theta"], dt=self.sim_params.dt)
-                                nn_in = torch.stack([i_flat, q_des_flat, q_curr_flat, q_vel_flat, joint_idx_flat], dim=-1)
-                                nn_out = self.nn["residual_nn"](nn_in)
-
-                                pred_current_train = (phy_out + nn_out).reshape(self.num_envs, self.num_dof)
-
-                                # compute torque in train order
-                                pred_torque_train = K_t * pred_current_train - KP * (q_des_train - q_curr_train) - KD * (spd_des - q_vel_train)
-
-                                # map back to sim order: sim_in_train_order[train_idx] = sim_index
-                                # so assign sim columns from train columns
-                                pred_torque_sim = torch.empty_like(pred_torque_train)
-                                pred_torque_sim[:, sim_in_train_order] = pred_torque_train
-                                torques = torch.clip(pred_torque_sim, -self.torque_limits, self.torque_limits)
-                            else:
-                                # use sim order directly
-                                i_flat = i_mat.reshape(-1)
-                                q_des_flat = q_des_mat.reshape(-1)
-                                q_curr_flat = q_curr_mat.reshape(-1)
-                                q_vel_flat = q_vel_mat.reshape(-1)
-                                joint_idx_flat = self.nn["joint_idx"].reshape(-1)
-
-                                phy_out = phymodel(i_flat, q_des_flat, q_curr_flat, q_vel_flat, self.nn["phy_theta"], dt=self.sim_params.dt)
-                                nn_in = torch.stack([i_flat, q_des_flat, q_curr_flat, q_vel_flat, joint_idx_flat], dim=-1)
-                                nn_out = self.nn["residual_nn"](nn_in)
-
-                                pred_current = (phy_out + nn_out).reshape(self.num_envs, self.num_dof)
-                                pred_torque = K_t * pred_current - KP * (q_des_mat - q_curr_mat) - KD * (spd_des - q_vel_mat)
-                                torques = torch.clip(pred_torque, -self.torque_limits, self.torque_limits)
         """
         async_reward = 0
         # Sum of async penalties for all pairs between Group 1 and Group 2

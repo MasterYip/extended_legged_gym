@@ -221,14 +221,14 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         warmup_steps = 0                  # 前 N 步跳过 ATACOM（用于调试）
 
         # 算法超参数
-        lambda_retract = 0.8              # 收缩增益 λ：控制向约束流形收缩的速率
+        lambda_retract = 5.0              # 收缩增益 λ：控制向约束流形收缩的速率
         beta = 2.0                        # 松弛变量动力学系数
         dt = 0.005                        # 控制步长（s），建议与仿真 dt 保持一致
 
         # 关节限位（列表长度须为 18）
         q_max = [1.57] * 18               # 关节位置上限（rad）
         q_min = [-1.57] * 18              # 关节位置下限（rad）
-        dq_max = [14.2] * 18               # 关节速度上限（rad/s）
+        dq_max = [15] * 18                # 关节速度上限（rad/s）
         tau_max = [76] * 18               # 关节力矩上限（N·m）
         # q_max = [3.0] * 18               # 关节位置上限（rad）
         # q_min = [-3.0] * 18              # 关节位置下限（rad）

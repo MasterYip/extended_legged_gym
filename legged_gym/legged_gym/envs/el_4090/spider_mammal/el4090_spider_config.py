@@ -29,9 +29,9 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 from legged_gym.envs.elspider_air.mixed_terrains.elspider_air_rough_config import ElSpiderAirRoughCfg, ElSpiderAirRoughCfgPPO
+from legged_gym.envs.el_4090.spider_nomal.el4090_spider_config import El4090SpiderCfg,El4090SpiderCfgPPO
 
-
-class El4090SpiderCfg(ElSpiderAirRoughCfg):
+class El4090MammalCfg(ElSpiderAirRoughCfg):
     class env(ElSpiderAirRoughCfg.env):
         num_observations = 66
         # Debug settings
@@ -56,7 +56,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         num_rows = 8  # number of terrain rows (levels)
         num_cols = 8  # number of terrain cols (types)
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
-        terrain_proportions = [0.2, 0.2, 0.25, 0.25, 0.1]
+        terrain_proportions = [0.0, 0.0, 0.0, 0.0, 1.0]
         difficulty_scale = 0.0
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
@@ -95,34 +95,41 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         flip_visual_attachments = False
 
     class init_state(ElSpiderAirRoughCfg.init_state):
-        pos = [0.0, 0.0, 0.45]  # x,y,z [m]
+        pos = [0.0, 0.0, 0.75]  # x,y,z [m]
         default_joint_angles = {  # = target angles [rad] when action = 0.0
-            "RF_HAA": 0.0,
-            "RM_HAA": 0.0,
-            "RB_HAA": 0.0,
-            "LF_HAA": 0.0,
-            "LM_HAA": 0.0,
-            "LB_HAA": 0.0,
+            "RF_HAA": 1.308,
+            "RM_HAA": 1.308,
+            "RB_HAA": 1.308,
+            "LF_HAA": 1.308,
+            "LM_HAA": 1.308,
+            "LB_HAA": 1.308,
 
-            "RF_HFE": 0.0,
-            "RM_HFE": 0.0,
-            "RB_HFE": 0.0,
-            "LF_HFE": 0.0,
-            "LM_HFE": 0.0,
-            "LB_HFE": 0.0,
+            "RF_HFE": 1.308,
+            "RM_HFE": 1.308,
+            "RB_HFE": 1.308,
+            "LF_HFE": 1.308,
+            "LM_HFE": 1.308,
+            "LB_HFE": 1.308,
 
-            "RF_KFE": 0.0,
-            "RM_KFE": 0.0,
-            "RB_KFE": 0.0,
-            "LF_KFE": 0.0,
-            "LM_KFE": 0.0,
-            "LB_KFE": 0.0,
+            "RF_KFE": -0.608,
+            "RM_KFE": -0.608,
+            "RB_KFE": -0.608,
+            "LF_KFE": -0.608,
+            "LM_KFE": -0.608,
+            "LB_KFE": -0.608,
+
+            # "RF_KFE": -0.36,
+            # "RM_KFE": -0.36,
+            # "RB_KFE": -0.36,
+            # "LF_KFE": -0.36,
+            # "LM_KFE": -0.36,
+            # "LB_KFE": -0.36,
         }
 
     ## Rewards V2 (faster&smoother gait, zzl-style)
     class rewards(ElSpiderAirRoughCfg.rewards):
-        max_contact_force = 300.
-        base_height_target = 0.47
+        max_contact_force = 350.
+        base_height_target = 0.72
         only_positive_rewards = False
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
@@ -133,34 +140,33 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         reward_max_stage = 1
 
         class scales:
-
             termination = -0.0
 
             tracking_lin_vel = 5
-            tracking_ang_vel = 3.5
+            tracking_ang_vel = 2.5
             # lateral_lin_vel_y = -1
 
             lin_vel_z = -2
             ang_vel_xy = -1
-            orientation = -5
-            torques = -0.0001
-            dof_vel = -0.0001
+            orientation = -10
+            torques = -1e-4
+            dof_vel = -1e-5
             dof_acc = -1e-7
             base_height = -50
             feet_slip = -0.05 
             feet_air_time = 1.5
             collision = -1.
             feet_stumble = -1
-            action_rate = -0.03
-            stand_still = -1.5  
+            action_rate = -0.05
+            stand_still = -3
             dof_pos_limits = -0.5
             dof_vel_limits = -0.1
             torque_limits = -0.01
-            feet_contact_forces = -0.04
+            feet_contact_forces = -0.01
             # stand_on_six_legs = -1
-            shank_vertical = -4
-            feet_async = -3
-            feet_sync = -3
+            # shank_vertical = -4
+            feet_async = -1.
+            feet_sync = -1.
 
 
     class commands(ElSpiderAirRoughCfg.commands):
@@ -174,9 +180,9 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         small_command_radio = True
 
         class ranges(ElSpiderAirRoughCfg.commands.ranges):
-            lin_vel_x = [-2.5, 2.5]  # min max [m/s]
-            lin_vel_y = [-1.5, 1.5]   # min max [m/s]
-            ang_vel_yaw = [-2.0, 2.0]    # min max [rad/s]
+            lin_vel_x = [-2.0, 2.0]  # min max [m/s]
+            lin_vel_y = [-1.0, 1.0]   # min max [m/s]
+            ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
             heading = [-3.14, 3.14]
 
     class domain_rand(ElSpiderAirRoughCfg.domain_rand):
@@ -201,7 +207,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
             gravity = 0.05
             height_measurements = 0.1
 
-class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
+class El4090MammalCfgPPO( El4090SpiderCfgPPO ):
     seed = 1
     runner_class_name = 'OnPolicyRunner'
     class policy:
@@ -230,7 +236,7 @@ class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
 
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        experiment_name = 'el_4090_spider'
+        experiment_name = 'el_4090_mammal'
         run_name = ''
         # load and resume
         resume = False

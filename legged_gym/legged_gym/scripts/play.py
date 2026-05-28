@@ -30,6 +30,7 @@
 
 from legged_gym import LEGGED_GYM_ROOT_DIR
 import os
+import csv
 
 import isaacgym
 from legged_gym.envs import *
@@ -43,7 +44,7 @@ import isaacgym.gymapi as gymapi
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 100)
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 10)
     env_cfg.terrain.num_rows = 5
     env_cfg.terrain.num_cols = 5
     env_cfg.terrain.curriculum = False
@@ -101,137 +102,156 @@ def play(args):
     else:
         print("Running at maximum speed (no realtime constraints)")
 
-    for i in range(int(env.max_episode_length*10)):
+    play_data_dir = os.path.join(os.path.dirname(__file__), "play_datas")
+    os.makedirs(play_data_dir, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    csv_path = os.path.join(play_data_dir, f"{args.task}_torque_vel_{timestamp}.csv")
+    csv_file = open(csv_path, "w", newline="")
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow(["step", "env_id", "torques", "dof_vel"])
 
-        step_start_time = time.time()
+    try:
+        for i in range(int(env.max_episode_length*10)):
 
-        # # 键盘控制指令（wasdqe控制）
-        # import sys, select, termios, tty
-        # def get_key(timeout=0.01):
-        #     fd = sys.stdin.fileno()
-        #     old_settings = termios.tcgetattr(fd)
-        #     try:
-        #         tty.setraw(fd)
-        #         rlist, _, _ = select.select([fd], [], [], timeout)
-        #         if rlist:
-        #             key = sys.stdin.read(1)
-        #         else:
-        #             key = ''
-        #     finally:
-        #         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        #     return key
+            step_start_time = time.time()
 
-        # # 初始命名变量
-        # if i == 0:
-        #     lin_vel_x = 0.0  # 前进/后退速度
-        #     lin_vel_y = 0.0  # 侧移速度
-        #     ang_vel_yaw = 0.0  # 偏航角速度
-        #     heading = 0.0  # 预留
-        # key = get_key()
-        # # 速度步长
-        # lin_step = 0.1
-        # yaw_step = 0.1
-        # # 按键映射
-        # if key == 'w':
-        #     lin_vel_x += lin_step
-        # elif key == 's':
-        #     lin_vel_x -= lin_step
-        # elif key == 'a':
-        #     lin_vel_y += lin_step
-        # elif key == 'd':
-        #     lin_vel_y -= lin_step
-        # elif key == 'q':
-        #     ang_vel_yaw += yaw_step
-        # elif key == 'e':
-        #     ang_vel_yaw -= yaw_step
-        # elif key == 'z':
-        #     lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
-        # # 限制范围
-        # lin_vel_x = np.clip(lin_vel_x, -5.0, 5.0)
-        # lin_vel_x = 2.5
-        # lin_vel_y = np.clip(lin_vel_y, -1.5, 1.5)
-        # lin_vel_y = 1.0
-        # ang_vel_yaw = np.clip(ang_vel_yaw, -2.0, 2.0)
-        # # ang_vel_yaw = 1.0
-        # heading = np.clip(heading, -1.0, 1.0)
-        # command = [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
-        # import torch
-        # env.commands[:] = torch.tensor(command, dtype=env.commands.dtype, device=env.commands.device)
-        # print(f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f}", end="\r")
+            # 键盘控制指令（wasdqe控制）
+            import sys, select, termios, tty
+            def get_key(timeout=0.01):
+                fd = sys.stdin.fileno()
+                old_settings = termios.tcgetattr(fd)
+                try:
+                    tty.setraw(fd)
+                    rlist, _, _ = select.select([fd], [], [], timeout)
+                    if rlist:
+                        key = sys.stdin.read(1)
+                    else:
+                        key = ''
+                finally:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                return key
 
-        actions = policy(obs.detach())
-        obs, _, rews, dones, infos = env.step(actions.detach())
-        
-        if RECORD_FRAMES:
-            if i % 2:
-                filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'frames', f"{img_idx}.png")
-                env.gym.write_viewer_image_to_file(env.viewer, filename)
-                img_idx += 1 
-        if MOVE_CAMERA:
-            camera_position += camera_vel * env.dt
-            env.set_camera(camera_position, camera_position + camera_direction)
+            # 初始命名变量
+            if i == 0:
+                lin_vel_x = 0.0  # 前进/后退速度
+                lin_vel_y = 0.0  # 侧移速度
+                ang_vel_yaw = 0.0  # 偏航角速度
+                heading = 0.0  # 预留
+            key = get_key()
+            # 速度步长
+            lin_step = 0.1
+            yaw_step = 0.1
+            # 按键映射
+            if key == 'w':
+                lin_vel_x += lin_step
+            elif key == 's':
+                lin_vel_x -= lin_step
+            elif key == 'a':
+                lin_vel_y += lin_step
+            elif key == 'd':
+                lin_vel_y -= lin_step
+            elif key == 'q':
+                ang_vel_yaw += yaw_step
+            elif key == 'e':
+                ang_vel_yaw -= yaw_step
+            elif key == 'z':
+                lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
+            # 限制范围
+            lin_vel_x = np.clip(lin_vel_x, -5.0, 5.0)
+            lin_vel_x = 1.5
+            lin_vel_y = np.clip(lin_vel_y, -1.5, 1.5)
+            # lin_vel_y = 1.0
+            ang_vel_yaw = np.clip(ang_vel_yaw, -2.0, 2.0)
+            # ang_vel_yaw = 1.0
+            heading = np.clip(heading, -1.0, 1.0)
+            command = [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
+            import torch
+            env.commands[:] = torch.tensor(command, dtype=env.commands.dtype, device=env.commands.device)
+            print(f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f}", end="\r")
 
-        if ENABLE_LOGGING:
-            if i < stop_state_log:
-                logger.log_states(
-                    {
-                        'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale,
-                        'dof_pos': env.dof_pos[robot_index, joint_index].item(),
-                        'dof_vel': env.dof_vel[robot_index, joint_index].item(),
-                        'dof_vel_1': env.dof_vel[robot_index, 1].item(),
-                        'dof_vel_2': env.dof_vel[robot_index, 2].item(),
-                        'dof_torque': env.torques[robot_index, joint_index].item(),
-                        'dof_torque_1': env.torques[robot_index, 1].item(),
-                        'dof_torque_2': env.torques[robot_index, 2].item(),
-                        'command_x': env.commands[robot_index, 0].item(),
-                        'command_y': env.commands[robot_index, 1].item(),
-                        'command_yaw': env.commands[robot_index, 2].item(),
-                        'base_vel_x': env.base_lin_vel[robot_index, 0].item(),
-                        'base_vel_y': env.base_lin_vel[robot_index, 1].item(),
-                        'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
-                        'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
-                        'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy()
-                    }
-                )
-            elif i==stop_state_log:
-                logger.plot_states()
-            if  0 < i < stop_rew_log:
-                if infos["episode"]:
-                    num_episodes = torch.sum(env.reset_buf).item()
-                    if num_episodes>0:
-                        logger.log_rewards(infos["episode"], num_episodes)
-            elif i==stop_rew_log:
-                logger.print_rewards()
+            actions = policy(obs.detach())
+            obs, _, rews, dones, infos = env.step(actions.detach())
 
-        # Realtime management
-        if REALTIME_MODE:
-            step_end_time = time.time()
-            step_duration = step_end_time - step_start_time
-            
-            # Calculate realtime factor
-            realtime_factor = env.dt / step_duration if step_duration > 0 else float('inf')
-            realtime_factor = max(0.0, min(realtime_factor, 1.0))  # Clamp between 0 and 1
-            realtime_factor_window.append(realtime_factor)
-            
-            # Maintain window size
-            if len(realtime_factor_window) > realtime_factor_window_size:
-                realtime_factor_window.pop(0)
-            
-            # Print realtime factor periodically (disabled)
-            # current_time = time.time()
-            # if current_time - last_print_time >= print_interval:
-            #     avg_realtime_factor = np.mean(realtime_factor_window)
-            #     min_realtime_factor = np.min(realtime_factor_window)
-            #     max_realtime_factor = np.max(realtime_factor_window)
-            #     print(f"Step {i}: Realtime factor: {avg_realtime_factor:.2f}x "
-            #           f"(min: {min_realtime_factor:.2f}x, max: {max_realtime_factor:.2f}x)")
-            #     last_print_time = current_time
-            
-            # Sleep to maintain realtime if computation was faster than env.dt
-            sleep_time = env.dt - step_duration
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-        # If not realtime mode, run as fast as possible (no sleep)
+            torques_np = env.torques.detach().cpu().numpy()
+            dof_vel_np = env.dof_vel.detach().cpu().numpy()
+            for env_id in range(env.num_envs):
+                csv_writer.writerow([i, env_id, torques_np[env_id].tolist(), dof_vel_np[env_id].tolist()])
+            if i % 10 == 0:
+                csv_file.flush()
+
+            if RECORD_FRAMES:
+                if i % 2:
+                    filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'frames', f"{img_idx}.png")
+                    env.gym.write_viewer_image_to_file(env.viewer, filename)
+                    img_idx += 1 
+            if MOVE_CAMERA:
+                camera_position += camera_vel * env.dt
+                env.set_camera(camera_position, camera_position + camera_direction)
+
+            if ENABLE_LOGGING:
+                if i < stop_state_log:
+                    logger.log_states(
+                        {
+                            'dof_pos_target': actions[robot_index, joint_index].item() * env.cfg.control.action_scale +  env.default_dof_pos[robot_index, joint_index].item(),
+                            'dof_pos': env.dof_pos[robot_index, joint_index] .item(),
+                            'dof_vel': env.dof_vel[robot_index, joint_index].item(),
+                            'dof_vel_1': env.dof_vel[robot_index, 1].item(),
+                            'dof_vel_2': env.dof_vel[robot_index, 2].item(),
+                            'dof_torque': env.torques[robot_index, joint_index].item(),
+                            'dof_torque_1': env.torques[robot_index, 1].item(),
+                            'dof_torque_2': env.torques[robot_index, 2].item(),
+                            'command_x': env.commands[robot_index, 0].item(),
+                            'command_y': env.commands[robot_index, 1].item(),
+                            'command_yaw': env.commands[robot_index, 2].item(),
+                            'base_vel_x': env.base_lin_vel[robot_index, 0].item(),
+                            'base_vel_y': env.base_lin_vel[robot_index, 1].item(),
+                            'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
+                            'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
+                            'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy()
+                        }
+                    )
+                elif i==stop_state_log:
+                    logger.plot_states()
+                if  0 < i < stop_rew_log:
+                    if infos["episode"]:
+                        num_episodes = torch.sum(env.reset_buf).item()
+                        if num_episodes>0:
+                            logger.log_rewards(infos["episode"], num_episodes)
+                elif i==stop_rew_log:
+                    logger.print_rewards()
+
+            # Realtime management
+            if REALTIME_MODE:
+                step_end_time = time.time()
+                step_duration = step_end_time - step_start_time
+                
+                # Calculate realtime factor
+                realtime_factor = env.dt / step_duration if step_duration > 0 else float('inf')
+                realtime_factor = max(0.0, min(realtime_factor, 1.0))  # Clamp between 0 and 1
+                realtime_factor_window.append(realtime_factor)
+                
+                # Maintain window size
+                if len(realtime_factor_window) > realtime_factor_window_size:
+                    realtime_factor_window.pop(0)
+                
+                # Print realtime factor periodically (disabled)
+                # current_time = time.time()
+                # if current_time - last_print_time >= print_interval:
+                #     avg_realtime_factor = np.mean(realtime_factor_window)
+                #     min_realtime_factor = np.min(realtime_factor_window)
+                #     max_realtime_factor = np.max(realtime_factor_window)
+                #     print(f"Step {i}: Realtime factor: {avg_realtime_factor:.2f}x "
+                #           f"(min: {min_realtime_factor:.2f}x, max: {max_realtime_factor:.2f}x)")
+                #     last_print_time = current_time
+                
+                # Sleep to maintain realtime if computation was faster than env.dt
+                sleep_time = env.dt - step_duration
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+            # If not realtime mode, run as fast as possible (no sleep)
+    finally:
+        csv_file.close()
+        print(f"Torque/velocity CSV saved to: {csv_path}")
 
 if __name__ == '__main__':
     EXPORT_POLICY = True

@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 from multiprocessing import Process, Value
+import csv
 
 class Logger:
     def __init__(self, dt, output_root: Path = None):
@@ -43,6 +44,10 @@ class Logger:
         self.num_episodes = 0
         self.plot_process = None
         self.output_root = Path(output_root) if output_root is not None else None
+        self._joint_csv_file = None
+        self._joint_csv_writer = None
+        self._joint_csv_path = None
+        self._joint_log_steps = 0
 
     def log_state(self, key, value):
         self.state_log[key].append(value)
@@ -50,6 +55,42 @@ class Logger:
     def log_states(self, dict):
         for key, value in dict.items():
             self.log_state(key, value)
+
+    def _init_joint_csv(self):
+        if self._joint_csv_writer is not None:
+            return
+        play_data_dir = Path(__file__).resolve().parents[1] / "scripts" / "play_datas"
+        play_data_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._joint_csv_path = play_data_dir / f"joint_states_{timestamp}.csv"
+        self._joint_csv_file = open(self._joint_csv_path, "w", newline="")
+        self._joint_csv_writer = csv.writer(self._joint_csv_file)
+        self._joint_csv_writer.writerow(["step", "env_id", "dof_pos", "dof_vel", "dof_torque"])
+
+    def log_all_joint_states(self, step, dof_pos, dof_vel, dof_torque, flush_every=10):
+        """Log all joints' position/velocity/torque to scripts/play_datas.
+
+        Args:
+            step: int step index.
+            dof_pos/dof_vel/dof_torque: Tensor/ndarray, shape (num_envs, num_dofs) or (num_dofs,).
+            flush_every: flush interval in steps.
+        """
+        self._init_joint_csv()
+        pos_np = np.asarray(dof_pos)
+        vel_np = np.asarray(dof_vel)
+        torque_np = np.asarray(dof_torque)
+
+        if pos_np.ndim == 1:
+            self._joint_csv_writer.writerow([step, 0, pos_np.tolist(), vel_np.tolist(), torque_np.tolist()])
+        else:
+            env_id = 0
+            self._joint_csv_writer.writerow(
+                [step, env_id, pos_np[env_id].tolist(), vel_np[env_id].tolist(), torque_np[env_id].tolist()]
+            )
+
+        self._joint_log_steps += 1
+        if flush_every and self._joint_log_steps % flush_every == 0:
+            self._joint_csv_file.flush()
 
     def log_rewards(self, dict, num_episodes):
         for key, value in dict.items():
@@ -162,6 +203,7 @@ class Logger:
 
         print(f"Saved vector plots to: {output_dir}")
 
+   
     def _plot(self):
         nb_rows = 3
         nb_cols = 3
@@ -246,3 +288,8 @@ class Logger:
     def __del__(self):
         if self.plot_process is not None:
             self.plot_process.kill()
+        if self._joint_csv_file is not None:
+            try:
+                self._joint_csv_file.close()
+            except Exception:
+                pass
