@@ -26,12 +26,16 @@ class ElSpiderDataCollect(ElSpider):
             (self.num_envs, 66), dtype=torch.float32, device=self.device
         )
 
+    def reset_idx(self, env_ids):
+        super().reset_idx(env_ids)
+        self._latest_proprio_noise[env_ids] = 0.0
+
     # ------------------------------------------------------------------
     # Rich observation dict
     # ------------------------------------------------------------------
 
     def compute_observations(self):
-        """Match ElSpider.compute_observations while caching the sampled proprio noise."""
+        """Match ElSpider.compute_observations while caching sampled 66-dim proprio noise."""
         current_proprio = torch.cat(
             (
                 self.base_lin_vel * self.obs_scales.lin_vel,
@@ -44,28 +48,17 @@ class ElSpiderDataCollect(ElSpider):
             ),
             dim=-1,
         )
-
-        self.obs_history = torch.roll(self.obs_history, shifts=1, dims=1)
-        self.obs_history[:, 0] = current_proprio
-        self.obs_buf = self.obs_history.view(self.num_envs, -1)
-
-        privileged_obs = current_proprio.clone()
+        self.obs_buf = current_proprio.clone()
         if self.cfg.terrain.measure_heights:
             heights = torch.clip(
                 self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights,
                 -1,
                 1.0,
             ) * self.obs_scales.height_measurements
-            privileged_obs = torch.cat((privileged_obs, heights), dim=-1)
-
-        if hasattr(self, "privileged_obs_buf"):
-            self.privileged_obs_buf = privileged_obs
-
+            self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
         self._latest_proprio_noise.zero_()
         if self.add_noise:
-            obs_noise = (
-                2 * torch.rand_like(self.obs_buf) - 1
-            ) * self.noise_scale_vec[: self.obs_buf.shape[1]]
+            obs_noise = (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec[: self.obs_buf.shape[1]]
             self.obs_buf += obs_noise
             self._latest_proprio_noise.copy_(obs_noise[:, :66])
 
