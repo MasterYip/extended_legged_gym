@@ -28,18 +28,21 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
-from legged_gym.envs.elspider_air.mixed_terrains.elspider_air_rough_config import ElSpiderAirRoughCfg, ElSpiderAirRoughCfgPPO
+from legged_gym.envs.elspider_air.mixed_terrains.elspider_air_rough_config import LeggedRobotCfg, LeggedRobotCfgPPO
+from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 
 
-class El4090SpiderCfg(ElSpiderAirRoughCfg):
-    class env(ElSpiderAirRoughCfg.env):
+class El4090SpiderCfg(LeggedRobotCfg):
+    class env(LeggedRobotCfg.env):
+        num_envs = 4096
         num_observations = 66
+        num_actions = 18
         # Debug settings
         debug_mode = False  # Enable debug output
         debug_interval = 100  # Print debug info every N steps
         debug_env_id = 0  # Which environment to debug (0-based index)
 
-    class terrain(ElSpiderAirRoughCfg.terrain):
+    class terrain(LeggedRobotCfg.terrain):
         mesh_type = 'plane'  # "heightfield" # none, plane, heightfield or trimesh
         horizontal_scale = 0.05  # [m]
         vertical_scale = 0.005  # [m]
@@ -61,10 +64,10 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
 
-    class asset(ElSpiderAirRoughCfg.asset):
+    class asset(LeggedRobotCfg.asset):
         self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
 
-    class control(ElSpiderAirRoughCfg.control):
+    class control(LeggedRobotCfg.control):
         control_type = 'P'
         # PD Drive parameters matching Anymal:
         stiffness = {'HAA': 150., 
@@ -82,7 +85,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
 
 
-    class asset(ElSpiderAirRoughCfg.asset):
+    class asset(LeggedRobotCfg.asset):
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/el_4090/urdf/el_4090.urdf"
         name = "el_4090"
         foot_name = "FOOT"
@@ -94,7 +97,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         self_collisions = 0 # 1 to disable, 0 to enable...bitwise filter
         flip_visual_attachments = False
 
-    class init_state(ElSpiderAirRoughCfg.init_state):
+    class init_state(LeggedRobotCfg.init_state):
         pos = [0.0, 0.0, 0.45]  # x,y,z [m]
         default_joint_angles = {  # = target angles [rad] when action = 0.0
             "RF_HAA": 0.0,
@@ -120,7 +123,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         }
 
     ## Rewards V2 (faster&smoother gait, zzl-style)
-    class rewards(ElSpiderAirRoughCfg.rewards):
+    class rewards(LeggedRobotCfg.rewards):
         max_contact_force = 300.
         base_height_target = 0.47
         only_positive_rewards = False
@@ -163,7 +166,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
             feet_sync = -3
 
 
-    class commands(ElSpiderAirRoughCfg.commands):
+    class commands(LeggedRobotCfg.commands):
         curriculum = True
         max_curriculum = 3.0
         # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
@@ -173,13 +176,13 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
 
         small_command_radio = True
 
-        class ranges(ElSpiderAirRoughCfg.commands.ranges):
+        class ranges(LeggedRobotCfg.commands.ranges):
             lin_vel_x = [-2.5, 2.5]  # min max [m/s]
             lin_vel_y = [-1.5, 1.5]   # min max [m/s]
             ang_vel_yaw = [-2.0, 2.0]    # min max [rad/s]
             heading = [-3.14, 3.14]
 
-    class domain_rand(ElSpiderAirRoughCfg.domain_rand):
+    class domain_rand(LeggedRobotCfg.domain_rand):
         # on ground planes the friction combination mode is averaging, i.e total friction = (foot_friction + 1.)/2.
         randomize_friction = True
         friction_range = [0.3, 1.25]
@@ -189,7 +192,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         push_interval_s = 3
         max_push_vel_xy = 1.
 
-    class noise(ElSpiderAirRoughCfg.noise):
+    class noise(LeggedRobotCfg.noise):
         add_noise = True
         noise_level = 1.5  # scales other values
 
@@ -201,7 +204,7 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
             gravity = 0.05
             height_measurements = 0.1
 
-class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
+class El4090SpiderCfgPPO(LeggedRobotCfgPPO):
     seed = 1
     runner_class_name = 'OnPolicyRunner'
     class policy:
@@ -214,7 +217,7 @@ class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
         # rnn_hidden_size = 512
         # rnn_num_layers = 1
         
-    class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
+    class algorithm(LeggedRobotCfgPPO.algorithm):
         # Symmetry augmentation configuration
         class symmetry_cfg:
             use_data_augmentation = True

@@ -1,45 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: BSD-3-Clause
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 1. Redistributions of source code must retain the above copyright notice, this
-# list of conditions and the following disclaimer.
-#
-# 2. Redistributions in binary form must reproduce the above copyright notice,
-# this list of conditions and the following disclaimer in the documentation
-# and/or other materials provided with the distribution.
-#
-# 3. Neither the name of the copyright holder nor the names of its
-# contributors may be used to endorse or promote products derived from
-# this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Copyright (c) 2021 ETH Zurich, Nikita Rudin
-
-from legged_gym.envs.elspider_air.mixed_terrains.elspider_air_rough_config import ElSpiderAirRoughCfg, ElSpiderAirRoughCfgPPO
 from legged_gym.envs.el_4090.spider_nomal.el4090_spider_config import El4090SpiderCfg,El4090SpiderCfgPPO
-
-class El4090MammalCfg(ElSpiderAirRoughCfg):
-    class env(ElSpiderAirRoughCfg.env):
+class El4090MammalCfg(El4090SpiderCfg):
+    class env(El4090SpiderCfg.env):
         num_observations = 66
         # Debug settings
         debug_mode = False  # Enable debug output
         debug_interval = 100  # Print debug info every N steps
         debug_env_id = 0  # Which environment to debug (0-based index)
 
-    class terrain(ElSpiderAirRoughCfg.terrain):
+    class terrain(El4090SpiderCfg.terrain):
         mesh_type = 'plane'  # "heightfield" # none, plane, heightfield or trimesh
         horizontal_scale = 0.05  # [m]
         vertical_scale = 0.005  # [m]
@@ -61,10 +29,10 @@ class El4090MammalCfg(ElSpiderAirRoughCfg):
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
 
-    class asset(ElSpiderAirRoughCfg.asset):
+    class asset(El4090SpiderCfg.asset):
         self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
 
-    class control(ElSpiderAirRoughCfg.control):
+    class control(El4090SpiderCfg.control):
         control_type = 'P'
         # PD Drive parameters matching Anymal:
         stiffness = {'HAA': 150., 
@@ -82,7 +50,7 @@ class El4090MammalCfg(ElSpiderAirRoughCfg):
         actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
 
 
-    class asset(ElSpiderAirRoughCfg.asset):
+    class asset(El4090SpiderCfg.asset):
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/el_4090/urdf/el_4090.urdf"
         name = "el_4090"
         foot_name = "FOOT"
@@ -94,7 +62,7 @@ class El4090MammalCfg(ElSpiderAirRoughCfg):
         self_collisions = 0 # 1 to disable, 0 to enable...bitwise filter
         flip_visual_attachments = False
 
-    class init_state(ElSpiderAirRoughCfg.init_state):
+    class init_state(El4090SpiderCfg.init_state):
         pos = [0.0, 0.0, 0.75]  # x,y,z [m]
         default_joint_angles = {  # = target angles [rad] when action = 0.0
             "RF_HAA": 1.308,
@@ -127,7 +95,7 @@ class El4090MammalCfg(ElSpiderAirRoughCfg):
         }
 
     ## Rewards V2 (faster&smoother gait, zzl-style)
-    class rewards(ElSpiderAirRoughCfg.rewards):
+    class rewards(El4090SpiderCfg.rewards):
         max_contact_force = 350.
         base_height_target = 0.72
         only_positive_rewards = False
@@ -169,7 +137,7 @@ class El4090MammalCfg(ElSpiderAirRoughCfg):
             feet_sync = -1.
 
 
-    class commands(ElSpiderAirRoughCfg.commands):
+    class commands(El4090SpiderCfg.commands):
         curriculum = True
         max_curriculum = 3.0
         # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
@@ -179,13 +147,13 @@ class El4090MammalCfg(ElSpiderAirRoughCfg):
 
         small_command_radio = True
 
-        class ranges(ElSpiderAirRoughCfg.commands.ranges):
+        class ranges(El4090SpiderCfg.commands.ranges):
             lin_vel_x = [-2.0, 2.0]  # min max [m/s]
             lin_vel_y = [-1.0, 1.0]   # min max [m/s]
             ang_vel_yaw = [-1.0, 1.0]    # min max [rad/s]
             heading = [-3.14, 3.14]
 
-    class domain_rand(ElSpiderAirRoughCfg.domain_rand):
+    class domain_rand(El4090SpiderCfg.domain_rand):
         # on ground planes the friction combination mode is averaging, i.e total friction = (foot_friction + 1.)/2.
         randomize_friction = True
         friction_range = [0.3, 1.25]
@@ -195,7 +163,7 @@ class El4090MammalCfg(ElSpiderAirRoughCfg):
         push_interval_s = 3
         max_push_vel_xy = 1.
 
-    class noise(ElSpiderAirRoughCfg.noise):
+    class noise(El4090SpiderCfg.noise):
         add_noise = True
         noise_level = 1.5  # scales other values
 
@@ -220,7 +188,7 @@ class El4090MammalCfgPPO( El4090SpiderCfgPPO ):
         # rnn_hidden_size = 512
         # rnn_num_layers = 1
         
-    class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
+    class algorithm(El4090SpiderCfgPPO.algorithm):
         # Symmetry augmentation configuration
         class symmetry_cfg:
             use_data_augmentation = True
