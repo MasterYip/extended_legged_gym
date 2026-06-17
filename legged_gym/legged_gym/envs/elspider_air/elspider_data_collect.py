@@ -110,7 +110,7 @@ class ElSpiderDataCollect(ElSpider):
 
     def get_diffusion_observation(
         self,
-        scale_obs: bool = False,
+        scale_obs: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """Return a dict of raw physical state tensors for data collection.
 
