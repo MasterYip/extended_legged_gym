@@ -24,6 +24,7 @@ conda activate isaacgym
 | -------- | ------------- | ------------ | ---------- | ----- |
 | Normal EL4090 baseline | `el4090_spider_normal` | `el4090_flat_collect` | `[1., 0., 0.]` | Flat collect alias currently points to tripod-2 semantics |
 | Tripod 2-gait trot | `el4090_tripod2` | `el4090_tripod2_collect` | `[1., 0., 0.]` | Two synchronized tripod groups |
+| Tripod 2-gait trot (low) | `el4090_tripod2_low` | `el4090_tripod2_low_collect` | `[1., 0., 0.]` | Crouching tripod gait, base_height_target=0.22 |
 | Tripod 3-gait trot | `el4090_tripod3` | `el4090_tripod3_collect` | `[1., 1., 0.]` | Three alternating foot-pair groups |
 | High-standing trot | `el4090_high_stand_trot` | `el4090_high_stand_trot_collect` | `[1., 2., 0.]` | Taller base-height target and posture shaping |
 | Wave gait | `el4090_wave` | `el4090_wave_collect` | `[1., 2., 0.]` | Slow stable stepping with one-foot swing emphasis |
@@ -48,6 +49,7 @@ Use `3072` to `4096` envs as the default starting range. For first-pass debuggin
 
 ```bash
 python legged_gym/scripts/train.py --task=el4090_tripod2 --num_envs=4096 --headless --resume
+python legged_gym/scripts/train.py --task=el4090_tripod2_low --num_envs=4096 --headless --resume
 python legged_gym/scripts/train.py --task=el4090_tripod3 --num_envs=4096 --headless --resume
 python legged_gym/scripts/train.py --task=el4090_high_stand_trot --num_envs=4096 --headless --resume
 python legged_gym/scripts/train.py --task=el4090_wave --num_envs=4096 --headless --resume
@@ -61,6 +63,7 @@ Use this before long runs to validate task wiring:
 
 ```bash
 python legged_gym/scripts/train.py --task=el4090_tripod2 --num_envs=64 --headless --max_iterations=1
+python legged_gym/scripts/train.py --task=el4090_tripod2_low --num_envs=64 --headless --max_iterations=1
 python legged_gym/scripts/train.py --task=el4090_wave --num_envs=64 --headless --max_iterations=1
 python legged_gym/scripts/train.py --task=el4090_jump --num_envs=64 --headless --max_iterations=1
 ```
@@ -82,6 +85,7 @@ python legged_gym/scripts/play.py --task=el_4090_safe --num_envs=48 --checkpoint
 
 ```bash
 python legged_gym/scripts/play.py --task=el4090_tripod2 --num_envs=48 --checkpoint=-1 --resume
+python legged_gym/scripts/play.py --task=el4090_tripod2_low --num_envs=48 --checkpoint=-1 --resume
 python legged_gym/scripts/play.py --task=el4090_tripod3 --num_envs=48 --checkpoint=-1 --resume
 python legged_gym/scripts/play.py --task=el4090_high_stand_trot --num_envs=48 --checkpoint=-1 --resume
 python legged_gym/scripts/play.py --task=el4090_wave --num_envs=48 --checkpoint=-1 --resume
@@ -113,6 +117,12 @@ python scripts/data_collection_gym/collect.py \
     --tasks el4090_tripod2_collect \
     --checkpoints /path/to/el4090_tripod2.pt \
     --output data/legged_gym/el4090_tripod2.zarr \
+    --num_envs 256 --len_to_save 500000
+
+python scripts/data_collection_gym/collect.py \
+    --tasks el4090_tripod2_low_collect \
+    --checkpoints /path/to/el4090_tripod2_low.pt \
+    --output data/legged_gym/el4090_tripod2_low.zarr \
     --num_envs 256 --len_to_save 500000
 
 python scripts/data_collection_gym/collect.py \
