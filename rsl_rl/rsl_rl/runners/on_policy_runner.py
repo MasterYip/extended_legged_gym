@@ -21,8 +21,10 @@ from rsl_rl.modules import (
     EmpiricalNormalization,
     StudentTeacher,
     StudentTeacherRecurrent,
+    LidarPDActorCritic,
 )
 from rsl_rl.utils import store_code_state
+from rsl_rl.utils.lidar_wrapper import LidarWrapper
 
 # Global variable to control interface version support
 # Set to True to use old legged_gym interface (rsl_rl 1.0.2 style)
@@ -100,6 +102,19 @@ class OnPolicyRunner:
         # Setup observations and training type
         num_obs, num_privileged_obs = self._setup_observations()
 
+        #若启用Lidar感知, 预计算 wapped obs dim
+        self.lidar_wapper = None
+        self._lidar_wapper_needed = False
+        if self.use_old_interface and hasattr(self.env, 'cfg'):
+            env_cfg = self.env.cfg
+            if hasattr(env_cfg, 'pd_risknet') and getattr(env_cfg.pd_risknet, 'enabled', False):
+                p_cfg = self.policy_cfg
+                num_obs = (int(p_cfg.get("proprio_obs_dim", 48))
+                     + int(p_cfg.get("proximal_points", 256)) * 3
+                     + int(p_cfg.get("distal_history_length", 10))
+                     * int(p_cfg.get("distal_points", 128)) * 3)
+            self._lidar_wrapper_needed = True
+
         # Initialize policy
         policy = self._initialize_policy(num_obs, num_privileged_obs)
 
@@ -128,6 +143,20 @@ class OnPolicyRunner:
         # Initialize environment if using old interface
         if self.use_old_interface:
             self._initialize_old_interface()
+
+        if self._lidar_wrapper_needed:
+            env_cfg = self.env.cfg
+            pd_cfg = env_cfg.pd_risknet
+            self.lidar_wrapper = LidarWrapper(
+                num_envs=self.env.num_envs,
+                num_lidar_points=int(pd_cfg.num_lidar_points),
+                distal_history_length=int(self.policy_cfg.get("distal_history_length", 10)),
+                proximal_points=int(self.policy_cfg.get("proximal_points", 256)),
+                distal_points=int(self.policy_cfg.get("distal_points", 128)),
+                phi_threshold_deg=float(pd_cfg.split_theta_deg),
+                proprio_dim=int(self.policy_cfg.get("proprio_obs_dim", 48)),
+                device=self.device,
+            )
 
         if self.training_type == "distillation":
             teacher_model_path = self.cfg.get("teacher_model_path", None)
@@ -363,6 +392,9 @@ class OnPolicyRunner:
         # Get initial observations
         obs, privileged_obs = self._get_observations()
         obs, privileged_obs = obs.to(self.device), privileged_obs.to(self.device)
+        if self.lidar_wrapper is not None:
+            init_dones = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
+            obs = self.lidar_wrapper.wrap_obs(obs, self.env.lidar_points_base, init_dones)
         self.train_mode()
 
         # Training loop setup
@@ -422,6 +454,10 @@ class OnPolicyRunner:
                     obs, rewards, dones = obs.to(self.device), rewards.to(self.device), dones.to(self.device)
                     privileged_obs = privileged_obs.to(self.device)
 
+                    # Apply LidarWrapper (before normalization)
+                    if self.lidar_wrapper is not None:
+                        obs = self.lidar_wrapper.wrap_obs(obs, self.env.lidar_points_base, dones)
+
                     # Apply normalization
                     obs = self.obs_normalizer(obs)
                     privileged_obs = self.privileged_obs_normalizer(privileged_obs)
@@ -450,9 +486,12 @@ class OnPolicyRunner:
 
                 # Compute returns for RL training
                 if hasattr(self, 'training_type') and self.training_type == "rl":
-                    # Clone the privileged_obs to get a normal tensor that can be used in autograd
-                    privileged_obs_for_returns = privileged_obs.clone()
-                    self.alg.compute_returns(privileged_obs_for_returns)
+                    if self.lidar_wrapper is not None:
+                        obs_for_returns = obs.clone()
+                        self.alg.compute_returns(obs_for_returns)
+                    else:
+                        privileged_obs_for_returns = privileged_obs.clone()
+                        self.alg.compute_returns(privileged_obs_for_returns)
 
             # Update policy
             loss_dict = self.alg.update()
