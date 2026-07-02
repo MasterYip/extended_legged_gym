@@ -131,6 +131,9 @@ from .el_4090.spider_nomal.el4090_mammal_config import El4090MammalCfg, El4090Ma
 from .el_4090.safe.el_4090_safe import EL_4090_Safe
 from .el_4090.safe.el_4090_safe_config import El4090SafeCfg, El4090SafeCfgPPO
 
+from .el_4090.envelope.el4090_envelope import EL_4090_Envelope
+from .el_4090.envelope.el4090_envelope_spider_config import El4090EnvelopeSpiderCfg, El4090EnvelopeSpiderCfgPPO
+
 
 task_registry.register("anymal_c_rough", Anymal, AnymalCRoughCfg(), AnymalCRoughCfgPPO())
 task_registry.register("anymal_c_flat", Anymal, AnymalCFlatCfg(), AnymalCFlatCfgPPO())
@@ -232,6 +235,7 @@ task_registry.register("el4090_wave", EL_4090, El4090WaveCfg(), El4090WaveCfgPPO
 task_registry.register("el4090_jump", EL_4090, El4090JumpCfg(), El4090JumpCfgPPO())
 task_registry.register("el4090_mammal", EL_4090, El4090MammalCfg(), El4090MammalCfgPPO())
 task_registry.register("el_4090_safe", EL_4090_Safe, El4090SafeCfg(), El4090SafeCfgPPO())
+task_registry.register("el4090_envelope", EL_4090_Envelope, El4090EnvelopeSpiderCfg(), El4090EnvelopeSpiderCfgPPO())
 
 # Data-collection environments
 from .elspider_air.elspider_data_collect import ElSpiderDataCollect
