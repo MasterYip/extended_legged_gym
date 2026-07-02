@@ -33,6 +33,19 @@ class El4090EnvelopeSpiderCfg(El4090SpiderCfg):
         min_height = 0.0                  # [m] minimum Z for bottom face
         max_height = None                 # [m] optional cap for top face (None = no cap)
         hexagon_radius_scale = 1.05       # scale factor for hexagon safety margin (>1 = padding)
+        # Body name substrings whose world-frame positions are included in
+        # the hexagon envelope.  The rigid-body state already contains 3D
+        # positions for every link; these filters select which links to use.
+        #
+        #  Body substring   Roughly corresponds to
+        #  ───────────────  ──────────────────────
+        #  FOOT             Foot endpoint
+        #  SHANK            Near KFE joint (knee) – often protrudes outward
+        #  THIGH            Near HFE joint (hip pitch)
+        #  HIP              Near HAA joint (hip roll)
+        #
+        # Default: feet + shanks + thighs to catch protruding knee joints.
+        envelope_body_filters = ['FOOT', 'SHANK']
 
     class viewer(El4090SpiderCfg.viewer):
         ref_env = 0

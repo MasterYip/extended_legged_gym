@@ -6,7 +6,7 @@ import math
 from isaacgym.torch_utils import *
 
 import torch
-from typing import Optional
+from typing import Optional, List
 
 from legged_gym.envs.el_4090.spider_nomal.el_4090 import EL_4090
 from legged_gym.envs.el_4090.envelope.el4090_envelope_spider_config import El4090EnvelopeSpiderCfg
@@ -18,12 +18,23 @@ class EL_4090_Envelope(EL_4090):
     """EL_4090 environment with hexagonal-prism envelope visualization and analysis.
 
     The envelope is a hexagonal prism defined by:
-      - A 2D hexagon in the XY plane computed from the 6 foot positions.
-      - Bottom face: at min foot height (clamped to *min_height*).
+      - A 2D hexagon in the XY plane computed from **all** body positions
+        matching ``envelope_body_filters`` (default: ``['FOOT']``).  Add
+        ``'SHANK'``, ``'THIGH'``, ``'HIP'`` to enclose protruding joints.
+      - Bottom face: at min body Z (clamped to *min_height*).
       - Top face: at ``base_height + height_bias``.
 
     Visualization is drawn via ``GymVisualizer`` during training when
     ``enable_envelope_vis`` is True in the config.
+
+    **Body-name to joint mapping** (EL_4090 rigid bodies)::
+
+        Body substring   Roughly corresponds to
+        ───────────────  ──────────────────────
+        FOOT             Foot endpoint
+        SHANK            KFE joint (knee)
+        THIGH            HFE joint (hip pitch)
+        HIP              HAA joint (hip roll)
 
     Usage::
 
@@ -37,23 +48,28 @@ class EL_4090_Envelope(EL_4090):
 
     def __init__(self, cfg: El4090EnvelopeSpiderCfg, sim_params, physics_engine,
                  sim_device, headless, task_name="el4090_spider_envelope"):
-        super().__init__(cfg, sim_params, physics_engine, sim_device, headless, task_name=task_name)
-
-        # -- Envelope calculator -------------------------------------------------
-        self._envelope_step_counter = 0
-        self._last_envelope: Optional[dict] = None
-
-        envelope_cfg = getattr(self.cfg, 'envelope', None)
+        # Parse envelope config BEFORE super().__init__ because _init_buffers()
+        # (called during super) needs self._envelope_body_filters.
+        envelope_cfg = getattr(cfg, 'envelope', None)
         if envelope_cfg is not None:
             height_bias = getattr(envelope_cfg, 'height_bias', 0.30)
             min_height = getattr(envelope_cfg, 'min_height', 0.0)
             max_height = getattr(envelope_cfg, 'max_height', None)
             radius_scale = getattr(envelope_cfg, 'hexagon_radius_scale', 1.05)
+            body_filters: List[str] = list(getattr(envelope_cfg, 'envelope_body_filters', ['FOOT']))
         else:
             height_bias = 0.30
             min_height = 0.0
             max_height = None
             radius_scale = 1.05
+            body_filters = ['FOOT']
+
+        self._envelope_body_filters = body_filters
+        self._envelope_body_indices: Optional[torch.Tensor] = None
+        self._envelope_step_counter = 0
+        self._last_envelope: Optional[dict] = None
+
+        super().__init__(cfg, sim_params, physics_engine, sim_device, headless, task_name=task_name)
 
         self.envelope_calculator = EnvelopeCalculator(
             height_bias=height_bias,
@@ -70,14 +86,49 @@ class EL_4090_Envelope(EL_4090):
             self.debug_viz = True
 
     # ------------------------------------------------------------------
+    # Buffer init
+    # ------------------------------------------------------------------
+
+    def _init_buffers(self):
+        """Extend parent to build the envelope body-index tensor."""
+        super()._init_buffers()
+
+        # Retrieve body names from the first actor (envs are already created)
+        body_names = self.gym.get_actor_rigid_body_names(
+            self.envs[0], self.actor_handles[0],
+        )
+
+        # Collect indices of rigid bodies whose name contains any filter
+        idx_list = []
+        for filter_str in self._envelope_body_filters:
+            for i, name in enumerate(body_names):
+                if filter_str in name:
+                    idx_list.append(i)
+        # Deduplicate while preserving order
+        seen = set()
+        idx_list = [i for i in idx_list if not (i in seen or seen.add(i))]
+
+        if len(idx_list) == 0:
+            # Fallback to feet only
+            idx_list = self.feet_indices.tolist()
+
+        self._envelope_body_indices = torch.tensor(
+            idx_list, dtype=torch.long, device=self.device, requires_grad=False,
+        )
+
+        print(f"[EL_4090_Envelope] envelope body filters: {self._envelope_body_filters}")
+        print(f"[EL_4090_Envelope] matched {len(idx_list)} bodies: "
+              f"{[body_names[i] for i in idx_list]}")
+
+    # ------------------------------------------------------------------
     # Public envelope API
     # ------------------------------------------------------------------
 
     def compute_envelope(self) -> dict:
         """Compute the hexagonal-prism envelope for all environments.
 
-        Uses the current foot positions and base position to derive the
-        2D hexagon and the top/bottom face heights.
+        Uses the positions of all bodies matching ``envelope_body_filters``
+        (not just feet) and the base position.
 
         Returns:
             dict with keys:
@@ -87,11 +138,11 @@ class EL_4090_Envelope(EL_4090):
                 top_height       -- [num_envs]
                 hex_center       -- [num_envs, 2]
         """
-        # foot_positions: [num_envs, 6, 3]  (world frame)
-        foot_pos = self.foot_positions  # already in world frame from post_physics_step
-        base_pos = self.base_pos        # [num_envs, 3]
+        # Gather world-frame positions of all envelope-relevant bodies
+        body_pos = self._get_envelope_body_positions()  # [num_envs, N, 3]
+        base_pos = self.base_pos                         # [num_envs, 3]
 
-        envelope = self.envelope_calculator.compute(foot_pos, base_pos)
+        envelope = self.envelope_calculator.compute(body_pos, base_pos)
         self._last_envelope = envelope
         return envelope
 
@@ -124,11 +175,30 @@ class EL_4090_Envelope(EL_4090):
         return volume
 
     # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _get_envelope_body_positions(self) -> torch.Tensor:
+        """Extract world-frame XYZ of all bodies matching the name filters.
+
+        Returns:
+            body_pos: [num_envs, N, 3] where N = len(self._envelope_body_indices).
+        """
+        # rigid_body_state: [num_envs * num_bodies, 13]
+        rb_state = self.rigid_body_state.view(
+            self.num_envs, self.num_bodies, 13,
+        )
+        indices = self._envelope_body_indices  # [N]
+        # Gather by index: [num_envs, N, 13] → slice positions [:, :, 0:3]
+        body_pos = rb_state[:, indices, 0:3]   # [num_envs, N, 3]
+        return body_pos
+
+    # ------------------------------------------------------------------
     # Visualization
     # ------------------------------------------------------------------
 
     def _draw_debug_vis(self):
-        """Override to add envelope visualization before calling parent."""
+        """Override to add envelope visualization after parent visuals."""
         # Draw parent debug visuals first (base vel arrows)
         super()._draw_debug_vis()
 
@@ -139,7 +209,7 @@ class EL_4090_Envelope(EL_4090):
         if self._envelope_step_counter % self._envelope_vis_interval != 0:
             return
 
-        # Refresh rigid body state so foot positions are current
+        # Refresh rigid body state so positions are current
         self.gym.refresh_rigid_body_state_tensor(self.sim)
 
         # Compute envelope from current state
@@ -200,6 +270,16 @@ class EL_4090_Envelope(EL_4090):
                 size=0.03,
             )
 
+            # -- Envelope body markers (small spheres per filtered body) --------
+            body_pos_np = self._get_envelope_body_positions()[env_idx].cpu().numpy()
+            for bp in body_pos_np:
+                self.vis.draw_point(
+                    env_idx,
+                    bp,
+                    color=(1.0, 0.65, 0.0),   # orange
+                    size=0.02,
+                )
+
     def _draw_envelope_info_overlay(self):
         """Log textual envelope information for debugging.
 
@@ -225,4 +305,5 @@ class EL_4090_Envelope(EL_4090):
         print(f"  Centre XY:     [{envelope['hex_center'][env_id, 0].item():.3f}, "
               f"{envelope['hex_center'][env_id, 1].item():.3f}]")
         print(f"  Volume:        {volume[env_id].item():.4f} m^3")
+        print(f"  Num bodies:    {len(self._envelope_body_indices)}")
         print("=" * 60 + "\n")
