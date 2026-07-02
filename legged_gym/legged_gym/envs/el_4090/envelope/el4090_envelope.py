@@ -161,25 +161,31 @@ class EL_4090_Envelope(EL_4090):
 
             # -- Bottom hexagon (cyan) -----------------------------------------
             for i, j in bottom_edges:
-                self.vis.draw_line(
+                self.vis.draw_boldline(
                     env_idx,
                     [bottom_np[i], bottom_np[j]],
+                    rad=0.01,
+                    resolution=8,
                     color=(0.0, 1.0, 1.0),
                 )
 
             # -- Top hexagon (magenta) ------------------------------------------
             for i, j in top_edges:
-                self.vis.draw_line(
+                self.vis.draw_boldline(
                     env_idx,
                     [top_np[i], top_np[j]],
+                    rad=0.01,
+                    resolution=8,
                     color=(1.0, 0.0, 1.0),
                 )
 
             # -- Vertical edges (yellow) ----------------------------------------
             for i, _ in vertical_edges:
-                self.vis.draw_line(
+                self.vis.draw_boldline(
                     env_idx,
                     [bottom_np[i], top_np[i]],
+                    rad=0.01,
+                    resolution=8,
                     color=(1.0, 1.0, 0.0),
                 )
 

@@ -29,7 +29,7 @@ class El4090EnvelopeSpiderCfg(El4090SpiderCfg):
           - Bottom face at min foot height (clamped to min_height).
           - Top face at base_height + height_bias.
         """
-        height_bias = 0.30               # [m] offset above base for top face
+        height_bias = 0.00               # [m] offset above base for top face
         min_height = 0.0                  # [m] minimum Z for bottom face
         max_height = None                 # [m] optional cap for top face (None = no cap)
         hexagon_radius_scale = 1.05       # scale factor for hexagon safety margin (>1 = padding)
