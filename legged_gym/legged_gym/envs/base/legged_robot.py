@@ -151,7 +151,6 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
 
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
             self._draw_debug_vis()
-            self.draw_foot_hip_positions()
 
     def check_termination(self):
         """ Check if environments need to be reset
@@ -890,7 +889,6 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
 
     def draw_foot_hip_positions(self):
         hip_pos=self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, [3,7,11,15,19,23], 0:3]
-        self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
         sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
         for i in range(self.num_envs):
