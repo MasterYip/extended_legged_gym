@@ -6,7 +6,7 @@ from legged_gym.envs.el_4090.spider_nomal.el4090_tripod2_config import (
 
 class El4090Tripod2CollectCfg(El4090Tripod2Cfg):
     class collect:
-        task_vec = [1.0, 0.0, 0.0]
+        task_vec = [1.0, 2.0, 0.0]
     class commands(El4090Tripod2Cfg.commands):
         curriculum = True
         max_curriculum = 3.0
