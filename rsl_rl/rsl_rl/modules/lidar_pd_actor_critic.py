@@ -179,6 +179,15 @@ class LidarPDActorCritic(nn.Module):
         return self.distribution.stddev
 
     @property
+    def cached_proximal_feature(self) -> torch.Tensor | None:
+        """act() 调用后有效的近端特征缓存。
+
+        生命周期: 同一 mini-batch 内 act() → evaluate() → get_auxiliary_loss() 有效。
+        PPO.update() 在 act() 之后通过此公开接口读取，显式传入 get_auxiliary_loss()。
+        """
+        return self._cached_proximal_feature
+
+    @property
     def entropy(self) -> torch.Tensor:
         return self.distribution.entropy().sum(dim=-1)
 
@@ -322,40 +331,29 @@ class LidarPDActorCritic(nn.Module):
         return self.actor(actor_latent)
 
     def evaluate(self, critic_observations, masks=None, hidden_states=None, **kwargs):
-        if masks is not None:
-            if self._cached_actor_latent is not None:
-                return self.critic(self._cached_actor_latent)
-            actor_latent = self._build_actor_latent(critic_observations, masks=masks)
-            return self.critic(actor_latent)
-        else:
-            if self._cached_actor_latent is not None:
-                return self.critic(self._cached_actor_latent)
-            expected_dim = (
-                self.proprio_obs_dim
-                + self.proximal_points * 3
-                + self.distal_history_length * self.distal_points * 3
-            )
-            if critic_observations.shape[-1] < expected_dim:
-                raise ValueError(
-                    f"evaluate() cold-start expects >= {expected_dim}-dim actor observations, "
-                    f"got {critic_observations.shape[-1]}."
-                )
-            actor_latent = self._build_actor_latent(critic_observations)
-            return self.critic(actor_latent)
+        if masks is not None and self._cached_actor_latent is not None:
+            # 训练模式: act() 刚在当前 mini-batch 上运行，缓存有效
+            return self.critic(self._cached_actor_latent)
+        # 推理模式 / compute_returns / 冷启动: 缓存可能过期，始终从输入构建
+        actor_latent = self._build_actor_latent(critic_observations, masks=masks)
+        return self.critic(actor_latent)
 
-    def get_auxiliary_loss(self, privileged_heights: torch.Tensor, masks: torch.Tensor | None = None) -> torch.Tensor:
-        if self._cached_proximal_feature is None:
-            return torch.zeros((), device=privileged_heights.device)
-        if self._cached_proximal_feature.numel() == 0:
+    def get_auxiliary_loss(
+        self,
+        privileged_heights: torch.Tensor,
+        proximal_feature: torch.Tensor | None = None,
+        masks: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if proximal_feature is None or proximal_feature.numel() == 0:
             return torch.zeros((), device=privileged_heights.device)
 
         if masks is not None and privileged_heights.dim() == 3:
             privileged_heights = unpad_trajectories(privileged_heights, masks)
 
-        if self._cached_proximal_feature.dim() == 3:
-            prox_feat = self._cached_proximal_feature[:, -1, :]
+        if proximal_feature.dim() == 3:
+            prox_feat = proximal_feature[:, -1, :]
         else:
-            prox_feat = self._cached_proximal_feature
+            prox_feat = proximal_feature
 
         pred = self.height_supervisor(prox_feat)
 
@@ -381,7 +379,8 @@ class LidarPDActorCritic(nn.Module):
             pred = pred[..., :min_dim]
             height_target = height_target[..., :min_dim]
 
-        return self.privileged_supervision_coef * torch.mean(torch.square(pred - height_target))
+        # 返回原始 MSE，权重由 PPO 的 aux_loss_coef 统一控制
+        return torch.mean(torch.square(pred - height_target))
 
     def load_state_dict(self, state_dict, strict=True):
         if 'critic.0.weight' in state_dict:

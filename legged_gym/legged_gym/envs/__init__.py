@@ -131,6 +131,10 @@ from .el_4090.spider_nomal.el4090_mammal_config import El4090MammalCfg, El4090Ma
 from .el_4090.safe.el_4090_safe import EL_4090_Safe
 from .el_4090.safe.el_4090_safe_config import El4090SafeCfg, El4090SafeCfgPPO
 
+from .el_4090.lidar.el_4090_lidar import EL_4090_Lidar
+from .el_4090.lidar.el_4090_lidar_config import El4090LidarCfg, El4090LidarCfgPPO
+from .el_4090.lidar.el_4090_lidar_tripod2_low_config import El4090LidarTripod2LowCfg, El4090LidarTripod2LowCfgPPO
+
 
 task_registry.register("anymal_c_rough", Anymal, AnymalCRoughCfg(), AnymalCRoughCfgPPO())
 task_registry.register("anymal_c_flat", Anymal, AnymalCFlatCfg(), AnymalCFlatCfgPPO())
@@ -232,6 +236,9 @@ task_registry.register("el4090_wave", EL_4090, El4090WaveCfg(), El4090WaveCfgPPO
 task_registry.register("el4090_jump", EL_4090, El4090JumpCfg(), El4090JumpCfgPPO())
 task_registry.register("el4090_mammal", EL_4090, El4090MammalCfg(), El4090MammalCfgPPO())
 task_registry.register("el_4090_safe", EL_4090_Safe, El4090SafeCfg(), El4090SafeCfgPPO())
+# LiDAR perception environments
+task_registry.register("el4090_lidar", EL_4090_Lidar, El4090LidarCfg(), El4090LidarCfgPPO())
+task_registry.register("el4090_lidar_tripod2_low", EL_4090_Lidar, El4090LidarTripod2LowCfg(), El4090LidarTripod2LowCfgPPO())
 
 # Data-collection environments
 from .elspider_air.elspider_data_collect import ElSpiderDataCollect

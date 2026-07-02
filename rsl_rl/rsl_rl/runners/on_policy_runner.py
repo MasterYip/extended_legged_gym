@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import statistics
 import time
@@ -100,20 +101,24 @@ class OnPolicyRunner:
         self._configure_multi_gpu()
 
         # Setup observations and training type
+        # LiDAR 标志必须前置到 _setup_observations 之前，num_obs 重算保持在之后
+        self.lidar_wrapper = None
+        self._lidar_wrapper_needed = (
+            self.use_old_interface
+            and hasattr(self.env, 'cfg')
+            and hasattr(self.env.cfg, 'pd_risknet')
+            and getattr(self.env.cfg.pd_risknet, 'enabled', False)
+        )
+
         num_obs, num_privileged_obs = self._setup_observations()
 
-        #若启用Lidar感知, 预计算 wapped obs dim
-        self.lidar_wapper = None
-        self._lidar_wapper_needed = False
-        if self.use_old_interface and hasattr(self.env, 'cfg'):
-            env_cfg = self.env.cfg
-            if hasattr(env_cfg, 'pd_risknet') and getattr(env_cfg.pd_risknet, 'enabled', False):
-                p_cfg = self.policy_cfg
-                num_obs = (int(p_cfg.get("proprio_obs_dim", 48))
-                     + int(p_cfg.get("proximal_points", 256)) * 3
-                     + int(p_cfg.get("distal_history_length", 10))
-                     * int(p_cfg.get("distal_points", 128)) * 3)
-            self._lidar_wrapper_needed = True
+        # LiDAR: 用 wrapped obs dim 覆盖 env 报告的 num_obs
+        if self._lidar_wrapper_needed:
+            p_cfg = self.policy_cfg
+            num_obs = (int(p_cfg.get("proprio_obs_dim", 48))
+                 + int(p_cfg.get("proximal_points", 256)) * 3
+                 + int(p_cfg.get("distal_history_length", 10))
+                 * int(p_cfg.get("distal_points", 128)) * 3)
 
         # Initialize policy
         policy = self._initialize_policy(num_obs, num_privileged_obs)
@@ -156,6 +161,9 @@ class OnPolicyRunner:
                 phi_threshold_deg=float(pd_cfg.split_theta_deg),
                 proprio_dim=int(self.policy_cfg.get("proprio_obs_dim", 48)),
                 device=self.device,
+                # ↓ 修正排序坐标系（base frame → sensor frame）
+                sensor_offset_quat=getattr(self.env, "_sensor_offset_quat", None),
+                sensor_translation=getattr(self.env, "_sensor_translation", None),
             )
 
         if self.training_type == "distillation":
@@ -241,6 +249,11 @@ class OnPolicyRunner:
                 self.privileged_obs_type = None
                 num_privileged_obs = num_obs
 
+        # 检测是否需要 aux_obs 通道 (LiDAR 辅助高度监督)
+        self._aux_obs_dim = None
+        if self._lidar_wrapper_needed:
+            self._aux_obs_dim = num_privileged_obs
+
         return num_obs, num_privileged_obs
 
     def _initialize_policy(self, num_obs: int, num_privileged_obs: int):
@@ -256,8 +269,12 @@ class OnPolicyRunner:
                 # Fallback for old config style
                 policy_class = eval(self.cfg["policy_class_name"])
 
+        # LiDAR: critic 输入 = 完整观测 (与 actor 同维)
+        # 标准: critic 输入 = privileged_obs (可能不同维)
+        critic_obs_dim = num_obs if self._lidar_wrapper_needed else num_privileged_obs
+
         policy = policy_class(
-            num_obs, num_privileged_obs, self.env.num_actions, **self.policy_cfg
+            num_obs, critic_obs_dim, self.env.num_actions, **self.policy_cfg
         ).to(self.device)
 
         return policy
@@ -279,10 +296,37 @@ class OnPolicyRunner:
                 self.alg_cfg["rnd_cfg"]["weight"] *= self.env.unwrapped.step_dt
 
     def _setup_symmetry(self):
-        """Setup symmetry if configured."""
-        if "symmetry_cfg" in self.alg_cfg and self.alg_cfg["symmetry_cfg"] is not None:
-            # This is used by the symmetry function for handling different observation terms
-            self.alg_cfg["symmetry_cfg"]["_env"] = self.env
+        """Setup symmetry if configured.
+
+        When ``symmetry_kwargs`` is present in the symmetry config, extracts
+        runtime sensor parameters from the environment and binds them (along
+        with static dimension constants) to the symmetry function via
+        ``functools.partial``.  Tasks without ``symmetry_kwargs`` are
+        unaffected and keep the existing behaviour.
+        """
+        if "symmetry_cfg" not in self.alg_cfg or self.alg_cfg["symmetry_cfg"] is None:
+            return
+        self.alg_cfg["symmetry_cfg"]["_env"] = self.env
+
+        kwargs = self.alg_cfg["symmetry_cfg"].get("symmetry_kwargs", None)
+        if kwargs is not None:
+            kwargs = dict(kwargs)  # defensive copy
+
+            # Inject runtime sensor parameters from the environment.
+            for src_attr, dst_key in [
+                ("_sensor_offset_quat", "sensor_quat"),
+                ("_sensor_translation", "sensor_trans"),
+            ]:
+                if hasattr(self.env, src_attr):
+                    t = getattr(self.env, src_attr)
+                    kwargs[dst_key] = t[0:1].to(self.device)
+
+            func = self.alg_cfg["symmetry_cfg"]["data_augmentation_func"]
+            if isinstance(func, str):
+                from rsl_rl.utils.utils import string_to_callable
+                func = string_to_callable(func)
+            self.alg_cfg["symmetry_cfg"]["data_augmentation_func"] = \
+                functools.partial(func, **kwargs)
 
     def _initialize_algorithm(self, policy):
         """Initialize the algorithm."""
@@ -316,13 +360,25 @@ class OnPolicyRunner:
 
     def _initialize_storage(self, num_obs: int, num_privileged_obs: int):
         """Initialize rollout storage."""
+        # LiDAR: actor/critic 同维度，不重复分配 buffer
+        # 标准: 保留独立 privileged_obs buffer
+        if self._lidar_wrapper_needed:
+            critic_obs_shape = None    # generator fallback → 复用 observations
+        else:
+            critic_obs_shape = [num_privileged_obs]
+
+        aux_obs_shape = None
+        if hasattr(self, '_aux_obs_dim') and self._aux_obs_dim is not None:
+            aux_obs_shape = [self._aux_obs_dim]
+
         self.alg.init_storage(
             self.training_type,
             self.env.num_envs,
             self.num_steps_per_env,
             [num_obs],
-            [num_privileged_obs],
+            critic_obs_shape,
             [self.env.num_actions],
+            aux_obs_shape=aux_obs_shape,
         )
 
     def _setup_logging(self):
@@ -427,7 +483,12 @@ class OnPolicyRunner:
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
-                    actions = self.alg.act(obs, privileged_obs)
+                    if self._lidar_wrapper_needed:
+                        # LiDAR: critic 消费完整观测, privileged_obs 作为辅助监督
+                        actions = self.alg.act(obs, obs, privileged_obs)
+                    else:
+                        # 标准: critic 消费 privileged_obs
+                        actions = self.alg.act(obs, privileged_obs)
 
                     # Step environment
                     if self.use_old_interface:

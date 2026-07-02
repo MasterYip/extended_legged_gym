@@ -45,6 +45,7 @@ class PPO:
         symmetry_cfg: Optional[dict] = None,
         # Distributed training parameters
         multi_gpu_cfg: Optional[dict] = None,
+        aux_loss_coef=1.0,
     ):
         # device-related parameters
         self.device = device
@@ -114,8 +115,9 @@ class PPO:
         self.schedule = schedule
         self.learning_rate = learning_rate
         self.normalize_advantage_per_mini_batch = normalize_advantage_per_mini_batch
+        self.aux_loss_coef = aux_loss_coef
 
-    def init_storage(self, *args):
+    def init_storage(self, *args, aux_obs_shape=None):
         # Support both old and new interface signatures
         if len(args) == 5:
             # Old interface: init_storage(num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, actions_shape)
@@ -142,9 +144,10 @@ class PPO:
             actions_shape,
             rnd_state_shape,
             self.device,
+            aux_obs_shape=aux_obs_shape,
         )
 
-    def act(self, obs, critic_obs):
+    def act(self, obs, critic_obs, aux_obs=None):
         if self.policy.is_recurrent:
             self.transition.hidden_states = self.policy.get_hidden_states()
         # compute the actions and values
@@ -156,6 +159,7 @@ class PPO:
         # need to record obs and critic_obs before env.step()
         self.transition.observations = obs
         self.transition.privileged_observations = critic_obs
+        self.transition.aux_observations = aux_obs
         return self.transition.actions
 
     def process_env_step(self, rewards, dones, infos):
@@ -229,6 +233,7 @@ class PPO:
             hid_states_batch,
             masks_batch,
             rnd_state_batch,
+            aux_obs_batch,
         ) in generator:
 
             # number of augmentations per sample
@@ -253,6 +258,10 @@ class PPO:
                 critic_obs_batch, _ = data_augmentation_func(
                     obs=critic_obs_batch, actions=None, env=self.symmetry["_env"], obs_type="critic"
                 )
+                if aux_obs_batch is not None:
+                    aux_obs_batch, _ = data_augmentation_func(
+                        obs=aux_obs_batch, actions=None, env=self.symmetry["_env"], obs_type="auxiliary"
+                    )
                 # compute number of augmentations per sample
                 num_aug = int(obs_batch.shape[0] / original_batch_size)
                 # repeat the rest of the batch
@@ -368,6 +377,15 @@ class PPO:
                     loss += self.symmetry["mirror_loss_coeff"] * symmetry_loss
                 else:
                     symmetry_loss = symmetry_loss.detach()
+
+            # Auxiliary loss (general interface)
+            if hasattr(self.policy, 'get_auxiliary_loss') and aux_obs_batch is not None:
+                proximal_feature = self.policy.cached_proximal_feature if hasattr(self.policy, 'cached_proximal_feature') else None
+                if proximal_feature is not None:
+                    aux_loss = self.policy.get_auxiliary_loss(
+                        aux_obs_batch, proximal_feature, masks=masks_batch
+                    )
+                    loss += self.aux_loss_coef * aux_loss
 
             # Random Network Distillation loss
             if self.rnd:
