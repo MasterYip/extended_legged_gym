@@ -277,15 +277,16 @@ class LidarPDActorCritic(nn.Module):
         proprio, proximal, distal = self._split_obs(observations)
 
         if masks is not None and masks.numel() > 0:
-            # Training: flatten (T, B, ...) to (T*B, ...) for zero-init GRU per frame
+            # Training: flatten (T, B, ...) to (T*B, ...) for zero-init GRU per frame.
+            # Use chunked encoding to limit GRU peak memory (same as inference path).
             T_seq, B = proprio.shape[:2]
             prox_flat = proximal.reshape(T_seq * B, self.proximal_points, 3)
-            _, h_prox = self.proximal_gru(prox_flat)
-            prox_feat = h_prox.squeeze(0).reshape(T_seq, B, self.proximal_feature_dim)
+            prox_feat_flat = self._encode_proximal_chunked(prox_flat.unsqueeze(1)).squeeze(1)
+            prox_feat = prox_feat_flat.reshape(T_seq, B, self.proximal_feature_dim)
 
             dist_flat = distal.reshape(T_seq * B, self.distal_history_length * self.distal_points, 3)
-            _, h_dist = self.distal_gru(dist_flat)
-            dist_feat = h_dist.squeeze(0).reshape(T_seq, B, self.distal_feature_dim)
+            dist_feat_flat = self._encode_distal_chunked(dist_flat.unsqueeze(1)).squeeze(1)
+            dist_feat = dist_feat_flat.reshape(T_seq, B, self.distal_feature_dim)
 
             proprio = unpad_trajectories(proprio, masks)
             prox_feat = unpad_trajectories(prox_feat, masks)
