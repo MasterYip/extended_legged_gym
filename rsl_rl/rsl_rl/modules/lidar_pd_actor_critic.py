@@ -245,47 +245,62 @@ class LidarPDActorCritic(nn.Module):
         order = torch.argsort(key, dim=1)
         return torch.gather(points, 1, order.unsqueeze(-1).expand_as(points))
 
+    def _proximal_gru_hidden(self, x: torch.Tensor) -> torch.Tensor:
+        _, h = self.proximal_gru(x)
+        return h
+
+    def _distal_gru_hidden(self, x: torch.Tensor) -> torch.Tensor:
+        _, h = self.distal_gru(x)
+        return h
+
     def _encode_proximal_chunked(self, prox_points: torch.Tensor) -> torch.Tensor:
         B, T_prox, P, _ = prox_points.shape
-        out = torch.empty(B, T_prox, self.proximal_feature_dim,
-                          device=prox_points.device, dtype=prox_points.dtype)
         chunk_size = 128
+        outputs = []
         for start in range(0, B, chunk_size):
             end = min(start + chunk_size, B)
             chunk = prox_points[start:end]
             c = end - start
             chunk_seq = chunk.reshape(c * T_prox, P, 3)
-            _, h = self.proximal_gru(chunk_seq)
-            out[start:end] = h.squeeze(0).reshape(c, T_prox, -1)
-        return out
+            if torch.is_grad_enabled():
+                h = torch.utils.checkpoint.checkpoint(
+                    self._proximal_gru_hidden, chunk_seq, use_reentrant=False)
+            else:
+                _, h = self.proximal_gru(chunk_seq)
+            outputs.append(h.squeeze(0).reshape(c, T_prox, -1))
+        return torch.cat(outputs, dim=0)
 
     def _encode_distal_chunked(self, dist_points: torch.Tensor) -> torch.Tensor:
         B, T_dist, D, _ = dist_points.shape
-        out = torch.empty(B, T_dist, self.distal_feature_dim,
-                          device=dist_points.device, dtype=dist_points.dtype)
         chunk_size = 128
+        outputs = []
         for start in range(0, B, chunk_size):
             end = min(start + chunk_size, B)
             chunk = dist_points[start:end]
             c = end - start
             chunk_seq = chunk.reshape(c * T_dist, D, 3)
-            _, h = self.distal_gru(chunk_seq)
-            out[start:end] = h.squeeze(0).reshape(c, T_dist, -1)
-        return out
+            if torch.is_grad_enabled():
+                h = torch.utils.checkpoint.checkpoint(
+                    self._distal_gru_hidden, chunk_seq, use_reentrant=False)
+            else:
+                _, h = self.distal_gru(chunk_seq)
+            outputs.append(h.squeeze(0).reshape(c, T_dist, -1))
+        return torch.cat(outputs, dim=0)
 
     def _build_actor_latent(self, observations: torch.Tensor, masks: torch.Tensor | None = None):
         proprio, proximal, distal = self._split_obs(observations)
 
         if masks is not None and masks.numel() > 0:
-            # Training: flatten (T, B, ...) to (T*B, ...) for zero-init GRU per frame
+            # Recurrent path: flatten (T, B, ...) for zero-init GRU per frame.
+            # Uses chunked encoding (same as inference path) for memory safety.
             T_seq, B = proprio.shape[:2]
             prox_flat = proximal.reshape(T_seq * B, self.proximal_points, 3)
-            _, h_prox = self.proximal_gru(prox_flat)
-            prox_feat = h_prox.squeeze(0).reshape(T_seq, B, self.proximal_feature_dim)
+            prox_feat_flat = self._encode_proximal_chunked(prox_flat.unsqueeze(1)).squeeze(1)
+            prox_feat = prox_feat_flat.reshape(T_seq, B, self.proximal_feature_dim)
 
             dist_flat = distal.reshape(T_seq * B, self.distal_history_length * self.distal_points, 3)
-            _, h_dist = self.distal_gru(dist_flat)
-            dist_feat = h_dist.squeeze(0).reshape(T_seq, B, self.distal_feature_dim)
+            dist_feat_flat = self._encode_distal_chunked(dist_flat.unsqueeze(1)).squeeze(1)
+            dist_feat = dist_feat_flat.reshape(T_seq, B, self.distal_feature_dim)
 
             proprio = unpad_trajectories(proprio, masks)
             prox_feat = unpad_trajectories(prox_feat, masks)
