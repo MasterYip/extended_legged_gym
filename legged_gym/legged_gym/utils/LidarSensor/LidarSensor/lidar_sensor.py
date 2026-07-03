@@ -438,7 +438,6 @@ class LidarSensor(BaseSensor):
         
         # Convert to warp tensors
         self.local_dist = wp.from_torch(self.lidar_dist_tensor, dtype=wp.float32)
-        self.lidar_pixels_tensor = torch.zeros_like(self.lidar_tensor, device=self.device)
         self.lidar_warp_tensor = wp.from_torch(self.lidar_tensor, dtype=wp.vec3)
 
         # For height scanner, initialize additional tensors
