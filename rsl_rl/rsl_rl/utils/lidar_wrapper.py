@@ -73,6 +73,21 @@ class LidarWrapper:
             pts = _quat_apply(q.expand(B * N, 4), pts.reshape(-1, 3)).reshape(B, N, 3)
         return pts
 
+    def _from_sensor_frame(self, points_sensor: torch.Tensor) -> torch.Tensor:
+        """sensor frame -> base frame 逆变换。
+
+        _to_sensor_frame 的正向变换为: pts_sensor = conj * (pts_base - t)。
+        逆变换: pts_base = conj⁻¹ * pts_sensor + t。
+        """
+        if self._sensor_conj is not None:
+            q = _quat_conjugate(self._sensor_conj).to(points_sensor.device)
+            B, N = points_sensor.shape[:2]
+            pts = _quat_apply(q.expand(B * N, 4), points_sensor.reshape(-1, 3)).reshape(B, N, 3)
+        else:
+            pts = points_sensor
+        t = self._sensor_t.to(points_sensor.device)
+        return pts + t.unsqueeze(1)
+
     def _sort_by_angular_key(self, points: torch.Tensor) -> torch.Tensor:
         pts = self._to_sensor_frame(points)
         _, azimuth, phi = self._cart_to_sphere(pts)
@@ -122,11 +137,14 @@ class LidarWrapper:
             return out
         return selected
 
-    def _downsample_distal(self, points_sensor: torch.Tensor, mask: torch.Tensor, k: int) -> torch.Tensor:
+    def _downsample_distal(self, points_sensor: torch.Tensor, mask: torch.Tensor, k: int,
+                           azimuth: torch.Tensor | None = None,
+                           phi: torch.Tensor | None = None) -> torch.Tensor:
         B, N = points_sensor.shape[:2]
         device = points_sensor.device
 
-        _, azimuth, phi = self._cart_to_sphere(points_sensor)
+        if azimuth is None or phi is None:
+            _, azimuth, phi = self._cart_to_sphere(points_sensor)
 
         sort_key = torch.where(
             mask,
@@ -134,11 +152,9 @@ class LidarWrapper:
             torch.full_like(phi, float("inf")),
         )
         sorted_idx = torch.argsort(sort_key, dim=1)
-        idx_exp = sorted_idx.unsqueeze(-1).expand(-1, -1, 3)
-        sorted_pts = torch.gather(points_sensor, 1, idx_exp)
 
         counts = mask.sum(dim=1).clamp(min=1)
-        k_eff = min(k, int(sorted_pts.shape[1]))
+        k_eff = min(k, N)
 
         pos = torch.arange(k_eff, device=device).unsqueeze(0).expand(B, -1)
         denom = max(k_eff - 1, 1)
@@ -147,7 +163,8 @@ class LidarWrapper:
         ).long()
         uniform_pos = torch.minimum(uniform_pos, (counts - 1).unsqueeze(1))
 
-        selected = torch.gather(sorted_pts, 1, uniform_pos.unsqueeze(-1).expand(-1, -1, 3))
+        orig_indices = torch.gather(sorted_idx, 1, uniform_pos)
+        selected = torch.gather(points_sensor, 1, orig_indices.unsqueeze(-1).expand(-1, -1, 3))
 
         if k_eff < k:
             out = torch.zeros(B, k, 3, device=device)
@@ -169,7 +186,7 @@ class LidarWrapper:
         lidar_raw = obs_buf[:, self.proprio_dim:].reshape(B, -1, 3)
 
         pts_sensor = self._to_sensor_frame(lidar_raw)
-        _, _, phi = self._cart_to_sphere(pts_sensor)
+        _, azimuth, phi = self._cart_to_sphere(pts_sensor)
 
         valid_mask = lidar_raw.abs().sum(dim=-1) > 0
         proximal_mask = (phi >= self.phi_threshold_rad) & valid_mask
@@ -180,7 +197,9 @@ class LidarWrapper:
         prox_sorted = self._sort_by_angular_key(prox_fps)
 
         dist_k = self.distal_points
-        dist_down = self._downsample_distal(pts_sensor, distal_mask, dist_k)
+        dist_down = self._downsample_distal(pts_sensor, distal_mask, dist_k,
+                                            azimuth=azimuth, phi=phi)
+        dist_down = self._from_sensor_frame(dist_down)
         dist_sorted = self._sort_by_angular_key(dist_down)
 
         write_idx = (self._distal_frame_count % self.distal_history_length).long()
