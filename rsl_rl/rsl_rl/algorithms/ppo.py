@@ -252,12 +252,16 @@ class PPO:
                 # augmentation using symmetry
                 data_augmentation_func = self.symmetry["data_augmentation_func"]
                 # returned shape: [batch_size * num_aug, ...]
+                obs_batch_original = obs_batch
                 obs_batch, actions_batch = data_augmentation_func(
                     obs=obs_batch, actions=actions_batch, env=self.symmetry["_env"], obs_type="policy"
                 )
-                critic_obs_batch, _ = data_augmentation_func(
-                    obs=critic_obs_batch, actions=None, env=self.symmetry["_env"], obs_type="critic"
-                )
+                if critic_obs_batch is obs_batch_original:
+                    critic_obs_batch = obs_batch
+                else:
+                    critic_obs_batch, _ = data_augmentation_func(
+                        obs=critic_obs_batch, actions=None, env=self.symmetry["_env"], obs_type="critic"
+                    )
                 if aux_obs_batch is not None:
                     aux_obs_batch, _ = data_augmentation_func(
                         obs=aux_obs_batch, actions=None, env=self.symmetry["_env"], obs_type="auxiliary"
@@ -356,7 +360,7 @@ class PPO:
                     num_aug = int(obs_batch.shape[0] / original_batch_size)
 
                 # actions predicted by the actor for symmetrically-augmented observations
-                mean_actions_batch = self.policy.act_inference(obs_batch.detach().clone())
+                mean_actions_batch = self.policy.act_inference(obs_batch.detach())
 
                 # compute the symmetrically augmented actions
                 # note: we are assuming the first augmentation is the original one.
