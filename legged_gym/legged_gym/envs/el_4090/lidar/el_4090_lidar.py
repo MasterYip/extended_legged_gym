@@ -104,12 +104,6 @@ class EL_4090_Lidar(EL_4090):
         self._sector_safe = torch.zeros(
             self.num_envs, n_sec, device=self.device, dtype=torch.float,
         )
-        self._safe_distances = torch.full(
-            (self.num_envs, int(self.cfg.pd_risknet.num_lidar_points)),
-            float(self.cfg.pd_risknet.ray_max_distance),
-            device=self.device, dtype=torch.float,
-        )
-
     # ==================================================================
     # LiDAR sensor
     # ==================================================================
@@ -372,7 +366,6 @@ class EL_4090_Lidar(EL_4090):
 
         z_mask = is_ground | is_overhead
         dist = torch.where(z_mask, torch.full_like(dist, d_max), dist)
-        self._safe_distances.copy_(dist)
 
         # Per-sector min distance
         body_azimuth = torch.atan2(pts[..., 1], pts[..., 0])
