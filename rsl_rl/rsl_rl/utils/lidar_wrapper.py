@@ -12,7 +12,15 @@ def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     q_vec = q[..., :3]
     q_scalar = q[..., 3:4]
     t = 2.0 * torch.cross(q_vec, v, dim=-1)
-    return v + q_scalar * t + torch.cross(q_vec, t, dim=-1)
+
+    out = v.clone()
+    out.addcmul_(q_scalar, t)
+
+    cross_buf = torch.empty_like(t)
+    torch.cross(q_vec, t, dim=-1, out=cross_buf)
+    out.add_(cross_buf)
+
+    return out
 
 
 class LidarWrapper:
@@ -65,6 +73,8 @@ class LidarWrapper:
         return r, azimuth, phi
 
     def _to_sensor_frame(self, points_base: torch.Tensor) -> torch.Tensor:
+        if self._sensor_conj is None and (self._sensor_t == 0).all():
+            return points_base
         t = self._sensor_t.to(points_base.device)
         pts = points_base - t.unsqueeze(1)
         if self._sensor_conj is not None:
@@ -86,6 +96,8 @@ class LidarWrapper:
         else:
             pts = points_sensor
         t = self._sensor_t.to(points_sensor.device)
+        if (t == 0).all():
+            return pts
         return pts + t.unsqueeze(1)
 
     def _sort_by_angular_key(self, points: torch.Tensor) -> torch.Tensor:
@@ -124,11 +136,16 @@ class LidarWrapper:
         dists = torch.full((B, M), float("inf"), device=device)
         farthest = torch.argmax(padded.norm(dim=-1), dim=1)
 
+        diff_buf = torch.empty(B, M, 3, device=device)
+        d_buf = torch.empty(B, M, device=device)
+
         for i in range(k_eff):
             selected[:, i] = padded[torch.arange(B, device=device), farthest]
             centroid = selected[:, i:i + 1, :]
-            d = ((padded - centroid) ** 2).sum(dim=-1)
-            dists = torch.minimum(dists, d)
+            torch.sub(padded, centroid, out=diff_buf)
+            diff_buf.square_()
+            diff_buf.sum(dim=-1, out=d_buf)
+            torch.minimum(dists, d_buf, out=dists)
             farthest = torch.argmax(dists, dim=1)
 
         if k_eff < k:
