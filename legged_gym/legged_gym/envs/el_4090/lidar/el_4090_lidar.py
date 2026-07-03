@@ -67,10 +67,17 @@ class EL_4090_Lidar(EL_4090):
             (self.num_envs, n_pts), d_max, device=self.device,
             dtype=torch.float, requires_grad=False,
         )
-        self._clean_points_base = torch.zeros(
-            self.num_envs, n_pts, 3, device=self.device,
-            dtype=torch.float, requires_grad=False,
+        domain_rand_enabled = (
+            getattr(self.cfg.domain_rand, 'lidar_point_mask_ratio', 0.0) > 0.0 or
+            getattr(self.cfg.domain_rand, 'lidar_distance_noise_ratio', 0.0) > 0.0
         )
+        if domain_rand_enabled:
+            self._clean_points_base = torch.zeros(
+                self.num_envs, n_pts, 3, device=self.device,
+                dtype=torch.float, requires_grad=False,
+            )
+        else:
+            self._clean_points_base = self.lidar_points_base
 
     # ==================================================================
     # Sector safety buffers
@@ -349,7 +356,7 @@ class EL_4090_Lidar(EL_4090):
         sec_size = 2.0 * math.pi / n_sec
         d_max = float(self.cfg.pd_risknet.ray_max_distance)
 
-        dist = self._raw_distances.clone()
+        dist = self._raw_distances
         pts = self._clean_points_base
         n_points = pts.shape[1]
 

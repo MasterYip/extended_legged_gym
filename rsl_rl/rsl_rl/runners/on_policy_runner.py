@@ -552,6 +552,8 @@ class OnPolicyRunner:
                     else:
                         self.alg.compute_returns(privileged_obs)
 
+            del obs, privileged_obs
+
             # Update policy
             loss_dict = self.alg.update()
 
