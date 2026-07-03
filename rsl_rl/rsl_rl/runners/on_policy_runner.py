@@ -548,11 +548,9 @@ class OnPolicyRunner:
                 # Compute returns for RL training
                 if hasattr(self, 'training_type') and self.training_type == "rl":
                     if self.lidar_wrapper is not None:
-                        obs_for_returns = obs.clone()
-                        self.alg.compute_returns(obs_for_returns)
+                        self.alg.compute_returns(obs)
                     else:
-                        privileged_obs_for_returns = privileged_obs.clone()
-                        self.alg.compute_returns(privileged_obs_for_returns)
+                        self.alg.compute_returns(privileged_obs)
 
             # Update policy
             loss_dict = self.alg.update()
