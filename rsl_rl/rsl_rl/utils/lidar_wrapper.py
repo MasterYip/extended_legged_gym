@@ -144,7 +144,7 @@ class LidarWrapper:
             centroid = selected[:, i:i + 1, :]
             torch.sub(padded, centroid, out=diff_buf)
             diff_buf.square_()
-            diff_buf.sum(dim=-1, out=d_buf)
+            torch.sum(diff_buf, dim=-1, out=d_buf)
             torch.minimum(dists, d_buf, out=dists)
             farthest = torch.argmax(dists, dim=1)
 
