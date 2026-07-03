@@ -245,7 +245,10 @@ class RolloutStorage:
                 # Create the mini-batch
                 # -- Core
                 obs_batch = observations[batch_idx]
-                privileged_observations_batch = privileged_observations[batch_idx]
+                if privileged_observations is observations:
+                    privileged_observations_batch = obs_batch
+                else:
+                    privileged_observations_batch = privileged_observations[batch_idx]
                 actions_batch = actions[batch_idx]
 
                 # -- For PPO
