@@ -577,6 +577,13 @@ class OnPolicyRunner:
             # Clear episode infos
             ep_infos.clear()
 
+            # Re-acquire observations for next iteration's rollout
+            obs, privileged_obs = self._get_observations()
+            obs, privileged_obs = obs.to(self.device), privileged_obs.to(self.device)
+            if self.lidar_wrapper is not None:
+                init_dones = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
+                obs = self.lidar_wrapper.wrap_obs(obs, self.env.lidar_points_base, init_dones)
+
             # Save code state on first iteration
             if it == start_iter and not self.disable_logs:
                 self._save_code_state()
