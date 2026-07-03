@@ -95,62 +95,62 @@ def get_el4090_lidar_xsym_obs_act(
                 f"Expected one of: 'policy', 'critic', 'auxiliary'."
             )
 
-        obs_m = obs.clone()
-
-        # --- auxiliary path: height grid Y-flip only ---
+        # --- auxiliary path: height grid Y-flip only (no clone needed) ---
         if obs_type == "auxiliary":
-            obs_m = torch.flip(
+            obs_aug = torch.cat([obs, torch.flip(
                 obs.reshape(-1, height_grid_x_count, height_grid_y_count),
                 dims=[2],
-            ).reshape_as(obs)
-            obs_aug = torch.cat([obs, obs_m], dim=0)
+            ).reshape_as(obs)], dim=0)
             return obs_aug, _process_actions(actions, num_dof)
 
-        # --- proprioceptive sign flips ---
-        obs_m[:, 1] = -obs[:, 1]   # lin_vel y
-        obs_m[:, 3] = -obs[:, 3]   # ang_vel x
-        obs_m[:, 5] = -obs[:, 5]   # ang_vel z
-        obs_m[:, 7] = -obs[:, 7]   # projected_gravity y
-        obs_m[:, 10] = -obs[:, 10] # command lin_vel y
-        obs_m[:, 11] = -obs[:, 11] # command ang_vel yaw
+        # cat first: obs_aug[B:] starts as a copy of obs, then modify in-place
+        obs_aug = torch.cat([obs, obs], dim=0)
 
-        # --- joint swap (left <-> right, no sign negation) ---
+        B = obs.shape[0]
+
+        # --- proprioceptive sign flips (read from [:B], write negated to [B:]) ---
+        obs_aug[B:, 1] = -obs_aug[:B, 1]   # lin_vel y
+        obs_aug[B:, 3] = -obs_aug[:B, 3]   # ang_vel x
+        obs_aug[B:, 5] = -obs_aug[:B, 5]   # ang_vel z
+        obs_aug[B:, 7] = -obs_aug[:B, 7]   # projected_gravity y
+        obs_aug[B:, 10] = -obs_aug[:B, 10] # command lin_vel y
+        obs_aug[B:, 11] = -obs_aug[:B, 11] # command ang_vel yaw
+
+        # --- joint swap left<->right (read from [:B], write to [B:]) ---
         half_dof = num_dof // 2
         dof_start = 12
         # dof_pos
         dof_pos_end = dof_start + num_dof
-        obs_m[:, dof_start:dof_start + half_dof] = obs[:, dof_start + half_dof:dof_pos_end]
-        obs_m[:, dof_start + half_dof:dof_pos_end] = obs[:, dof_start:dof_start + half_dof]
+        obs_aug[B:, dof_start:dof_start + half_dof] = obs_aug[:B, dof_start + half_dof:dof_pos_end]
+        obs_aug[B:, dof_start + half_dof:dof_pos_end] = obs_aug[:B, dof_start:dof_start + half_dof]
 
         # dof_vel
         vel_start = dof_pos_end
         vel_end = vel_start + num_dof
-        obs_m[:, vel_start:vel_start + half_dof] = obs[:, vel_start + half_dof:vel_end]
-        obs_m[:, vel_start + half_dof:vel_end] = obs[:, vel_start:vel_start + half_dof]
+        obs_aug[B:, vel_start:vel_start + half_dof] = obs_aug[:B, vel_start + half_dof:vel_end]
+        obs_aug[B:, vel_start + half_dof:vel_end] = obs_aug[:B, vel_start:vel_start + half_dof]
 
         # prev_actions
         act_start = vel_end
         act_end = act_start + num_dof
-        obs_m[:, act_start:act_start + half_dof] = obs[:, act_start + half_dof:act_end]
-        obs_m[:, act_start + half_dof:act_end] = obs[:, act_start:act_start + half_dof]
+        obs_aug[B:, act_start:act_start + half_dof] = obs_aug[:B, act_start + half_dof:act_end]
+        obs_aug[B:, act_start + half_dof:act_end] = obs_aug[:B, act_start:act_start + half_dof]
 
-        # --- proximal LiDAR: Y-flip + angular-key resort ---
+        # --- proximal LiDAR: Y-flip on [B:] view, then sort, write back ---
         prox_start = proprio_dim
         prox_end = prox_start + prox_len
-        prox_flat = obs_m[:, prox_start:prox_end]
+        prox_flat = obs_aug[B:, prox_start:prox_end]
         prox_pts = prox_flat.reshape(-1, proximal_points, 3)
         prox_pts[:, :, 1] = -prox_pts[:, :, 1]
         prox_sorted = sort_points_by_angular_key(prox_pts, sensor_quat, sensor_trans)
-        obs_m[:, prox_start:prox_end] = prox_sorted.reshape_as(prox_flat)
+        obs_aug[B:, prox_start:prox_end] = prox_sorted.reshape_as(prox_flat)
 
-        # --- distal LiDAR: Y-flip + angular-key resort ---
-        dist_flat = obs_m[:, prox_end:]
+        # --- distal LiDAR: Y-flip on [B:] view, then sort, write back ---
+        dist_flat = obs_aug[B:, prox_end:]
         dist_pts = dist_flat.reshape(-1, distal_history_points, 3)
         dist_pts[:, :, 1] = -dist_pts[:, :, 1]
         dist_sorted = sort_points_by_angular_key(dist_pts, sensor_quat, sensor_trans)
-        obs_m[:, prox_end:] = dist_sorted.reshape_as(dist_flat)
-
-        obs_aug = torch.cat([obs, obs_m], dim=0)
+        obs_aug[B:, prox_end:] = dist_sorted.reshape_as(dist_flat)
     else:
         obs_aug = None
 
