@@ -831,6 +831,19 @@ class OnPolicyRunner:
                 self.obs_normalizer.to(device)
 
             def policy(x): return self.alg.policy.act_inference(self.obs_normalizer(x))  # noqa: E731
+
+        # Inject LidarWrapper so inference path matches training path.
+        # `lidar_pts` is captured by reference — updated each env.step().
+        if self.lidar_wrapper is not None:
+            lidar_w = self.lidar_wrapper
+            lidar_pts = self.env.lidar_points_base
+            base = policy
+
+            def policy(x):
+                dones = torch.zeros(x.shape[0], dtype=torch.bool, device=x.device)
+                wrapped = lidar_w.wrap_obs(x, lidar_pts, dones)
+                return base(wrapped)
+
         return policy
 
     def train_mode(self):
