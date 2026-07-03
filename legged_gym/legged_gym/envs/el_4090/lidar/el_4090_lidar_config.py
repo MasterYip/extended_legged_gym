@@ -100,8 +100,8 @@ class El4090LidarCfgPPO(El4090SpiderCfgPPO):
     """Base PPO config for EL_4090 LiDAR perception tasks."""
 
     class policy(El4090SpiderCfgPPO.policy):
-        actor_hidden_dims = [1024, 512, 256, 128]
-        critic_hidden_dims = [1024, 512, 256, 128]
+        actor_hidden_dims = [512, 256, 128]
+        critic_hidden_dims = [512, 256, 128]
         proximal_points = PD_PROXIMAL_POINTS
         distal_history_length = PD_DISTAL_HISTORY
         distal_points = PD_DISTAL_POINTS

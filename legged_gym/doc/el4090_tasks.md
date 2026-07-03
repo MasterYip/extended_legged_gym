@@ -83,6 +83,7 @@ python legged_gym/scripts/play.py --task=el_4090_safe --num_envs=48 --checkpoint
 ### 使用独显模式
 ```bash
 __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia python legged_gym/legged_gym/scripts/play.py --task=el4090_tripod2_low --num_envs=12 --checkpoint=-1
+__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json python legged_gym/legged_gym/scripts/play.py --task=el4090_lidar_tripod2_low --num_envs 8
 ```
 
 ### Behavior Policies
