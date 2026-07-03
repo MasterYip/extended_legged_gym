@@ -255,7 +255,7 @@ class LidarPDActorCritic(nn.Module):
 
     def _encode_proximal_chunked(self, prox_points: torch.Tensor) -> torch.Tensor:
         B, T_prox, P, _ = prox_points.shape
-        chunk_size = 256
+        chunk_size = 64
         outputs = []
         for start in range(0, B, chunk_size):
             end = min(start + chunk_size, B)
@@ -272,7 +272,7 @@ class LidarPDActorCritic(nn.Module):
 
     def _encode_distal_chunked(self, dist_points: torch.Tensor) -> torch.Tensor:
         B, T_dist, D, _ = dist_points.shape
-        chunk_size = 256
+        chunk_size = 64
         outputs = []
         for start in range(0, B, chunk_size):
             end = min(start + chunk_size, B)
