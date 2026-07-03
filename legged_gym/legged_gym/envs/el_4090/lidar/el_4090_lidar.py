@@ -43,6 +43,7 @@ class EL_4090_Lidar(EL_4090):
 
     def _init_buffers(self):
         super()._init_buffers()
+        self._lidar_done_this_step = False
         self._init_lidar_buffers()
         self._init_sector_buffers()
         self._init_lidar_sensor()
@@ -67,17 +68,6 @@ class EL_4090_Lidar(EL_4090):
             (self.num_envs, n_pts), d_max, device=self.device,
             dtype=torch.float, requires_grad=False,
         )
-        domain_rand_enabled = (
-            getattr(self.cfg.domain_rand, 'lidar_point_mask_ratio', 0.0) > 0.0 or
-            getattr(self.cfg.domain_rand, 'lidar_distance_noise_ratio', 0.0) > 0.0
-        )
-        if domain_rand_enabled:
-            self._clean_points_base = torch.zeros(
-                self.num_envs, n_pts, 3, device=self.device,
-                dtype=torch.float, requires_grad=False,
-            )
-        else:
-            self._clean_points_base = self.lidar_points_base
 
     # ==================================================================
     # Sector safety buffers
@@ -308,15 +298,16 @@ class EL_4090_Lidar(EL_4090):
             quat_1x4.expand(n_total, 4), points_sensor.reshape(-1, 3),
         ).reshape(self.num_envs, n_points, 3) + self._sensor_translation.unsqueeze(1)
 
-        # Save clean points (before domain rand) for reward computation
-        self._clean_points_base.copy_(points_base)
+        # Compute sector safety from clean points BEFORE domain randomization
+        self._compute_sector_safety_impl(points_base, dist)
 
-        # Domain randomization for network input
-        # Fixes #5: extracted to separate method
+        # Apply domain randomization for network input
         points_base, dist = self._apply_lidar_domain_rand(points_base, dist)
 
         self.lidar_points_base.copy_(points_base)
         self.raycast_distances.copy_(dist)
+
+        self._lidar_done_this_step = True
 
     def _apply_lidar_domain_rand(self, points_base, dist):
         """Point masking + distance noise for LiDAR domain randomization."""
@@ -350,14 +341,13 @@ class EL_4090_Lidar(EL_4090):
     # Sector safety
     # ==================================================================
 
-    def _compute_sector_safety(self):
+
+    def _compute_sector_safety_impl(self, pts: torch.Tensor, dist: torch.Tensor):
         cd_cfg = self.cfg.cmd_safe
         n_sec = int(self.cfg.pd_risknet.n_sectors)
         sec_size = 2.0 * math.pi / n_sec
         d_max = float(self.cfg.pd_risknet.ray_max_distance)
 
-        dist = self._raw_distances
-        pts = self._clean_points_base
         n_points = pts.shape[1]
 
         # Ground filter: world-frame z ≈ 0
@@ -427,8 +417,9 @@ class EL_4090_Lidar(EL_4090):
 
     def post_physics_step(self):
         super().post_physics_step()
-        self._update_lidar_history()
-        self._compute_sector_safety()
+        if not self._lidar_done_this_step:
+            self._update_lidar_history()
+        self._lidar_done_this_step = False
 
     # ==================================================================
     # Reset — Fixes #5: _reset_lidar_buffers extracted, no duplication
@@ -440,7 +431,6 @@ class EL_4090_Lidar(EL_4090):
             return
         d_max = float(self.cfg.pd_risknet.ray_max_distance)
         self.lidar_points_base[env_ids] = 0.0
-        self._clean_points_base[env_ids] = 0.0
         self.raycast_distances[env_ids] = d_max
         self._raw_distances[env_ids] = d_max
         self._update_lidar_history()
