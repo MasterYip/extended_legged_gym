@@ -390,7 +390,7 @@ class EL_4090_Lidar(EL_4090):
     # ==================================================================
 
     def compute_observations(self):
-        proprio_obs = torch.cat((
+        self.obs_buf = torch.cat((
             self.base_lin_vel * self.obs_scales.lin_vel,
             self.base_ang_vel * self.obs_scales.ang_vel,
             self.projected_gravity,
@@ -399,11 +399,7 @@ class EL_4090_Lidar(EL_4090):
             self.dof_vel * self.obs_scales.dof_vel,
             self.actions,
         ), dim=-1)
-
-        self.obs_buf = torch.cat((
-            proprio_obs,
-            self.lidar_points_base.reshape(self.num_envs, -1),
-        ), dim=-1)
+        # LiDAR data passed to wrap_obs via lidar_points_base parameter instead.
 
         if self.privileged_obs_buf is not None:
             self.privileged_obs_buf = self.measured_heights

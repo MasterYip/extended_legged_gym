@@ -200,7 +200,7 @@ class LidarWrapper:
         B = obs_buf.shape[0]
 
         proprio = obs_buf[:, :self.proprio_dim]
-        lidar_raw = obs_buf[:, self.proprio_dim:].reshape(B, -1, 3)
+        lidar_raw = lidar_points_base
 
         pts_sensor = self._to_sensor_frame(lidar_raw)
         _, azimuth, phi = self._cart_to_sphere(pts_sensor)
