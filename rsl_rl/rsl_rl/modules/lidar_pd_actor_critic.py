@@ -276,7 +276,7 @@ class LidarPDActorCritic(nn.Module):
     def _build_actor_latent(self, observations: torch.Tensor, masks: torch.Tensor | None = None):
         proprio, proximal, distal = self._split_obs(observations)
 
-        if masks is not None:
+        if masks is not None and masks.numel() > 0:
             # Training: flatten (T, B, ...) to (T*B, ...) for zero-init GRU per frame
             T_seq, B = proprio.shape[:2]
             prox_flat = proximal.reshape(T_seq * B, self.proximal_points, 3)
@@ -292,8 +292,8 @@ class LidarPDActorCritic(nn.Module):
             dist_feat = unpad_trajectories(dist_feat, masks)
         else:
             # Inference
-            prox_sorted = self._sort_by_spherical(proximal)
-            prox_feat_t = self._encode_proximal_chunked(prox_sorted.unsqueeze(1))
+            # proximal 点云已由 LidarWrapper 按球坐标排序，直接使用
+            prox_feat_t = self._encode_proximal_chunked(proximal.unsqueeze(1))
             prox_feat = prox_feat_t.squeeze(1)
 
             dist_feat_t = self._encode_distal_chunked(distal.unsqueeze(1))
@@ -332,8 +332,10 @@ class LidarPDActorCritic(nn.Module):
 
     def evaluate(self, critic_observations, masks=None, hidden_states=None, **kwargs):
         if masks is not None and self._cached_actor_latent is not None:
-            # 训练模式: act() 刚在当前 mini-batch 上运行，缓存有效
-            return self.critic(self._cached_actor_latent)
+            # 缓存命中：recurrent 模式 (masks.numel() > 0) 直接使用，
+            # feedforward 模式 (空 sentinel) 校验 batch size 一致性
+            if masks.numel() > 0 or critic_observations.shape[0] == self._cached_actor_latent.shape[0]:
+                return self.critic(self._cached_actor_latent)
         # 推理模式 / compute_returns / 冷启动: 缓存可能过期，始终从输入构建
         actor_latent = self._build_actor_latent(critic_observations, masks=masks)
         return self.critic(actor_latent)
