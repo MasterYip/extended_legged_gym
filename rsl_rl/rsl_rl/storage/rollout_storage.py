@@ -180,11 +180,11 @@ class RolloutStorage:
             self.returns[step] = advantage + self.values[step]
 
         # Compute the advantages
-        self.advantages = self.returns - self.values
+        torch.sub(self.returns, self.values, out=self.advantages)
         # Normalize the advantages if flag is set
         # This is to prevent double normalization (i.e. if per minibatch normalization is used)
         if normalize_advantage:
-            self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8)
+            self.advantages.sub_(self.advantages.mean()).div_(self.advantages.std() + 1e-8)
 
     # for distillation
     def generator(self):
@@ -272,7 +272,7 @@ class RolloutStorage:
                 yield obs_batch, privileged_observations_batch, actions_batch, \
                     target_values_batch, advantages_batch, returns_batch, \
                     old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, \
-                    (None, None), None, rnd_state_batch, aux_obs_batch
+                    (None, None), torch.empty(0, device=self.device), rnd_state_batch, aux_obs_batch
 
     # for reinfrocement learning with recurrent networks
     def recurrent_mini_batch_generator(self, num_mini_batches, num_epochs=8):
