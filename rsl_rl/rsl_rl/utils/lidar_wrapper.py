@@ -223,9 +223,9 @@ class LidarWrapper:
         self._distal_window[torch.arange(B, device=self.device), write_idx] = dist_sorted
         self._distal_frame_count += 1
 
-        fill_mask = self._distal_frame_count < self.distal_history_length
-        if fill_mask.any():
-            fill_envs = fill_mask.nonzero(as_tuple=False).squeeze(-1)
+        just_started = self._distal_frame_count == 1
+        if just_started.any():
+            fill_envs = just_started.nonzero(as_tuple=False).squeeze(-1)
             first_frame = self._distal_window[fill_envs, 0:1, :, :]
             self._distal_window[fill_envs] = first_frame.expand(-1, self.distal_history_length, -1, -1)
 
