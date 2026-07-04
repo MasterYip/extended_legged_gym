@@ -12,8 +12,10 @@ class El4090LidarTripod2LowCfg(El4090LidarCfg):
         default_joint_angles = {
             "RF_HAA": 0.0, "RM_HAA": 0.0, "RB_HAA": 0.0,
             "LF_HAA": 0.0, "LM_HAA": 0.0, "LB_HAA": 0.0,
+
             "RF_HFE": 0.0, "RM_HFE": 0.0, "RB_HFE": 0.0,
             "LF_HFE": 0.0, "LM_HFE": 0.0, "LB_HFE": 0.0,
+
             "RF_KFE": -0.0, "RM_KFE": -0.0, "RB_KFE": -0.0,
             "LF_KFE": -0.0, "LM_KFE": -0.0, "LB_KFE": -0.0,
         }
@@ -51,7 +53,6 @@ class El4090LidarTripod2LowCfg(El4090LidarCfg):
             gait_3_step = 0.0
 
             # Obstacle-avoidance rewards disabled for now.
-            cmd_safe_vel = 0.0
             sector_dist_penalty = 0.0
 
     class commands(El4090LidarCfg.commands):

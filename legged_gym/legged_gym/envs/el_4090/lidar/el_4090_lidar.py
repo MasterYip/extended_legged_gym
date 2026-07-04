@@ -34,7 +34,7 @@ class EL_4090_Lidar(EL_4090):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless,
                          task_name=task_name)
         # Fixes #9: debug_viz in __init__, not _init_buffers
-        self.debug_viz = getattr(cfg, "debug_viz", False)
+        self.debug_viz = getattr(cfg.env, "debug_viz", False)
 
     # ==================================================================
     # Buffer initialisation
@@ -416,6 +416,100 @@ class EL_4090_Lidar(EL_4090):
         if not self._lidar_done_this_step:
             self._update_lidar_history()
         self._lidar_done_this_step = False
+
+    # ==================================================================
+    # Debug visualization
+    # ==================================================================
+
+    def _draw_debug_vis(self):
+        """LiDAR point cloud: proximal (yellow), distal (red); velocity arrows; height grid boundary."""
+        if self.viewer is None:
+            return
+
+        self.gym.clear_lines(self.viewer)
+        env_id = 0
+
+        # ── Velocity arrows (from ElSpider, for all envs) ──
+        lin_vel = self.root_states[:, 7:10].cpu().numpy()
+        cmd_vel_world = quat_apply_yaw(self.base_quat, self.commands[:, :3]).cpu().numpy()
+        cmd_vel_world[:, 2] = 0.0
+        for i in range(self.num_envs):
+            base_pos = self.root_states[i, :3].cpu().numpy()
+            self.vis.draw_arrow(i, base_pos, base_pos + lin_vel[i], color=(0, 1, 0))
+            self.vis.draw_arrow(i, base_pos, base_pos + cmd_vel_world[i], color=(1, 0, 0))
+
+        # ── LiDAR points for env 0 ──
+        pts_base = self.lidar_points_base[env_id]
+        if pts_base.abs().sum() == 0:
+            return
+
+        # Transform to sensor frame for theta computation (manual inverse rotation)
+        sensor_q = self._sensor_offset_quat[env_id]
+        pts_centered = pts_base - self._sensor_translation[env_id].unsqueeze(0)
+        conj = sensor_q * torch.tensor([-1, -1, -1, 1], device=self.device)
+        conj_vec = conj[:3].unsqueeze(0).expand(pts_centered.shape[0], 3)
+        cross = 2.0 * torch.cross(conj_vec, pts_centered, dim=-1)
+        pts_sensor = pts_centered + conj[3] * cross + torch.cross(conj_vec, cross, dim=-1)
+
+        eps = 1e-8
+        theta = torch.atan2(pts_sensor[:, 2], torch.linalg.norm(pts_sensor[:, :2], dim=1) + eps)
+        split_rad = float(self.cfg.pd_risknet.split_theta_deg) * math.pi / 180.0
+        prox_mask = theta >= split_rad
+        dist_mask = ~prox_mask
+
+        # Transform to world frame
+        base_pos = self.base_pos[env_id].unsqueeze(0).repeat(pts_base.shape[0], 1)
+        base_quat = self.base_quat[env_id].unsqueeze(0).repeat(pts_base.shape[0], 1)
+        pts_world = base_pos + quat_apply(base_quat, pts_base)
+
+        # Filter invalid (no-hit / sky) points
+        d_max = float(self.cfg.pd_risknet.ray_max_distance)
+        valid_mask = self.raycast_distances[env_id] < (d_max - 0.001)
+
+        # Draw proximal (yellow)
+        prox_draw = prox_mask & valid_mask
+        prox_pts = pts_world[prox_draw].cpu().numpy()
+        if len(prox_pts) > 0:
+            prox_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
+            for p in prox_pts:
+                sphere_pose = gymapi.Transform(gymapi.Vec3(float(p[0]), float(p[1]), float(p[2])), r=None)
+                gymutil.draw_lines(prox_geom, self.gym, self.viewer, self.envs[env_id], sphere_pose)
+
+        # Draw distal (red)
+        dist_draw = dist_mask & valid_mask
+        dist_pts = pts_world[dist_draw].cpu().numpy()
+        if len(dist_pts) > 0:
+            dist_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 0, 0))
+            for p in dist_pts:
+                sphere_pose = gymapi.Transform(gymapi.Vec3(float(p[0]), float(p[1]), float(p[2])), r=None)
+                gymutil.draw_lines(dist_geom, self.gym, self.viewer, self.envs[env_id], sphere_pose)
+
+        # ── Height grid boundary (green rectangle in world XY plane) ──
+        hx = self._height_grid_x
+        hy = self._height_grid_y
+        nx, ny = len(hx), len(hy)
+        boundary = []
+        boundary.extend([(hx[i].item(), hy[0].item(), 0.0) for i in range(nx)])
+        boundary.extend([(hx[-1].item(), hy[j].item(), 0.0) for j in range(1, ny)])
+        boundary.extend([(hx[i].item(), hy[-1].item(), 0.0) for i in range(nx - 2, -1, -1)])
+        boundary.extend([(hx[0].item(), hy[j].item(), 0.0) for j in range(ny - 2, 0, -1)])
+        b_pts = torch.tensor(boundary, device=self.device, dtype=torch.float)
+        b_quat = self.base_quat[env_id].unsqueeze(0).expand(b_pts.shape[0], 4)
+        b_pos = self.base_pos[env_id, :3].unsqueeze(0).expand(b_pts.shape[0], 3)
+        b_world = quat_apply_yaw(b_quat, b_pts) + b_pos
+        b_world[:, 2] = 0.0
+        b_list = b_world.cpu().numpy().tolist()
+        idx_bl = 0
+        idx_br = nx - 1
+        idx_tr = nx - 1 + ny - 1
+        idx_tl = nx - 1 + ny - 1 + nx - 1
+        corners = [b_list[idx_bl], b_list[idx_br], b_list[idx_tr], b_list[idx_tl]]
+        for i in range(4):
+            self.vis.draw_boldline(env_id, [corners[i], corners[(i + 1) % 4]],
+                                   rad=0.01, resolution=6, color=(0, 1, 0))
+
+    def draw_foot_hip_positions(self):
+        """Suppressed: clear_lines here would wipe LiDAR debug viz drawn in _draw_debug_vis."""
 
     # ==================================================================
     # Reset — Fixes #5: _reset_lidar_buffers extracted, no duplication
