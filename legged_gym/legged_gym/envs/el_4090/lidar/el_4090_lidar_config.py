@@ -116,6 +116,7 @@ class El4090LidarCfgPPO(El4090SpiderCfgPPO):
         gradient_checkpointing_distal = True     # 远端,1280步×64维
 
     class algorithm(El4090SpiderCfgPPO.algorithm):
+        use_amp = True
         class symmetry_cfg:
             use_data_augmentation = True
             use_mirror_loss = True

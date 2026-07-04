@@ -774,6 +774,9 @@ class OnPolicyRunner:
             "iter": self.current_learning_iteration,
             "infos": infos,
         }
+        # -- Save AMP scaler state if used
+        if hasattr(self.alg, 'scaler') and self.alg.scaler is not None:
+            saved_dict["scaler_state_dict"] = self.alg.scaler.state_dict()
         # -- Save RND model if used
         if self.alg.rnd:
             saved_dict["rnd_state_dict"] = self.alg.rnd.state_dict()
@@ -809,6 +812,10 @@ class OnPolicyRunner:
                 # an rl training. Thus the actor normalizer is loaded for the teacher model. The student's normalizer
                 # is not loaded, as the observation space could differ from the previous rl training.
                 self.privileged_obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
+        # -- load AMP scaler state if used
+        if hasattr(self.alg, 'scaler') and self.alg.scaler is not None \
+                and "scaler_state_dict" in loaded_dict:
+            self.alg.scaler.load_state_dict(loaded_dict["scaler_state_dict"])
         # -- load optimizer if used
         if load_optimizer and resumed_training:
             # -- algorithm optimizer
