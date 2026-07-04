@@ -82,6 +82,7 @@ class LidarPDActorCritic(nn.Module):
         privileged_supervision_coef: float = 1.0,
         sensor_offset_rpy: list[float] | None = None,
         sensor_offset_pos: list[float] | None = None,
+        gradient_checkpointing: bool = True,
         **kwargs,
     ):
         if kwargs:
@@ -101,6 +102,7 @@ class LidarPDActorCritic(nn.Module):
         self.privileged_critic_dim = int(privileged_critic_dim)
         self.privileged_supervision_coef = float(privileged_supervision_coef)
         self.num_actions = num_actions
+        self.gradient_checkpointing = gradient_checkpointing
 
         self._sensor_conj: torch.Tensor | None = None
         if sensor_offset_rpy is not None and any(v != 0.0 for v in sensor_offset_rpy):
@@ -262,7 +264,7 @@ class LidarPDActorCritic(nn.Module):
             chunk = prox_points[start:end]
             c = end - start
             chunk_seq = chunk.reshape(c * T_prox, P, 3)
-            if torch.is_grad_enabled():
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
                 h = torch.utils.checkpoint.checkpoint(
                     self._proximal_gru_hidden, chunk_seq, use_reentrant=False)
             else:
@@ -279,7 +281,7 @@ class LidarPDActorCritic(nn.Module):
             chunk = dist_points[start:end]
             c = end - start
             chunk_seq = chunk.reshape(c * T_dist, D, 3)
-            if torch.is_grad_enabled():
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
                 h = torch.utils.checkpoint.checkpoint(
                     self._distal_gru_hidden, chunk_seq, use_reentrant=False)
             else:

@@ -217,7 +217,7 @@ class LidarWrapper:
         dist_down = self._downsample_distal(pts_sensor, distal_mask, dist_k,
                                             azimuth=azimuth, phi=phi)
         dist_down = self._from_sensor_frame(dist_down)
-        dist_sorted = self._sort_by_angular_key(dist_down)
+        dist_sorted = dist_down
 
         write_idx = (self._distal_frame_count % self.distal_history_length).long()
         self._distal_window[torch.arange(B, device=self.device), write_idx] = dist_sorted
