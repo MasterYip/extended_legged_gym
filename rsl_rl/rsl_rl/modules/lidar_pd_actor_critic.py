@@ -287,7 +287,7 @@ class LidarPDActorCritic(nn.Module):
             outputs.append(h.squeeze(0).reshape(c, T_dist, -1))
         return torch.cat(outputs, dim=0)
 
-    def _build_actor_latent(self, observations: torch.Tensor, masks: torch.Tensor | None = None):
+    def _build_actor_latent(self, observations: torch.Tensor, masks: torch.Tensor | None = None, *, cache: bool = True):
         proprio, proximal, distal = self._split_obs(observations)
 
         if masks is not None and masks.numel() > 0:
@@ -316,8 +316,9 @@ class LidarPDActorCritic(nn.Module):
 
         actor_latent = torch.cat((proprio, prox_feat, dist_feat), dim=-1)
 
-        self._cached_proximal_feature = prox_feat
-        self._cached_actor_latent = actor_latent
+        if cache:
+            self._cached_proximal_feature = prox_feat
+            self._cached_actor_latent = actor_latent
         return actor_latent
 
     def update_distribution(self, observations, masks=None, hidden_states=None):
@@ -342,7 +343,7 @@ class LidarPDActorCritic(nn.Module):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
     def act_inference(self, observations):
-        actor_latent = self._build_actor_latent(observations)
+        actor_latent = self._build_actor_latent(observations, cache=False)
         return self.actor(actor_latent)
 
     def evaluate(self, critic_observations, masks=None, hidden_states=None, **kwargs):
@@ -381,15 +382,14 @@ class LidarPDActorCritic(nn.Module):
 
         actual_dim = priv_obs.shape[-1]
         if actual_dim == self.privileged_height_dim:
+            # EL_4090 LiDAR / Go2: privileged_obs 就是纯高度网格
             height_target = priv_obs
-        elif actual_dim == self.privileged_critic_dim:
+        elif actual_dim > self.privileged_height_dim:
+            # Anymal / ElSpider 教师约定: 高度网格总是在 privileged_obs 的末尾
             height_target = priv_obs[..., -self.privileged_height_dim:]
         else:
-            if actual_dim >= self.privileged_height_dim:
-                height_target = priv_obs[..., -self.privileged_height_dim:]
-            else:
-                print(f"[WARNING] Aux loss skip: actual dim {actual_dim}, expected {self.privileged_height_dim}")
-                return torch.zeros((), device=privileged_heights.device)
+            print(f"[WARNING] Aux loss skip: actual dim {actual_dim}, expected {self.privileged_height_dim}")
+            return torch.zeros((), device=privileged_heights.device)
 
         if pred.shape[-1] != height_target.shape[-1]:
             min_dim = min(pred.shape[-1], height_target.shape[-1])
