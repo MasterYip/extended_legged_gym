@@ -112,7 +112,8 @@ class El4090LidarCfgPPO(El4090SpiderCfgPPO):
         privileged_height_dim = PD_PRIV_HEIGHT_DIM
         privileged_critic_dim = PD_PRIV_HEIGHT_DIM
         privileged_supervision_coef = 1.0
-        gradient_checkpointing = True   # False 可加速训练（多占显存）
+        gradient_checkpointing_proximal = True   # 近端,256步×187维
+        gradient_checkpointing_distal = True     # 远端,1280步×64维
 
     class algorithm(El4090SpiderCfgPPO.algorithm):
         class symmetry_cfg:

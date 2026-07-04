@@ -72,7 +72,8 @@ class El4090LidarTripod2LowCfg(El4090LidarCfg):
 
 class El4090LidarTripod2LowCfgPPO(El4090LidarCfgPPO):
     class policy(El4090LidarCfgPPO.policy):
-        gradient_checkpointing = False   # False 可加速训练（多占显存）
+        gradient_checkpointing_proximal = False  # 256步×187维，显存小，可关
+        gradient_checkpointing_distal = True     # 1280步×64维，显存大，保持开
         
     class runner(El4090LidarCfgPPO.runner):
         experiment_name = "el_4090_lidar_tripod2_low"
