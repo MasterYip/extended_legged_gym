@@ -208,7 +208,7 @@ class PPO:
         else:
             mean_rnd_loss = None
         # -- Symmetry loss
-        if self.symmetry:
+        if self.symmetry and self.symmetry.get("use_mirror_loss", False):
             mean_symmetry_loss = 0
         else:
             mean_symmetry_loss = None
@@ -348,7 +348,8 @@ class PPO:
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
 
             # Symmetry loss
-            if self.symmetry:
+            symmetry_loss = None
+            if self.symmetry and self.symmetry.get("use_mirror_loss", False):
                 # obtain the symmetric actions
                 # if we did augmentation before then we don't need to augment again
                 if not self.symmetry["use_data_augmentation"]:
@@ -376,11 +377,7 @@ class PPO:
                 symmetry_loss = mse_loss(
                     mean_actions_batch[original_batch_size:], actions_mean_symm_batch.detach()[original_batch_size:]
                 )
-                # add the loss to the total loss
-                if self.symmetry["use_mirror_loss"]:
-                    loss += self.symmetry["mirror_loss_coeff"] * symmetry_loss
-                else:
-                    symmetry_loss = symmetry_loss.detach()
+                loss += self.symmetry["mirror_loss_coeff"] * symmetry_loss
 
             # Auxiliary loss (general interface)
             if hasattr(self.policy, 'get_auxiliary_loss') and aux_obs_batch is not None:
@@ -429,7 +426,7 @@ class PPO:
             if mean_rnd_loss is not None:
                 mean_rnd_loss += rnd_loss.item()
             # -- Symmetry loss
-            if mean_symmetry_loss is not None:
+            if mean_symmetry_loss is not None and symmetry_loss is not None:
                 mean_symmetry_loss += symmetry_loss.item()
 
         # -- For PPO
@@ -454,7 +451,7 @@ class PPO:
         }
         if self.rnd:
             loss_dict["rnd"] = mean_rnd_loss
-        if self.symmetry:
+        if mean_symmetry_loss is not None:
             loss_dict["symmetry"] = mean_symmetry_loss
 
         return loss_dict
