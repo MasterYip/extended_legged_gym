@@ -19,8 +19,8 @@ PD_RAY_MAX_DISTANCE = 10.0
 # Height measurement grid
 MEASURED_GRID_X_COUNT = 17
 MEASURED_GRID_Y_COUNT = 11
-MEASURED_GRID_X_RANGE = [-1.0, 1.0]
-MEASURED_GRID_Y_RANGE = [-0.8, 0.8]
+MEASURED_GRID_X_RANGE = [-1.8, 1.8]
+MEASURED_GRID_Y_RANGE = [-1.2, 1.2]
 PD_PRIV_HEIGHT_DIM = MEASURED_GRID_X_COUNT * MEASURED_GRID_Y_COUNT  # 187
 
 # EL_4090 proprioceptive dimension: 3+3+3+3 + 18+18+18 = 66
@@ -51,7 +51,7 @@ class El4090LidarCfg(El4090SpiderCfg):
         measured_grid_y_count = MEASURED_GRID_Y_COUNT
 
     class init_state(El4090SpiderCfg.init_state):
-        randomize_rot = True
+        randomize_rot = False
         rot_randomization_range = [-3.14, 3.14]
         spawn_offset_range = 0.5
 
