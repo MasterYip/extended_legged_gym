@@ -216,6 +216,8 @@ class PPO:
             mean_symmetry_loss = 0
         else:
             mean_symmetry_loss = None
+        # -- Auxiliary loss
+        mean_aux_loss = 0
 
         # generator for mini batches
         if self.policy.is_recurrent:
@@ -384,14 +386,11 @@ class PPO:
                     )
                     loss += self.symmetry["mirror_loss_coeff"] * symmetry_loss
     
-                # Auxiliary loss (general interface)
-                if hasattr(self.policy, 'get_auxiliary_loss') and aux_obs_batch is not None:
-                    proximal_feature = self.policy.cached_proximal_feature if hasattr(self.policy, 'cached_proximal_feature') else None
-                    if proximal_feature is not None:
-                        aux_loss = self.policy.get_auxiliary_loss(
-                            aux_obs_batch, proximal_feature, masks=masks_batch
-                        )
-                        loss += self.aux_loss_coef * aux_loss
+                # Auxiliary loss (mirror-loss pattern: policy computes internally)
+                if hasattr(self.policy, 'compute_auxiliary_loss') and aux_obs_batch is not None:
+                    aux_loss = self.policy.compute_auxiliary_loss(aux_obs_batch)
+                    loss += self.aux_loss_coef * aux_loss
+                    mean_aux_loss += aux_loss.item()
     
                 # Random Network Distillation loss
                 if self.rnd:
@@ -459,6 +458,9 @@ class PPO:
         # -- For Symmetry
         if mean_symmetry_loss is not None:
             mean_symmetry_loss /= num_updates
+        # -- For Auxiliary
+        if mean_aux_loss > 0:
+            mean_aux_loss /= num_updates
         # -- Clear the storage
         self.storage.clear()
 
@@ -472,6 +474,8 @@ class PPO:
             loss_dict["rnd"] = mean_rnd_loss
         if mean_symmetry_loss is not None:
             loss_dict["symmetry"] = mean_symmetry_loss
+        if mean_aux_loss > 0:
+            loss_dict["aux"] = mean_aux_loss
 
         return loss_dict
 
