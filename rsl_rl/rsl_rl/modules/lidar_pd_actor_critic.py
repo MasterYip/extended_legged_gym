@@ -46,10 +46,11 @@ class LidarPDActorCritic(nn.Module):
     """LidarPD Actor-Critic with dual zero-init GRU perception.
 
     Observation layout (from LidarWrapper):
-      - proprio (48 dims)
-      - proximal points (256   3 = 768 dims, sorted by spherical key)
-      - distal points (1280   3 = 3840 dims, 10-frame concatenated + globally sorted)
-      Total: 48 + 768 + 3840 = 4656
+      - proprio (proprio_obs_dim dims)
+      - proximal points (proximal_points * 3 dims, sorted by spherical key)
+      - distal points (distal_history_length * distal_points * 3 dims,
+        concatenated + globally sorted)
+      Total: proprio_obs_dim + proximal_points*3 + distal_history_length*distal_points*3
 
     Architecture:
       Proximal: (B, 256, 3)   GRU(3  187, zero-init)   h_n (B, 187)
@@ -64,7 +65,7 @@ class LidarPDActorCritic(nn.Module):
     def __init__(
         self,
         num_actor_obs: int,
-        num_critic_obs: int,
+        num_critic_obs: int,  # unused — actor/critic share GRU latent, critic input = actor_input_dim
         num_actions: int,
         actor_hidden_dims: list[int] | tuple = (1024, 512, 256, 128),
         critic_hidden_dims: list[int] | tuple = (1024, 512, 256, 128),
@@ -78,7 +79,6 @@ class LidarPDActorCritic(nn.Module):
         distal_feature_dim: int = 64,
         proprio_obs_dim: int = 48,
         privileged_height_dim: int = 187,
-        privileged_critic_dim: int = 235,
         sensor_offset_rpy: list[float] | None = None,
         sensor_offset_pos: list[float] | None = None,
         gradient_checkpointing_proximal: bool = False,
@@ -99,7 +99,6 @@ class LidarPDActorCritic(nn.Module):
         self.distal_feature_dim = int(distal_feature_dim)
         self.proprio_obs_dim = int(proprio_obs_dim)
         self.privileged_height_dim = int(privileged_height_dim)
-        self.privileged_critic_dim = int(privileged_critic_dim)
         self.num_actions = num_actions
         self.gradient_checkpointing_proximal = gradient_checkpointing_proximal
         self.gradient_checkpointing_distal = gradient_checkpointing_distal
@@ -118,9 +117,11 @@ class LidarPDActorCritic(nn.Module):
             + self.proximal_points * 3
             + self.distal_history_length * self.distal_points * 3
         )
-        if num_actor_obs < expected_obs:
+        if num_actor_obs != expected_obs:
             raise ValueError(
-                f"LidarPDActorCritic expects at least {expected_obs} actor obs dims, "
+                f"LidarPDActorCritic expects {expected_obs} actor obs dims "
+                f"(proprio={self.proprio_obs_dim} + proximal={self.proximal_points}*3 "
+                f"+ distal={self.distal_history_length}*{self.distal_points}*3), "
                 f"got {num_actor_obs}"
             )
 
