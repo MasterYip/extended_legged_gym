@@ -249,10 +249,10 @@ class OnPolicyRunner:
                 self.privileged_obs_type = None
                 num_privileged_obs = num_obs
 
-        # 检测是否需要 aux_obs 通道 (LiDAR 辅助高度监督)
+        # 检测是否需要 aux_obs 通道 — 动态发现, 不依赖 _lidar_wrapper_needed
         self._aux_obs_dim = None
-        if self._lidar_wrapper_needed:
-            self._aux_obs_dim = num_privileged_obs
+        if hasattr(self.env, 'aux_obs_buf') and self.env.aux_obs_buf is not None:
+            self._aux_obs_dim = self.env.aux_obs_buf.shape[-1]
 
         return num_obs, num_privileged_obs
 
@@ -484,8 +484,9 @@ class OnPolicyRunner:
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
                     if self._lidar_wrapper_needed:
-                        # LiDAR: critic 消费完整观测, privileged_obs 作为辅助监督
-                        actions = self.alg.act(obs, obs, privileged_obs)
+                        # critic feeds on obs (same as actor); aux from dedicated buffer
+                        aux_obs = getattr(self.env, 'aux_obs_buf', None)
+                        actions = self.alg.act(obs, obs, aux_obs)
                     else:
                         # 标准: critic 消费 privileged_obs
                         actions = self.alg.act(obs, privileged_obs)
