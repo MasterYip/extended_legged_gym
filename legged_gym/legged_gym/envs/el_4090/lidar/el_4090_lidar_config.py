@@ -40,7 +40,7 @@ class El4090LidarCfg(El4090SpiderCfg):
 
     class env(El4090SpiderCfg.env):
         num_observations = PD_PROPRIO_DIM  # 66 (proprio only; LiDAR via lidar_points_base)
-        num_privileged_obs = PD_PRIV_HEIGHT_DIM  # for auxiliary height loss
+        num_privileged_obs = None           # no asymmetric critic; aux height via aux_obs_buf
         debug_viz = True
 
     class terrain(El4090SpiderCfg.terrain):
