@@ -360,48 +360,21 @@ class LidarPDActorCritic(nn.Module):
         actor_latent = self._build_actor_latent(critic_observations, masks=masks)
         return self.critic(actor_latent)
 
-    def get_auxiliary_loss(
-        self,
-        privileged_heights: torch.Tensor,
-        proximal_feature: torch.Tensor | None = None,
-        masks: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        if proximal_feature is None or proximal_feature.numel() == 0:
-            return torch.zeros((), device=privileged_heights.device)
+    def compute_auxiliary_loss(self, aux_targets: torch.Tensor) -> torch.Tensor:
+        """Height supervision loss.  Reads cached proximal feature from the
+        same mini-batch's act() call — must be called AFTER act() in
+        PPO.update().
 
-        if masks is not None and privileged_heights.dim() == 3:
-            privileged_heights = unpad_trajectories(privileged_heights, masks)
-
-        if proximal_feature.dim() == 3:
-            prox_feat = proximal_feature[:, -1, :]
-        else:
-            prox_feat = proximal_feature
-
+        Args:
+            aux_targets: height grid targets, shape [batch_size, height_dim].
+        Returns:
+            Scalar MSE loss, or zero if proximal feature cache is cold.
+        """
+        prox_feat = self._cached_proximal_feature
+        if prox_feat is None:
+            return torch.zeros((), device=aux_targets.device)
         pred = self.height_supervisor(prox_feat)
-
-        if privileged_heights.dim() == 3:
-            priv_obs = privileged_heights[:, -1, :]
-        else:
-            priv_obs = privileged_heights
-
-        actual_dim = priv_obs.shape[-1]
-        if actual_dim == self.privileged_height_dim:
-            # EL_4090 LiDAR / Go2: privileged_obs 就是纯高度网格
-            height_target = priv_obs
-        elif actual_dim > self.privileged_height_dim:
-            # Anymal / ElSpider 教师约定: 高度网格总是在 privileged_obs 的末尾
-            height_target = priv_obs[..., -self.privileged_height_dim:]
-        else:
-            print(f"[WARNING] Aux loss skip: actual dim {actual_dim}, expected {self.privileged_height_dim}")
-            return torch.zeros((), device=privileged_heights.device)
-
-        if pred.shape[-1] != height_target.shape[-1]:
-            min_dim = min(pred.shape[-1], height_target.shape[-1])
-            pred = pred[..., :min_dim]
-            height_target = height_target[..., :min_dim]
-
-        # 返回原始 MSE，权重由 PPO 的 aux_loss_coef 统一控制
-        return torch.mean(torch.square(pred - height_target))
+        return torch.nn.functional.mse_loss(pred, aux_targets)
 
     def load_state_dict(self, state_dict, strict=True):
         if 'critic.0.weight' in state_dict:
