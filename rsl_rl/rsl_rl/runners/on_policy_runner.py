@@ -483,13 +483,13 @@ class OnPolicyRunner:
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
+                    aux_obs = getattr(self.env, 'aux_obs_buf', None)
                     if self._lidar_wrapper_needed:
-                        # critic feeds on obs (same as actor); aux from dedicated buffer
-                        aux_obs = getattr(self.env, 'aux_obs_buf', None)
+                        # critic feeds on obs (same as actor)
                         actions = self.alg.act(obs, obs, aux_obs)
                     else:
                         # 标准: critic 消费 privileged_obs
-                        actions = self.alg.act(obs, privileged_obs)
+                        actions = self.alg.act(obs, privileged_obs, aux_obs)
 
                     # Step environment
                     if self.use_old_interface:
