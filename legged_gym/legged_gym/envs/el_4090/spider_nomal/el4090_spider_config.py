@@ -61,9 +61,6 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
 
-    class asset(ElSpiderAirRoughCfg.asset):
-        self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
-
     class control(ElSpiderAirRoughCfg.control):
         control_type = 'P'
         # PD Drive parameters matching Anymal:
@@ -200,9 +197,6 @@ class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
         actor_hidden_dims = [128, 64, 32]
         critic_hidden_dims = [128, 64, 32]
         activation = 'elu'  # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
-
-    class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
-        entropy_coef = 0.01
 
     class runner (ElSpiderAirRoughCfgPPO.runner):
         run_name = ''
