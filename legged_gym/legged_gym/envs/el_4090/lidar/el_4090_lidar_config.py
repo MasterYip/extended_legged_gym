@@ -111,7 +111,7 @@ class El4090LidarCfgPPO(El4090SpiderCfgPPO):
         proprio_obs_dim = PD_PROPRIO_DIM
         privileged_height_dim = PD_PRIV_HEIGHT_DIM
         privileged_critic_dim = PD_PRIV_HEIGHT_DIM
-        privileged_supervision_coef = 1.0
+
         gradient_checkpointing_proximal = True   # 近端,256步×187维
         gradient_checkpointing_distal = True     # 远端,1280步×64维
 

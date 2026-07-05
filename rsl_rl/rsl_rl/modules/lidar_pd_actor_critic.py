@@ -79,7 +79,6 @@ class LidarPDActorCritic(nn.Module):
         proprio_obs_dim: int = 48,
         privileged_height_dim: int = 187,
         privileged_critic_dim: int = 235,
-        privileged_supervision_coef: float = 1.0,
         sensor_offset_rpy: list[float] | None = None,
         sensor_offset_pos: list[float] | None = None,
         gradient_checkpointing_proximal: bool = False,
@@ -101,7 +100,6 @@ class LidarPDActorCritic(nn.Module):
         self.proprio_obs_dim = int(proprio_obs_dim)
         self.privileged_height_dim = int(privileged_height_dim)
         self.privileged_critic_dim = int(privileged_critic_dim)
-        self.privileged_supervision_coef = float(privileged_supervision_coef)
         self.num_actions = num_actions
         self.gradient_checkpointing_proximal = gradient_checkpointing_proximal
         self.gradient_checkpointing_distal = gradient_checkpointing_distal
@@ -186,8 +184,8 @@ class LidarPDActorCritic(nn.Module):
     def cached_proximal_feature(self) -> torch.Tensor | None:
         """act() 调用后有效的近端特征缓存。
 
-        生命周期: 同一 mini-batch 内 act() → evaluate() → get_auxiliary_loss() 有效。
-        PPO.update() 在 act() 之后通过此公开接口读取，显式传入 get_auxiliary_loss()。
+        同一 mini-batch 内 act() → evaluate() → compute_auxiliary_loss() 有效。
+        compute_auxiliary_loss() 内部直接读取 _cached_proximal_feature。
         """
         return self._cached_proximal_feature
 
