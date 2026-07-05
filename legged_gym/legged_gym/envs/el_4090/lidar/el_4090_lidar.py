@@ -603,35 +603,11 @@ class EL_4090_Lidar(EL_4090):
     # Rewards
     # ==================================================================
 
-    def _reward_termination(self):
-        if hasattr(self, 'terminate_buf'):
-            return self.terminate_buf.float()
-        return self.reset_buf * ~self.time_out_buf
-
-    def _reward_collision(self):
-        # Fixes #4: vectorized indexing — single tensor op, no Python for-loop
-        forces_xy = torch.norm(
-            self.contact_forces[:, self.penalised_contact_indices, :2], dim=-1)
-        return torch.sum(torch.square(forces_xy), dim=1)
-
-    def _reward_feet_stumble(self):
-        forces_xy = torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2)
-        forces_z = torch.abs(self.contact_forces[:, self.feet_indices, 2])
-        stumbling = forces_xy > 5.0 * forces_z
-        return torch.sum(torch.square(forces_xy) * stumbling.float(), dim=1)
-
-    def _reward_dof_pos_limits(self):
-        out_of_limits = (self.dof_pos < self.dof_pos_limits[:, 0]).float()
-        out_of_limits += (self.dof_pos > self.dof_pos_limits[:, 1]).float()
-        return torch.sum(out_of_limits, dim=1)
-
-    def _reward_ang_vel_yaw_penalty(self):
-        return torch.square(self.base_ang_vel[:, 2])
-
-    def _reward_curvature(self):
-        v_xy = torch.norm(self.base_lin_vel[:, :2], dim=1)
-        omega_z = self.base_ang_vel[:, 2]
-        return omega_z.square() / (v_xy.square() + 0.49)
+    # _reward_termination, _reward_collision, _reward_feet_stumble,
+    # _reward_dof_pos_limits: resolved via MRO to LeggedRobotRewMixin.
+    #
+    # _reward_ang_vel_yaw_penalty, _reward_curvature: removed (tracking
+    # rewards already cover these signals).
 
     # -- Cmd-safe velocity rewards --
 
@@ -660,8 +636,8 @@ class EL_4090_Lidar(EL_4090):
         penalty = torch.relu((d_thresh - self._sector_dists) / d_thresh).square()
         return -penalty.sum(dim=1)
 
-    # Fixes #8: last_last_actions now initialized in _init_buffers (via super()),
-    # not lazily via hasattr check.
+    # _reward_action_rate2: second-order action smoothing.  Currently
+    # scale=0 in config (no training signal); kept for future use.
     def _reward_action_rate2(self):
         rate2 = self.actions - 2.0 * self.last_actions + self.last_last_actions
         self.last_last_actions[:] = self.last_actions
