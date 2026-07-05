@@ -50,6 +50,13 @@ class EL_4090_Lidar(EL_4090):
         # Fixes #8: init here, not lazily in reward function
         self.last_last_actions = torch.zeros_like(self.actions)
 
+        # Auxiliary supervision buffer — height grid targets for compute_auxiliary_loss
+        grid_x = self.cfg.terrain.measured_grid_x_count
+        grid_y = self.cfg.terrain.measured_grid_y_count
+        self.aux_obs_buf = torch.zeros(
+            self.num_envs, grid_x * grid_y,
+            device=self.device, dtype=torch.float)
+
     def _init_lidar_buffers(self):
         """Perception-only buffers (no task state mixed in)."""
         cfg = self.cfg.pd_risknet
@@ -401,8 +408,12 @@ class EL_4090_Lidar(EL_4090):
         ), dim=-1)
         # LiDAR data passed to wrap_obs via lidar_points_base parameter instead.
 
-        if self.privileged_obs_buf is not None:
-            self.privileged_obs_buf = self.measured_heights
+        # Auxiliary height supervision target — relative height grid (same format as base class)
+        heights = torch.clip(
+            self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights,
+            -1, 1.
+        ) * self.obs_scales.height_measurements
+        self.aux_obs_buf[:] = heights
 
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
