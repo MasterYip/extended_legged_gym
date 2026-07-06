@@ -46,7 +46,19 @@ class Terrain:
             return
         self.env_length = cfg.terrain_length
         self.env_width = cfg.terrain_width
-        self.proportions = [np.sum(cfg.terrain_proportions[:i+1]) for i in range(len(cfg.terrain_proportions))]
+        # Normalize terrain_proportions from config to ensure they sum to 1
+        raw = np.array(cfg.terrain_proportions, dtype=float)
+        s = raw.sum()
+        if s == 0:
+            # avoid division by zero: fallback to uniform distribution
+            normalized = np.ones_like(raw) / len(raw)
+        else:
+            normalized = raw / s
+        # store raw and normalized versions for debugging/inspection
+        self.raw_proportions = raw.tolist()
+        self.normalized_proportions = normalized.tolist()
+        # cumulative probabilities used to select terrain types
+        self.proportions = list(np.cumsum(normalized))
 
         self.cfg.num_sub_terrains = cfg.num_rows * cfg.num_cols
         self.env_origins = np.zeros((cfg.num_rows, cfg.num_cols, 3))
@@ -78,6 +90,9 @@ class Terrain:
                                                                                          self.cfg.horizontal_scale,
                                                                                          self.cfg.vertical_scale,
                                                                                          self.cfg.slope_treshold)
+        print("Terrain proportions (raw):", getattr(self, 'raw_proportions', None),
+              "normalized:", getattr(self, 'normalized_proportions', None),
+              "cumulative:", self.proportions)
 
     def randomized_terrain(self, difficulty_scale=1.0):
         for k in range(self.cfg.num_sub_terrains):
@@ -90,6 +105,7 @@ class Terrain:
             self.add_terrain_to_map(terrain, i, j)
 
     def curiculum(self, difficulty_scale=1.0):
+        print("Generating curriculum terrains with difficulty scale: ", difficulty_scale)
         for j in range(self.cfg.num_cols):
             for i in range(self.cfg.num_rows):
                 difficulty = i / self.cfg.num_rows * difficulty_scale
@@ -122,8 +138,14 @@ class Terrain:
         slope = difficulty * 0.4
         step_height = 0.05 + 0.18 * difficulty
         discrete_obstacles_height = 0.02 + difficulty * 0.2
-        stepping_stones_size = 1.5 * (1.05 - difficulty)
-        stone_distance = 0.05 if difficulty == 0 else 0.1
+
+
+        stepping_stones_size = self.cfg.stepping_stones_size + difficulty * 0.5
+        stepping_stones_max_height = self.cfg.stepping_stones_max_height + difficulty * 0.3
+        stepping_stones_platform_size = self.cfg.stepping_stones_platform_size
+        stone_distance = self.cfg.stepping_stones_distance + difficulty * 0.5
+
+
         gap_size = 1. * difficulty
         pit_depth = 1. * difficulty
         if choice < self.proportions[0]:
@@ -145,7 +167,7 @@ class Terrain:
                                                      rectangle_min_size, rectangle_max_size, num_rectangles, platform_size=3.)
         elif choice < self.proportions[5]:
             terrain_utils.stepping_stones_terrain(terrain, stone_size=stepping_stones_size,
-                                                  stone_distance=stone_distance, max_height=0., platform_size=4.)
+                                                  stone_distance=stone_distance, max_height=stepping_stones_max_height, platform_size=stepping_stones_platform_size)
         elif choice < self.proportions[6]:
             gap_terrain(terrain, gap_size=gap_size, platform_size=3.)
         else:

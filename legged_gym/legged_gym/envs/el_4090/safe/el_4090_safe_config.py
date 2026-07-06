@@ -87,12 +87,10 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
                    'HFE': 1.2, 
                    'KFE': 1.2}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
-        action_scale = 0.25  # Enable Network-0.5 | Disable Network-0.3
+        action_scale = 0.25
 
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
-        use_actuator_network = False
-        actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
 
 
     class asset(ElSpiderAirRoughCfg.asset):
@@ -138,7 +136,7 @@ class El4090SafeCfg(ElSpiderAirRoughCfg):
         base_height_target = 0.47
         only_positive_rewards = False
         # Multi-stage
-        # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
+        # Stage 0: Learn to walk with tripod gait
         # Stage 1: Correct DOF and FootZ positions / Prevent Slip
         multi_stage_rewards = True  # if true, reward scales should be list
         reward_stage_threshold = 5

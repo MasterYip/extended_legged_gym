@@ -179,6 +179,11 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
         if self.cfg.commands.curriculum and (self.common_step_counter % self.max_episode_length == 0):
             self.update_command_curriculum(env_ids)
 
+        base_height_actual = None
+        if hasattr(self, "episode_base_height_sum") and hasattr(self, "episode_base_height_count"):
+            base_height_count = torch.clamp(self.episode_base_height_count[env_ids], min=1.0)
+            base_height_actual = torch.mean(self.episode_base_height_sum[env_ids] / base_height_count)
+
         # reset robot states
         self._reset_dofs(env_ids)
         self._reset_root_states(env_ids)
@@ -190,6 +195,9 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
         self.feet_contact_time[env_ids] = 0.
+        if hasattr(self, "episode_base_height_sum") and hasattr(self, "episode_base_height_count"):
+            self.episode_base_height_sum[env_ids] = 0.
+            self.episode_base_height_count[env_ids] = 0.
         self.episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
         
@@ -202,6 +210,8 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
         for key in self.episode_sums.keys():
             self.extras["episode"]['rew_' + key] = torch.mean(self.episode_sums[key][env_ids]) / self.max_episode_length_s
             self.episode_sums[key][env_ids] = 0.
+        if base_height_actual is not None:
+            self.extras["episode"]["base_height_actual"] = base_height_actual
         # log additional curriculum info
         if self.cfg.terrain.curriculum:
             self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
@@ -245,8 +255,8 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
                                   ), dim=-1)
         # add perceptive inputs if not blind
         if self.cfg.terrain.measure_heights:
-            heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 -
-                                 self.measured_heights, -1, 1.) * self.obs_scales.height_measurements
+            heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.45 -
+                                 self.measured_heights, -5, 5.) * self.obs_scales.height_measurements
             self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
         # add noise if needed
         if self.add_noise:
@@ -602,7 +612,7 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float,
                                     device=self.device, requires_grad=False)  # x vel, y vel, yaw vel, heading
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel,
-                                           self.obs_scales.ang_vel], device=self.device, requires_grad=False,)  # TODO change this
+                                           self.obs_scales.ang_vel], device=self.device, requires_grad=False,)  
 
         # Foot state
         self.feet_air_time = torch.zeros(
@@ -765,10 +775,12 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
 
         # save body names from the asset
         body_names = self.gym.get_asset_rigid_body_names(robot_asset)
+        self.body_names = body_names
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
         feet_names = [s for s in body_names if self.cfg.asset.foot_name in s]
+        self.feet_names = feet_names
         penalized_contact_names = []
         for name in self.cfg.asset.penalize_contacts_on:
             penalized_contact_names.extend([s for s in body_names if name in s])
@@ -957,4 +969,3 @@ class LeggedRobot(BaseTask, LeggedRobotRewMixin):
         heights = torch.min(heights, heights3)
 
         return heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale
-

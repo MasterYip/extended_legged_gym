@@ -76,12 +76,20 @@ class LeggedRobotCfg(BaseConfig):
         selected = False  # select a unique terrain type and pass all arguments
         terrain_kwargs = None  # Dict of arguments for selected terrain
         max_init_terrain_level = 5  # starting curriculum state
-        terrain_length = 5.
-        terrain_width = 5.
+        terrain_length = 7.
+        terrain_width = 7.
         num_rows = 8  # number of terrain rows (levels)
         num_cols = 8  # number of terrain cols (types)
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
         terrain_proportions = [0.1, 0.1, 0.35, 0.25, 0.2]
+
+        # stepping stones
+        stepping_stones_size = 0.5
+        stepping_stones_distance = 1.0
+        stepping_stones_max_height = 0.2
+        stepping_stones_platform_size = 3.0
+
+
         # confined terrain types: [tunnel, barrier, timber_piles, confined_gap]
         confined_terrain_proportions = [0.25, 0.5, 0.75, 1.0]
         # trimesh only:

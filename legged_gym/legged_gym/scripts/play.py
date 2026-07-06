@@ -30,7 +30,10 @@
 
 from legged_gym import LEGGED_GYM_ROOT_DIR
 import os
-import csv
+import select
+import sys
+import termios
+import tty
 
 import isaacgym
 from legged_gym.envs import *
@@ -41,22 +44,61 @@ import torch
 import time
 import isaacgym.gymapi as gymapi
 
+
+class KeyboardInput:
+    def __init__(self):
+        self.fd = None
+        self.old_settings = None
+
+    def __enter__(self):
+        if sys.stdin.isatty():
+            self.fd = sys.stdin.fileno()
+            self.old_settings = termios.tcgetattr(self.fd)
+            tty.setcbreak(self.fd)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.fd is not None and self.old_settings is not None:
+            termios.tcsetattr(self.fd, termios.TCSANOW, self.old_settings)
+
+    def read_keys(self):
+        if self.fd is None:
+            return []
+
+        keys = []
+        while True:
+            rlist, _, _ = select.select([self.fd], [], [], 0.0)
+            if not rlist:
+                break
+            key = os.read(self.fd, 1).decode(errors="ignore")
+            if key:
+                keys.append(key.lower())
+        return keys
+
+
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
+    # env.dubug.viz = True
     # override some parameters for testing
     env_cfg.env.num_envs = min(env_cfg.env.num_envs, 10)
-    env_cfg.terrain.num_rows = 5
-    env_cfg.terrain.num_cols = 5
-    env_cfg.terrain.curriculum = False
+    env_cfg.terrain.num_rows = 3
+    env_cfg.terrain.num_cols = 3
+    env_cfg.terrain.curriculum = True
     env_cfg.noise.add_noise = False
     env_cfg.domain_rand.randomize_friction = False
     env_cfg.domain_rand.push_robots = False
+    if hasattr(env_cfg, "commands") and hasattr(env_cfg.commands, "resampling_time"):
+        env_cfg.commands.resampling_time = 1e9
 
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
-    l_color = gymapi.Vec3(0.5, 0.5, 0.5)  # 提高亮度
-    l_ambient = gymapi.Vec3(0.1, 0.1, 0.1)  # 提高亮度
-    l_direction = gymapi.Vec3(0., 0., 1.)
+    lighting_cfg = getattr(env_cfg, "lighting", None)
+    l_color_cfg = getattr(lighting_cfg, "base_light_color", [0.5, 0.5, 0.5])
+    l_ambient_cfg = getattr(lighting_cfg, "base_light_ambient", [0.1, 0.1, 0.1])
+    l_direction_cfg = getattr(lighting_cfg, "base_light_direction", [0.0, 0.0, 1.0])
+    l_color = gymapi.Vec3(l_color_cfg[0], l_color_cfg[1], l_color_cfg[2])
+    l_ambient = gymapi.Vec3(l_ambient_cfg[0], l_ambient_cfg[1], l_ambient_cfg[2])
+    l_direction = gymapi.Vec3(l_direction_cfg[0], l_direction_cfg[1], l_direction_cfg[2])
     env.gym.set_light_parameters(env.sim, 0, l_color, l_ambient, l_direction)
     obs = env.get_observations()
     # load policy
@@ -102,82 +144,57 @@ def play(args):
     else:
         print("Running at maximum speed (no realtime constraints)")
 
-    play_data_dir = os.path.join(os.path.dirname(__file__), "play_datas")
-    os.makedirs(play_data_dir, exist_ok=True)
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    csv_path = os.path.join(play_data_dir, f"{args.task}_torque_vel_{timestamp}.csv")
-    csv_file = open(csv_path, "w", newline="")
-    csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["step", "env_id", "torques", "dof_vel"])
+    lin_vel_x = 0.0  # 前进/后退速度
+    lin_vel_y = 0.0  # 侧移速度
+    ang_vel_yaw = 0.0  # 偏航角速度
+    heading = 0.0  # 预留
 
+    keyboard = KeyboardInput()
+    keyboard.__enter__()
     try:
+        if keyboard.fd is None:
+            print("stdin is not a TTY; keyboard control is disabled.")
+
         for i in range(int(env.max_episode_length*10)):
 
             step_start_time = time.time()
 
             # 键盘控制指令（wasdqe控制）
-            import sys, select, termios, tty
-            def get_key(timeout=0.01):
-                fd = sys.stdin.fileno()
-                old_settings = termios.tcgetattr(fd)
-                try:
-                    tty.setraw(fd)
-                    rlist, _, _ = select.select([fd], [], [], timeout)
-                    if rlist:
-                        key = sys.stdin.read(1)
-                    else:
-                        key = ''
-                finally:
-                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-                return key
-
-            # 初始命名变量
-            if i == 0:
-                lin_vel_x = 0.0  # 前进/后退速度
-                lin_vel_y = 0.0  # 侧移速度
-                ang_vel_yaw = 0.0  # 偏航角速度
-                heading = 0.0  # 预留
-            key = get_key()
-            # 速度步长
+            keys = keyboard.read_keys()
             lin_step = 0.1
             yaw_step = 0.1
-            # 按键映射
-            if key == 'w':
-                lin_vel_x += lin_step
-            elif key == 's':
-                lin_vel_x -= lin_step
-            elif key == 'a':
-                lin_vel_y += lin_step
-            elif key == 'd':
-                lin_vel_y -= lin_step
-            elif key == 'q':
-                ang_vel_yaw += yaw_step
-            elif key == 'e':
-                ang_vel_yaw -= yaw_step
-            elif key == 'z':
-                lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
+
+            for key in keys:
+                if key == 'w':
+                    lin_vel_x += lin_step
+                elif key == 's':
+                    lin_vel_x -= lin_step
+                elif key == 'a':
+                    lin_vel_y += lin_step
+                elif key == 'd':
+                    lin_vel_y -= lin_step
+                elif key == 'q':
+                    ang_vel_yaw += yaw_step
+                elif key == 'e':
+                    ang_vel_yaw -= yaw_step
+                elif key == 'z':
+                    lin_vel_x, lin_vel_y, ang_vel_yaw, heading = 0.0, 0.0, 0.0, 0.0  # 重置
+
             # 限制范围
             lin_vel_x = np.clip(lin_vel_x, -5.0, 5.0)
-            lin_vel_x = 1.5
             lin_vel_y = np.clip(lin_vel_y, -1.5, 1.5)
-            # lin_vel_y = 1.0
             ang_vel_yaw = np.clip(ang_vel_yaw, -2.0, 2.0)
-            # ang_vel_yaw = 1.0
             heading = np.clip(heading, -1.0, 1.0)
             command = [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
-            import torch
+            command = (command + [0.0] * env.commands.shape[1])[:env.commands.shape[1]]
             env.commands[:] = torch.tensor(command, dtype=env.commands.dtype, device=env.commands.device)
+            if hasattr(env, "compute_observations"):
+                env.compute_observations()
+                obs = env.get_observations()
             print(f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f}", end="\r")
 
             actions = policy(obs.detach())
             obs, _, rews, dones, infos = env.step(actions.detach())
-
-            torques_np = env.torques.detach().cpu().numpy()
-            dof_vel_np = env.dof_vel.detach().cpu().numpy()
-            for env_id in range(env.num_envs):
-                csv_writer.writerow([i, env_id, torques_np[env_id].tolist(), dof_vel_np[env_id].tolist()])
-            if i % 10 == 0:
-                csv_file.flush()
 
             if RECORD_FRAMES:
                 if i % 2:
@@ -208,8 +225,8 @@ def play(args):
                             'base_vel_z': env.base_lin_vel[robot_index, 2].item(),
                             'base_vel_yaw': env.base_ang_vel[robot_index, 2].item(),
                             'contact_forces_z': env.contact_forces[robot_index, env.feet_indices, 2].cpu().numpy()
-                        }
-                    )
+                            }
+                        )
                 elif i==stop_state_log:
                     logger.plot_states()
                 if  0 < i < stop_rew_log:
@@ -224,16 +241,16 @@ def play(args):
             if REALTIME_MODE:
                 step_end_time = time.time()
                 step_duration = step_end_time - step_start_time
-                
+                    
                 # Calculate realtime factor
                 realtime_factor = env.dt / step_duration if step_duration > 0 else float('inf')
                 realtime_factor = max(0.0, min(realtime_factor, 1.0))  # Clamp between 0 and 1
                 realtime_factor_window.append(realtime_factor)
-                
+                    
                 # Maintain window size
                 if len(realtime_factor_window) > realtime_factor_window_size:
                     realtime_factor_window.pop(0)
-                
+                    
                 # Print realtime factor periodically (disabled)
                 # current_time = time.time()
                 # if current_time - last_print_time >= print_interval:
@@ -243,15 +260,14 @@ def play(args):
                 #     print(f"Step {i}: Realtime factor: {avg_realtime_factor:.2f}x "
                 #           f"(min: {min_realtime_factor:.2f}x, max: {max_realtime_factor:.2f}x)")
                 #     last_print_time = current_time
-                
+                    
                 # Sleep to maintain realtime if computation was faster than env.dt
                 sleep_time = env.dt - step_duration
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             # If not realtime mode, run as fast as possible (no sleep)
     finally:
-        csv_file.close()
-        print(f"Torque/velocity CSV saved to: {csv_path}")
+        keyboard.__exit__(None, None, None)
 
 if __name__ == '__main__':
     EXPORT_POLICY = True

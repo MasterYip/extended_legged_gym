@@ -43,6 +43,16 @@ def test_env(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # override some parameters for testing
     env_cfg.env.num_envs = min(env_cfg.env.num_envs, 1)
+    if args.task == "el4090_envelop":
+        # env_cfg.control.control_type = "P_LOWPASS"
+        env_cfg.noise.add_noise = False
+        env_cfg.domain_rand.randomize_friction = False
+        env_cfg.domain_rand.randomize_base_mass = False
+        env_cfg.domain_rand.push_robots = False
+        env_cfg.commands.morphology_reachability_test = True
+        env_cfg.commands.morphology_reachability_test_mode = "corners"
+        env_cfg.commands.morphology_reachability_resample_steps = 600
+        env_cfg.commands.morphology_reachability_print_interval = 100
 
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)

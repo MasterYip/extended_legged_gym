@@ -47,6 +47,33 @@ from legged_gym.utils import GaitScheduler, GaitSchedulerCfg, AsyncGaitScheduler
 from legged_gym.utils.helpers import class_to_dict
 from legged_gym.utils.math_utils import quat_apply_yaw
 
+
+def _height_measurements_start(obs: torch.Tensor, env=None) -> int:
+    """Return the first height index, keeping embedded_state invariant if present."""
+    if env is not None:
+        cfg = getattr(env, "cfg", None)
+        commands_cfg = getattr(cfg, "commands", None)
+        num_commands = getattr(commands_cfg, "num_commands", 4)
+        return 67 if num_commands > 4 else 66
+    return 67 if obs.shape[1] in (67, 254) else 66
+
+
+def _mirror_height_measurements(obs_mirrored: torch.Tensor, obs: torch.Tensor, start: int, axis: str) -> None:
+    x_points = 17
+    y_points = 11
+    num_heights = x_points * y_points
+    if obs.shape[1] < start + num_heights:
+        return
+
+    for x in range(x_points):
+        for y in range(y_points):
+            original_idx = start + x * y_points + y
+            mirrored_x = x_points - x - 1 if axis == "x" else x
+            mirrored_y = y_points - y - 1 if axis == "y" else y
+            mirrored_idx = start + mirrored_x * y_points + mirrored_y
+            obs_mirrored[:, original_idx] = obs[:, mirrored_idx]
+
+
 @torch.no_grad()
 def get_elair_xysym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = None, env = None, obs_type: str = "policy") -> Tuple[torch.Tensor, torch.Tensor]:
     """Apply both left-right and back-forth symmetry transformations for the ElSpider robot.
@@ -100,19 +127,15 @@ def get_elair_xysym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = No
         # Mirror previous actions (48:66)
         obs_lr_mirrored[:, 48:57] = obs[:, 57:66]
         obs_lr_mirrored[:, 57:66] = obs[:, 48:57]
+
         
-        # Mirror height measurements (66:253) along y-axis
-        if obs.shape[1] > 66:
-            height_measurements_start = 66
-            x_points = 17
-            y_points = 11
-            
-            for x in range(x_points):
-                for y in range(y_points):
-                    original_idx = height_measurements_start + x*y_points + y
-                    mirrored_y = y_points - y - 1
-                    mirrored_idx = height_measurements_start + x*y_points + mirrored_y
-                    obs_lr_mirrored[:, original_idx] = obs[:, mirrored_idx]
+        
+        _mirror_height_measurements(
+            obs_lr_mirrored,
+            obs,
+            _height_measurements_start(obs, env),
+            axis="y",
+        )
         
         # --- Back-Forth Mirrored Observations ---
         obs_bf_mirrored = obs.clone()
@@ -150,18 +173,12 @@ def get_elair_xysym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = No
         obs_bf_mirrored[:, 57:60] = obs[:, 60:63]  # RB gets RF actions
         obs_bf_mirrored[:, 60:63] = obs[:, 57:60]  # RF gets RB actions
         
-        # Mirror height measurements (66:253) along x-axis
-        if obs.shape[1] > 66:
-            height_measurements_start = 66
-            x_points = 17
-            y_points = 11
-            
-            for x in range(x_points):
-                for y in range(y_points):
-                    original_idx = height_measurements_start + x*y_points + y
-                    mirrored_x = x_points - x - 1
-                    mirrored_idx = height_measurements_start + mirrored_x*y_points + y
-                    obs_bf_mirrored[:, original_idx] = obs[:, mirrored_idx]
+        _mirror_height_measurements(
+            obs_bf_mirrored,
+            obs,
+            _height_measurements_start(obs, env),
+            axis="x",
+        )
         
         # Combine original, left-right mirrored, and back-forth mirrored observations
         obs_augmented = torch.cat([obs, obs_lr_mirrored, obs_bf_mirrored], dim=0)
@@ -225,7 +242,8 @@ def get_elair_xsym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = Non
         # [12:30] - dof_pos (swap left-right sides)
         # [30:48] - dof_vel (swap left-right sides)
         # [48:66] - previous actions (swap left-right sides)
-        # [66:253] - height measurements (mirror left-right pattern)
+        # [66] - embedded_state for spider_both, invariant under symmetry when present
+        # [66:253] or [67:254] - height measurements (mirror left-right pattern)
         
         # Create mirrored observations
         obs_mirrored = obs.clone()
@@ -259,28 +277,12 @@ def get_elair_xsym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = Non
         obs_mirrored[:, 48:57] = obs[:, 57:66]  # Right legs get left leg actions
         obs_mirrored[:, 57:66] = obs[:, 48:57]  # Left legs get right leg actions
         
-        # Mirror height measurements (66:253) if present
-        if obs.shape[1] > 66:
-            # The height measurements are in a grid pattern
-            # Original grid pattern: measured_points_x × measured_points_y
-            # For ElSpider, this is typically 17×11 = 187 points
-            
-            # We need to mirror the points along the y-axis
-            # If we have 17 points in x and 11 in y, the indices form a 17×11 grid
-            
-            height_measurements_start = 66
-            x_points = 17  # Number of points along x-axis (from config)
-            y_points = 11  # Number of points along y-axis (from config)
-            
-            for x in range(x_points):
-                for y in range(y_points):
-                    # Calculate original and mirrored indices
-                    original_idx = height_measurements_start + x*y_points + y
-                    mirrored_y = y_points - y - 1  # Flip y coordinate
-                    mirrored_idx = height_measurements_start + x*y_points + mirrored_y
-                    
-                    # Swap the height measurements
-                    obs_mirrored[:, original_idx] = obs[:, mirrored_idx]
+        _mirror_height_measurements(
+            obs_mirrored,
+            obs,
+            _height_measurements_start(obs, env),
+            axis="y",
+        )
         
         # Combine original and mirrored observations
         obs_augmented = torch.cat([obs, obs_mirrored], dim=0)
@@ -302,4 +304,3 @@ def get_elair_xsym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = Non
         actions_augmented = None
     
     return obs_augmented, actions_augmented
-

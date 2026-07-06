@@ -101,9 +101,13 @@ class BaseTask():
             
             self.vis = GymVisualizer(self.gym, self.sim, self.viewer, self.envs)
         
-        l_color = gymapi.Vec3(0.5, 0.5, 0.5)  # 提高亮度
-        l_ambient = gymapi.Vec3(0.1, 0.1, 0.1)  # 提高亮度
-        l_direction = gymapi.Vec3(0., 0., 1.)
+        lighting_cfg = getattr(cfg, "lighting", None)
+        l_color_cfg = getattr(lighting_cfg, "base_light_color", [0.5, 0.5, 0.5])
+        l_ambient_cfg = getattr(lighting_cfg, "base_light_ambient", [0.1, 0.1, 0.1])
+        l_direction_cfg = getattr(lighting_cfg, "base_light_direction", [0.0, 0.0, 1.0])
+        l_color = gymapi.Vec3(l_color_cfg[0], l_color_cfg[1], l_color_cfg[2])
+        l_ambient = gymapi.Vec3(l_ambient_cfg[0], l_ambient_cfg[1], l_ambient_cfg[2])
+        l_direction = gymapi.Vec3(l_direction_cfg[0], l_direction_cfg[1], l_direction_cfg[2])
         self.gym.set_light_parameters(self.sim, 0, l_color, l_ambient, l_direction)
             
 

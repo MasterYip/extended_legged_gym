@@ -1,7 +1,8 @@
 from legged_gym.envs.el_4090.spider_nomal.el4090_spider_config import El4090SpiderCfg,El4090SpiderCfgPPO
 class El4090MammalCfg(El4090SpiderCfg):
     class env(El4090SpiderCfg.env):
-        num_observations = 66
+        num_envs = 4096
+        num_observations = 66 + 187
         # Debug settings
         debug_mode = False  # Enable debug output
         debug_interval = 100  # Print debug info every N steps
@@ -9,45 +10,60 @@ class El4090MammalCfg(El4090SpiderCfg):
 
     class terrain(El4090SpiderCfg.terrain):
         mesh_type = 'plane'  # "heightfield" # none, plane, heightfield or trimesh
-        horizontal_scale = 0.05  # [m]
+        horizontal_scale = 0.1  # [m]
         vertical_scale = 0.005  # [m]
-        border_size = 10  # [m]
-        curriculum = False
+        border_size = 25  # [m]
+
+
+        curriculum = True
+        # Move to a harder terrain if traveled distance > terrain_length * this ratio.
+        terrain_curriculum_move_up_distance_ratio = 0.8
+        # Move to an easier terrain if traveled distance < command_speed * episode_time * this ratio.
+        terrain_curriculum_move_down_command_distance_ratio = 0.5
         static_friction = 1.0
         dynamic_friction = 1.0
         restitution = 0.
-        measure_heights = False
+
+
+        measure_heights = True
+        measured_points_x = [-0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1,
+                             0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]  # 1mx1.6m rectangle (without center line)
+        measured_points_y = [-0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5]
+
+
         selected = False  # select a unique terrain type and pass all arguments
         terrain_kwargs = None  # Dict of arguments for selected terrain
         terrain_length = 5.
         terrain_width = 5.
         num_rows = 8  # number of terrain rows (levels)
-        num_cols = 8  # number of terrain cols (types)
-        # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
-        terrain_proportions = [0.0, 0.0, 0.0, 0.0, 1.0]
-        difficulty_scale = 0.0
+        num_cols = 10  # number of terrain cols (types)
+        # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete，stepping stones, ]
+        terrain_proportions = [0.1, 0.1, 0.35, 0.25, 0.2]
+
+        # stepping stones
+        stepping_stones_size = 0.5
+        stepping_stones_distance = 1.0
+        stepping_stones_max_height = 0.2
+        stepping_stones_platform_size = 3.0
+
+        difficulty_scale = 0.8
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
-
-    class asset(El4090SpiderCfg.asset):
-        self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
-
     class control(El4090SpiderCfg.control):
         control_type = 'P'
         # PD Drive parameters matching Anymal:
-        stiffness = {'HAA': 150., 
-                     'HFE': 150., 
-                     'KFE': 150.}  # [N*m/rad]
-        damping = {'HAA': 1.2, 
-                   'HFE': 1.2, 
-                   'KFE': 1.2}     # [N*m*s/rad]
+        stiffness = {'HAA': 130., 
+                     'HFE': 130., 
+                     'KFE': 130.}  # [N*m/rad]
+        damping = {'HAA': 2., 
+                   'HFE': 2., 
+                   'KFE': 2.}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
-        action_scale = 0.25  # Enable Network-0.5 | Disable Network-0.3
+        action_scale = 0.25
 
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
-        use_actuator_network = False
-        actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
+        
 
 
     class asset(El4090SpiderCfg.asset):
@@ -100,24 +116,24 @@ class El4090MammalCfg(El4090SpiderCfg):
         base_height_target = 0.72
         only_positive_rewards = False
         # Multi-stage
-        # Stage 0: Learn to walk with tripod gait (with / w\o actuator net)
+        # Stage 0: Learn to walk with tripod gait
         # Stage 1: Correct DOF and FootZ positions / Prevent Slip
-        multi_stage_rewards = True  # if true, reward scales should be list
+        multi_stage_rewards = False  # if true, reward scales should be list
         reward_stage_threshold = 2.0
         reward_min_stage = 0  # Start from 0
-        reward_max_stage = 1
+        reward_max_stage = 0
 
         class scales:
             termination = -0.0
 
-            tracking_lin_vel = 5
+            tracking_lin_vel = 5.5
             tracking_ang_vel = 2.5
             # lateral_lin_vel_y = -1
 
             lin_vel_z = -2
             ang_vel_xy = -1
             orientation = -10
-            torques = -1e-4
+            torques = -1e-5
             dof_vel = -1e-5
             dof_acc = -1e-7
             base_height = -50
@@ -130,11 +146,10 @@ class El4090MammalCfg(El4090SpiderCfg):
             dof_pos_limits = -0.5
             dof_vel_limits = -0.1
             torque_limits = -0.01
-            feet_contact_forces = -0.01
-            # stand_on_six_legs = -1
-            # shank_vertical = -4
-            feet_async = -1.
-            feet_sync = -1.
+            feet_contact_forces = -0.02
+
+            feet_async = -3.
+            feet_sync = -3.
 
 
     class commands(El4090SpiderCfg.commands):
@@ -204,7 +219,7 @@ class El4090MammalCfgPPO( El4090SpiderCfgPPO ):
 
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        experiment_name = 'el_4090_mammal'
+        experiment_name = 'el_4090_mammal_trimesh'
         run_name = ''
         # load and resume
         resume = False
