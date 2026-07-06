@@ -206,7 +206,7 @@ class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
         multi_stage_rewards = True
 
     class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
-        self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
+        entropy_coef = 0.01
         # Symmetry augmentation configuration
         class symmetry_cfg:
             use_data_augmentation = True
