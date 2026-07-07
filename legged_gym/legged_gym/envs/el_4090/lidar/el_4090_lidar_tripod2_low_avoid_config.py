@@ -12,8 +12,8 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
     class terrain(El4090LidarCfg.terrain):
         mesh_type = 'trimesh'
         curriculum = True
-        terrain_length = 20
-        terrain_width = 20
+        terrain_length = 18
+        terrain_width = 18
         border_size = 5
         num_rows = 6  # number of terrain rows (levels)
         num_cols = 4  # number of terrain cols (types)
@@ -23,14 +23,14 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
 
         # 柱子参数（pillar_field_terrain 已通过 getattr 读取）
         pillar_count_min = 0
-        pillar_count_max = 15
+        pillar_count_max = 12
         pillar_size_x_min = 0.5
         pillar_size_x_max = 4.0
         pillar_size_y_min = 0.5
         pillar_size_y_max = 4.0
         pillar_height_min = 1.00
         pillar_height_max = 2.00
-        pillar_min_separation = 2.0  
+        pillar_min_separation = 2.2  
         pillar_center_clear_radius = 3.0
         pillar_spawn_radius = 10.0        #约束范围半径
         pillar_allow_height_variation = True
