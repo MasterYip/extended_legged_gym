@@ -304,7 +304,7 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
             feet_sync = -0.1
             tripod_contact_pattern = -1
             
-            envelope_constraint = -10.0
+            envelope_constraint = -10.0  #TODO: tune this value
 
 
     class commands(ElSpiderAirRoughCfg.commands):

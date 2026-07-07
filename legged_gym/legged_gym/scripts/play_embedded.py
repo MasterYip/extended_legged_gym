@@ -76,6 +76,65 @@ class KeyboardInput:
         return keys
 
 
+CAMERA_MODES = ("rear_side", "rear_top")
+CAMERA_MODE_NAMES = {
+    "rear_side": "侧后方",
+    "rear_top": "后上方",
+}
+
+
+def _update_follow_camera(env, camera_state, robot_index=0, mode="rear_side"):
+    """Keep the viewer camera near the robot without following body jitter."""
+    if getattr(env, "viewer", None) is None:
+        return camera_state
+
+    base_pos = env.root_states[robot_index, :3].detach().cpu().numpy()
+    base_quat = env.root_states[robot_index, 3:7].detach().cpu().numpy()
+    x, y, z, w = base_quat
+    yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+    if camera_state is None:
+        camera_state = {
+            "yaw": yaw,
+            "base_z": base_pos[2],
+            "position": None,
+            "lookat": None,
+        }
+    else:
+        yaw_delta = np.arctan2(np.sin(yaw - camera_state["yaw"]), np.cos(yaw - camera_state["yaw"]))
+        camera_state["yaw"] += 0.08 * yaw_delta
+        camera_state["base_z"] += 0.03 * (base_pos[2] - camera_state["base_z"])
+
+    stable_base_pos = base_pos.copy()
+    stable_base_pos[2] = camera_state["base_z"]
+    yaw = camera_state["yaw"]
+
+    forward = np.array([np.cos(yaw), np.sin(yaw), 0.0], dtype=np.float64)
+    left = np.array([-np.sin(yaw), np.cos(yaw), 0.0], dtype=np.float64)
+
+    if mode == "rear_top":
+        target_position = stable_base_pos - 1.25 * forward + np.array([0.0, 0.0, 1.8], dtype=np.float64)
+        target_lookat = stable_base_pos + 0.2 * forward + np.array([0.0, 0.0, 0.15], dtype=np.float64)
+    else:
+        target_position = (
+            stable_base_pos
+            - 1.6 * forward
+            + 0.75 * left
+            + np.array([0.0, 0.0, 0.65], dtype=np.float64)
+        )
+        target_lookat = stable_base_pos + 0.25 * forward + np.array([0.0, 0.0, 0.2], dtype=np.float64)
+
+    if camera_state["position"] is None:
+        camera_state["position"] = target_position
+        camera_state["lookat"] = target_lookat
+    else:
+        camera_state["position"] += 0.12 * (target_position - camera_state["position"])
+        camera_state["lookat"] += 0.12 * (target_lookat - camera_state["lookat"])
+
+    env.set_camera(camera_state["position"], camera_state["lookat"])
+    return camera_state
+
+
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # env.dubug.viz = True
@@ -132,6 +191,10 @@ def play(args):
     camera_vel = np.array([1., 1., 0.])
     camera_direction = np.array(env_cfg.viewer.lookat) - np.array(env_cfg.viewer.pos)
     img_idx = 0
+    camera_mode_idx = 0
+    camera_state = None
+    if FOLLOW_CAMERA:
+        camera_state = _update_follow_camera(env, camera_state, robot_index, CAMERA_MODES[camera_mode_idx])
 
     # Realtime management variables
     realtime_factor_window = []
@@ -151,6 +214,11 @@ def play(args):
     embedded_state = 1.0
     last_embedded_toggle_time = 0.0
     embedded_toggle_debounce = 0.2
+
+    camera_key_text = ", c=toggle camera side-rear/rear-top" if FOLLOW_CAMERA else ""
+    print(
+        f"Keyboard: wasd=linear velocity, qe=yaw velocity, z=reset command, r=toggle embedded state{camera_key_text}."
+    )
 
     keyboard = KeyboardInput()
     keyboard.__enter__()
@@ -187,6 +255,11 @@ def play(args):
                     if current_time - last_embedded_toggle_time >= embedded_toggle_debounce:
                         embedded_state = 1.0 - embedded_state
                         last_embedded_toggle_time = current_time
+                elif key == 'c' and FOLLOW_CAMERA:
+                    camera_mode_idx = (camera_mode_idx + 1) % len(CAMERA_MODES)
+                    if camera_state is not None:
+                        camera_state["position"] = None
+                    print(f"\n摄像头视角: {CAMERA_MODE_NAMES[CAMERA_MODES[camera_mode_idx]]}")
 
             # 限制范围
             lin_vel_x = np.clip(lin_vel_x, -5.0, 5.0)
@@ -199,17 +272,25 @@ def play(args):
             if hasattr(env, "compute_observations"):
                 env.compute_observations()
                 obs = env.get_observations()
-            print(f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f}, embedded_state = {embedded_state:.1f}", end="\r")
+            print(
+                f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, "
+                f"ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f}, "
+                f"embedded_state = {embedded_state:.1f}, "
+                f"{'camera=' + CAMERA_MODE_NAMES[CAMERA_MODES[camera_mode_idx]] if FOLLOW_CAMERA else ''}",
+                end="\r",
+            )
 
             actions = policy(obs.detach())
             obs, _, rews, dones, infos = env.step(actions.detach())
+            if FOLLOW_CAMERA:
+                camera_state = _update_follow_camera(env, camera_state, robot_index, CAMERA_MODES[camera_mode_idx])
 
             if RECORD_FRAMES:
                 if i % 2:
                     filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'frames', f"{img_idx}.png")
                     env.gym.write_viewer_image_to_file(env.viewer, filename)
                     img_idx += 1 
-            if MOVE_CAMERA:
+            if MOVE_CAMERA and not FOLLOW_CAMERA:
                 camera_position += camera_vel * env.dt
                 env.set_camera(camera_position, camera_position + camera_direction)
 
@@ -281,6 +362,7 @@ if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = False
+    FOLLOW_CAMERA = False
     ENABLE_LOGGING = True
     REALTIME_MODE = True  # Set to False to run at maximum speed
     args = get_args()

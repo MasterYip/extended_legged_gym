@@ -84,6 +84,12 @@ ENVELOPE_CONTROL_NAMES = [
     "backward_limit",
 ]
 
+CAMERA_MODES = ("rear_side", "rear_top")
+CAMERA_MODE_NAMES = {
+    "rear_side": "侧后方",
+    "rear_top": "后上方",
+}
+
 
 def _sample_envelope_commands(env, lin_vel_x=1.2, lin_vel_y=0.0, ang_vel_yaw=0.0, heading=0.0):
     commands = torch.zeros_like(env.commands)
@@ -159,11 +165,75 @@ def _set_envelope_transition_target(env, reset_transition=False):
         env.filtered_embedded_state_default_dof_pos[:] = env.default_dof_pos
 
 
+def _update_follow_camera(env, camera_state, robot_index=0, mode="rear_side"):
+    """Keep the viewer camera near the robot without following body jitter."""
+    if getattr(env, "viewer", None) is None:
+        return camera_state
+
+    base_pos = env.root_states[robot_index, :3].detach().cpu().numpy()
+    base_quat = env.root_states[robot_index, 3:7].detach().cpu().numpy()
+    x, y, z, w = base_quat
+    yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+    if camera_state is None:
+        camera_state = {
+            "yaw": yaw,
+            "base_z": base_pos[2],
+            "position": None,
+            "lookat": None,
+        }
+    else:
+        yaw_delta = np.arctan2(np.sin(yaw - camera_state["yaw"]), np.cos(yaw - camera_state["yaw"]))
+        camera_state["yaw"] += 0.08 * yaw_delta
+        camera_state["base_z"] += 0.03 * (base_pos[2] - camera_state["base_z"])
+
+    stable_base_pos = base_pos.copy()
+    stable_base_pos[2] = camera_state["base_z"]
+    yaw = camera_state["yaw"]
+
+    forward = np.array([np.cos(yaw), np.sin(yaw), 0.0], dtype=np.float64)
+    left = np.array([-np.sin(yaw), np.cos(yaw), 0.0], dtype=np.float64)
+
+    if mode == "rear_top":
+        target_position = (
+            stable_base_pos
+            - 1.25 * forward
+            + np.array([0.0, 0.0, 1.8], dtype=np.float64)
+        )
+        target_lookat = (
+            stable_base_pos
+            + 0.2 * forward
+            + np.array([0.0, 0.0, 0.15], dtype=np.float64)
+        )
+    else:
+        target_position = (
+            stable_base_pos
+            - 1.6 * forward
+            + 0.75 * left
+            + np.array([0.0, 0.0, 0.65], dtype=np.float64)
+        )
+        target_lookat = (
+            stable_base_pos
+            + 0.25 * forward
+            + np.array([0.0, 0.0, 0.2], dtype=np.float64)
+        )
+
+    if camera_state["position"] is None:
+        camera_state["position"] = target_position
+        camera_state["lookat"] = target_lookat
+    else:
+        camera_state["position"] += 0.12 * (target_position - camera_state["position"])
+        camera_state["lookat"] += 0.12 * (target_lookat - camera_state["lookat"])
+
+    env.set_camera(camera_state["position"], camera_state["lookat"])
+    return camera_state
+
+
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # env.dubug.viz = True
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 1)
+    env_cfg.env.num_envs = 1
     env_cfg.terrain.num_rows = 3
     env_cfg.terrain.num_cols = 3
     env_cfg.terrain.curriculum = True
@@ -211,10 +281,11 @@ def play(args):
     joint_index = 0 # which joint is used for logging
     stop_state_log = 200 # number of steps before plotting states
     stop_rew_log = env.max_episode_length + 1 # number of steps before print average episode rewards
-    camera_position = np.array(env_cfg.viewer.pos, dtype=np.float64)
-    camera_vel = np.array([1., 1., 0.])
-    camera_direction = np.array(env_cfg.viewer.lookat) - np.array(env_cfg.viewer.pos)
     img_idx = 0
+    camera_mode_idx = 0
+    camera_state = None
+    if FOLLOW_CAMERA:
+        camera_state = _update_follow_camera(env, camera_state, robot_index, CAMERA_MODES[camera_mode_idx])
 
     # Realtime management variables
     realtime_factor_window = []
@@ -234,8 +305,10 @@ def play(args):
     env.commands[:] = _front_mammal_test_commands(env, lin_vel_x, lin_vel_y, ang_vel_yaw, heading)
     _set_envelope_transition_target(env, reset_transition=True)
 
+    camera_key_text = ", c=toggle camera side-rear/rear-top" if FOLLOW_CAMERA else ""
     print(
-        "Keyboard: f=front mammal test, r=random envelope. Velocity command is fixed to lin_vel_x=1.2, lin_vel_y=0.0, ang_vel_yaw=0.0"
+        f"Keyboard: f=front mammal test, r=random envelope{camera_key_text}. "
+        "Velocity command is fixed to lin_vel_x=1.2, lin_vel_y=0.0, ang_vel_yaw=0.0"
     )
 
     keyboard = KeyboardInput()
@@ -259,6 +332,11 @@ def play(args):
                     envelope_changed = True
                 elif key == 'r':
                     envelope_changed = True
+                elif key == 'c' and FOLLOW_CAMERA:
+                    camera_mode_idx = (camera_mode_idx + 1) % len(CAMERA_MODES)
+                    if camera_state is not None:
+                        camera_state["position"] = None
+                    print(f"\n摄像头视角: {CAMERA_MODE_NAMES[CAMERA_MODES[camera_mode_idx]]}")
 
             if envelope_changed:
                 if front_mammal_test:
@@ -291,21 +369,21 @@ def play(args):
             print(
                 f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, \r"
                 f"ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f},\r "
+                f"{'camera=' + CAMERA_MODE_NAMES[CAMERA_MODES[camera_mode_idx]] + ', ' if FOLLOW_CAMERA else ''}"
                 f"priors: {prior_text},{condition_text}",
                 end="\r",
             )
 
             actions = policy(obs.detach())
             obs, _, rews, dones, infos = env.step(actions.detach())
+            if FOLLOW_CAMERA:
+                camera_state = _update_follow_camera(env, camera_state, robot_index, CAMERA_MODES[camera_mode_idx])
 
             if RECORD_FRAMES:
                 if i % 2:
                     filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'frames', f"{img_idx}.png")
                     env.gym.write_viewer_image_to_file(env.viewer, filename)
                     img_idx += 1 
-            if MOVE_CAMERA:
-                camera_position += camera_vel * env.dt
-                env.set_camera(camera_position, camera_position + camera_direction)
 
             if ENABLE_LOGGING:
                 if i < stop_state_log:
@@ -375,6 +453,7 @@ if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = False
+    FOLLOW_CAMERA = True
     ENABLE_LOGGING = True
     REALTIME_MODE = True  # Set to False to run at maximum speed
     args = get_args()
