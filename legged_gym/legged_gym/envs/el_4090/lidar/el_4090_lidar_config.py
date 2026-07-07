@@ -53,7 +53,7 @@ class El4090LidarCfg(El4090SpiderCfg):
     class init_state(El4090SpiderCfg.init_state):
         randomize_rot = False
         rot_randomization_range = [-3.14, 3.14]
-        spawn_offset_range = 0.5
+        spawn_offset_range = 0.2
 
     # ── LiDAR perception parameters ──
     class pd_risknet:
@@ -87,6 +87,7 @@ class El4090LidarCfg(El4090SpiderCfg):
         d_safe_max = 1.0          # distance where safe = 1
         cmd_safe_sigma = 0.25     # gaussian kernel width
         dist_penalty_thresh = 1.0 # penalty activates below this (m)
+        exp_sigma = -2.0
 
     class domain_rand(El4090SpiderCfg.domain_rand):
         lidar_point_mask_ratio = 0.02
@@ -95,6 +96,10 @@ class El4090LidarCfg(El4090SpiderCfg):
 
     class commands(El4090SpiderCfg.commands):
         cmd_deadzone = 0.2  # threshold for zeroing small velocity commands
+
+    class sim(El4090SpiderCfg.sim):
+        class physx(El4090SpiderCfg.sim.physx):
+            max_gpu_contact_pairs = 2**24
 
 
 class El4090LidarCfgPPO(El4090SpiderCfgPPO):

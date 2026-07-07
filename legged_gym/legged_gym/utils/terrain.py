@@ -148,6 +148,8 @@ class Terrain:
                                                   stone_distance=stone_distance, max_height=0., platform_size=4.)
         elif choice < self.proportions[6]:
             gap_terrain(terrain, gap_size=gap_size, platform_size=3.)
+        elif choice < self.proportions[7]:
+            pillar_field_terrain(terrain, difficulty, self.cfg)
         else:
             pit_terrain(terrain, depth=pit_depth, platform_size=4.)
 
@@ -196,3 +198,132 @@ def pit_terrain(terrain, depth, platform_size=1.):
     y1 = terrain.width // 2 - platform_size
     y2 = terrain.width // 2 + platform_size
     terrain.height_field_raw[x1:x2, y1:y2] = -depth
+
+def pillar_field_terrain(terrain, difficulty, cfg):
+    """
+    生成随机分布的四棱柱障碍物地形（矩形截面）。
+
+    预生成全部尺寸后逐个放置：每个障碍物在环带内随机采样位置，
+    通过占用网格做 O(1) 碰撞检测（AABB + margin），兼顾效率和正确性。
+    """
+    # 数量范围（随难度插值）
+    count_min = getattr(cfg, "pillar_count_min", 0)
+    count_max = getattr(cfg, "pillar_count_max", 25)
+    # 矩形边长范围（米）
+    size_x_min = getattr(cfg, "pillar_size_x_min", 0.15)
+    size_x_max = getattr(cfg, "pillar_size_x_max", 0.30)
+    size_y_min = getattr(cfg, "pillar_size_y_min", 0.15)
+    size_y_max = getattr(cfg, "pillar_size_y_max", 0.30)
+    # 高度范围（米）
+    height_min = getattr(cfg, "pillar_height_min", 0.20)
+    height_max = getattr(cfg, "pillar_height_max", 0.50)
+    # 间距与放置
+    min_separation = getattr(cfg, "pillar_min_separation", 1.2)
+    center_clear_radius = getattr(cfg, "pillar_center_clear_radius", 1.2)
+    spawn_radius = getattr(cfg, "pillar_spawn_radius", 4.0)
+    allow_height_variation = getattr(cfg, "pillar_allow_height_variation", True)
+
+    count = int(count_min + difficulty * (count_max - count_min))
+
+    min_sep_px = int(min_separation / terrain.horizontal_scale)
+    clear_radius_px = int(center_clear_radius / terrain.horizontal_scale)
+    spawn_radius_px = int(spawn_radius / terrain.horizontal_scale)
+    margin = min_sep_px // 2
+
+    L = terrain.length
+    W = terrain.width
+    center_y = L // 2
+    center_x = W // 2
+
+    # ---- 预生成全部尺寸（长/短边 split + 随机方向） ----
+    half_x_px = []
+    half_y_px = []
+    occ_hx_px = []
+    occ_hy_px = []
+    height_px = []
+
+    for _ in range(count):
+        split = np.random.uniform(0.2, 0.8)
+        x_range = size_x_max - size_x_min
+        y_range = size_y_max - size_y_min
+
+        if np.random.rand() > 0.5:
+            long_min = size_x_min + split * x_range
+            sx = long_min + np.random.uniform(0.0, 1.0) * (size_x_max - long_min)
+            short_max = size_y_min + split * y_range
+            sy = size_y_min + np.random.uniform(0.0, 1.0) * (short_max - size_y_min)
+        else:
+            long_min = size_y_min + split * y_range
+            sy = long_min + np.random.uniform(0.0, 1.0) * (size_y_max - long_min)
+            short_max = size_x_min + split * x_range
+            sx = size_x_min + np.random.uniform(0.0, 1.0) * (short_max - size_x_min)
+
+        hx = int(sx / terrain.horizontal_scale) // 2
+        hy = int(sy / terrain.horizontal_scale) // 2
+        h_val = height_min + np.random.uniform(0.0, 1.0) * (height_max - height_min)
+
+        half_x_px.append(hx)
+        half_y_px.append(hy)
+        occ_hx_px.append(hx + margin)
+        occ_hy_px.append(hy + margin)
+        height_px.append(int(h_val / terrain.vertical_scale))
+
+    # ---- 占用网格 ----
+    occupied = np.zeros((L, W), dtype=bool)
+
+    max_attempts_per = count * 100
+    positions = []
+
+    for i in range(count):
+        hx = half_x_px[i]
+        hy = half_y_px[i]
+        occ_hx = occ_hx_px[i]
+        occ_hy = occ_hy_px[i]
+
+        # 障碍物太大跳过
+        if hy * 2 >= L or hx * 2 >= W:
+            continue
+
+        for _ in range(max_attempts_per):
+            r = np.random.uniform(clear_radius_px, spawn_radius_px)
+            theta = np.random.uniform(0, 2 * np.pi)
+            cx = int(center_x + r * np.cos(theta))
+            cy = int(center_y + r * np.sin(theta))
+
+            # 边界检查（仅本体）
+            if cx - hx < 0 or cx + hx >= W or cy - hy < 0 or cy + hy >= L:
+                continue
+
+            # 中心点距离检查
+            if np.hypot(cx - center_x, cy - center_y) < clear_radius_px:
+                continue
+
+            # O(1) 碰撞检测：占用网格切片
+            oy1 = cy - occ_hy
+            oy2 = cy + occ_hy
+            ox1 = cx - occ_hx
+            ox2 = cx + occ_hx
+            if oy1 < 0 or oy2 > L or ox1 < 0 or ox2 > W:
+                continue
+            if occupied[oy1:oy2, ox1:ox2].any():
+                continue
+
+            # 放置成功
+            occupied[oy1:oy2, ox1:ox2] = True
+            positions.append((cx, cy, height_px[i], hx, hy))
+            break
+
+    # ---- 绘制 ----
+    for cx, cy, h_px, hx, hy in positions:
+        if allow_height_variation:
+            h = np.random.randint(int(h_px * 0.6), h_px + 1)
+        else:
+            h = h_px
+
+        x1 = max(0, cx - hx)
+        x2 = min(W, cx + hx)
+        y1 = max(0, cy - hy)
+        y2 = min(L, cy + hy)
+        terrain.height_field_raw[x1:x2, y1:y2] = h
+
+    return terrain
