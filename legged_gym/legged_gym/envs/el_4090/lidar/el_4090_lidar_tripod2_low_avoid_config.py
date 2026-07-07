@@ -15,8 +15,8 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
         terrain_length = 20
         terrain_width = 20
         border_size = 5
-        num_rows = 8  # number of terrain rows (levels)
-        num_cols = 6  # number of terrain cols (types)
+        num_rows = 6  # number of terrain rows (levels)
+        num_cols = 4  # number of terrain cols (types)
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
         terrain_proportions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
         difficulty_scale = 1.0
