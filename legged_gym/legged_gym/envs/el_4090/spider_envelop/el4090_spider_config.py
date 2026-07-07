@@ -153,7 +153,7 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
             contact_collection = 2  # 0: never, 1: last sub-step, 2: all sub-steps (default=2
 
     class control(ElSpiderAirRoughCfg.control):
-        control_type = 'P' #P， P_LOWPASS
+        control_type = 'P_LOWPASS' #P， P_LOWPASS
         # PD Drive parameters matching Anymal:
         stiffness = {'HAA': 130., 
                      'HFE': 130., 
@@ -162,7 +162,7 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
                    'HFE': 4., 
                    'KFE': 4.}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
-        action_scale = 0.25
+        action_scale = 0.35
 
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
@@ -248,13 +248,13 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
         embedded_state_dof_pos_tolerance = 0.12
         embedded_state_haa_pos_tolerance = 0.35
 
-        morphology_haa_range_mammal_limit = 0.38
-        morphology_haa_range_relaxed_limit = 0.90
+        morphology_haa_range_mammal_limit = 0.45
+        morphology_haa_range_relaxed_limit = 1.05
         morphology_haa_range_active_threshold = 0.60
         morphology_haa_range_weight_exponent = 2.0
         haa_swing_min_command = 0.15
-        haa_swing_velocity_clip = 4.0
-        haa_swing_morphology_relief = 0.7
+        haa_swing_velocity_clip = 5.0
+        haa_swing_morphology_relief = 0.4
         
         reset_base_height_with_morphology = True
 
@@ -287,8 +287,8 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
 
             embedded_state_dof_pos = -5.0
             embedded_state_dof_vel = -0.02
-            morphology_haa_range = -8.0
-            haa_swing = 0.08
+            morphology_haa_range = -3.0
+            haa_swing = 0.35
 
             collision = -1.0
             action_rate = -0.001
@@ -438,7 +438,7 @@ class El4090EnvelopCfgPPO(ElSpiderAirRoughCfgPPO):
 
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        experiment_name = 'el_4090_envelop'
+        experiment_name = 'el_4090_envelop_lowpass'
         run_name = ''
         # load and resume
         resume = False
