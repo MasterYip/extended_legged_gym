@@ -112,7 +112,7 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
 
     class sim(El4090LidarCfg.sim):
         class physx(El4090LidarCfg.sim.physx):
-            max_gpu_contact_pairs = 2**25
+            max_gpu_contact_pairs = 2**24
 
 
 class El4090LidarTripod2LowAvoidCfgPPO(El4090LidarCfgPPO):
