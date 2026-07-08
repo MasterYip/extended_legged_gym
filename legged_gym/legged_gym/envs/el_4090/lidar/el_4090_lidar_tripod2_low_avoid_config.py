@@ -15,7 +15,7 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
         terrain_length = 16
         terrain_width = 16
         border_size = 5
-        num_rows = 4  # number of terrain rows (levels)
+        num_rows = 5  # number of terrain rows (levels)
         num_cols = 4  # number of terrain cols (types)
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
         terrain_proportions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
@@ -112,7 +112,7 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
 
     class sim(El4090LidarCfg.sim):
         class physx(El4090LidarCfg.sim.physx):
-            max_gpu_contact_pairs = 2**25
+            max_gpu_contact_pairs = 2**24
 
 
 class El4090LidarTripod2LowAvoidCfgPPO(El4090LidarCfgPPO):
