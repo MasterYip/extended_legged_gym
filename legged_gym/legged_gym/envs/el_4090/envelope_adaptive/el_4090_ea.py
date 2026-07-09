@@ -7,11 +7,9 @@ from isaacgym.torch_utils import (
     quat_apply, quat_mul, quat_from_euler_xyz, quat_from_angle_axis,
     torch_rand_float,
 )
-from isaacgym import gymapi, gymtorch, gymutil
+from isaacgym import gymapi, gymtorch
 
 from legged_gym.envs.el_4090.spider_nomal.el_4090 import EL_4090
-from legged_gym.utils.math_utils import quat_apply_yaw
-
 from legged_gym.utils.LidarSensor.LidarSensor.lidar_sensor import LidarSensor
 from legged_gym.utils.LidarSensor.LidarSensor.sensor_config.lidar_sensor_config import LidarConfig, LidarType
 
@@ -287,12 +285,12 @@ class EL_4090_EA(EL_4090):
     # ==================================================================
 
     def _compute_avoidance_vel(self):
-        """Compute obstacle-avoidance velocity from envelope params.
+        """Stub: no avoidance velocity computation yet.
 
-        Current: passthrough -- returns raw self.commands unchanged.
+        self.commands is used as-is by the policy.
         Future: use self.env_params + self.commands to compute safe velocity.
         """
-        pass  # self.commands is used as-is
+        pass
 
     # ==================================================================
     # Step hooks

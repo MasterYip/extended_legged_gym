@@ -11,8 +11,8 @@ import torch
 
 def compute_envelope_params(
     lidar_points: torch.Tensor,      # (num_envs, N, 3) body-frame point cloud
-    base_pos: torch.Tensor,           # (num_envs, 3) world-frame base position
-    base_quat: torch.Tensor,          # (num_envs, 4) world-frame base orientation
+    base_pos: torch.Tensor,           # (num_envs, 3) world-frame base position (reserved for future use)
+    base_quat: torch.Tensor,          # (num_envs, 4) world-frame base orientation (reserved for future use)
     envelope_cfg,                     # config.envelope
 ) -> dict:
     """Compute 8 envelope parameters from LiDAR point cloud.
