@@ -264,3 +264,9 @@ task_registry.register("el4090_high_stand_trot_collect", EL4090DataCollect, El40
 task_registry.register("el4090_wave_collect", EL4090DataCollect, El4090WaveCollectCfg(), El4090WaveCollectCfgPPO())
 task_registry.register("el4090_jump_collect", EL4090DataCollect, El4090JumpCollectCfg(), El4090JumpCollectCfgPPO())
 task_registry.register("el4090_mammal_collect", EL4090DataCollect, El4090MammalCollectCfg(), El4090MammalCollectCfgPPO())
+
+# Envelope Adaptive
+from .el_4090.envelope_adaptive.el_4090_ea import EL_4090_EA
+from .el_4090.envelope_adaptive.el_4090_ea_config import El4090EACfg, El4090EACfgPPO
+
+task_registry.register("el4090_ea", EL_4090_EA, El4090EACfg(), El4090EACfgPPO())
