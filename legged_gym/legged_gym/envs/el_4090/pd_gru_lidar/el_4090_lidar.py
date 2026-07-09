@@ -518,6 +518,55 @@ class EL_4090_Lidar(EL_4090):
         for i in range(4):
             self.vis.draw_boldline(env_id, [corners[i], corners[(i + 1) % 4]],
                                    rad=0.01, resolution=6, color=(0, 1, 0))
+            
+        # ── Sector distance spokes + endpoint spheres ──
+        # Spokes start from body surface (body_radius compensation),
+        # colour normalised by d_thresh (the reward's penalty range).
+        n_sec = int(self.cfg.pd_risknet.n_sectors)
+        d_thresh = float(self.cfg.cmd_safe.dist_penalty_thresh)
+        sec_dists = self._sector_dists[env_id]  # (36,)  d_eff = min_dist − body_radius
+        sec_centers = self._sector_centers      # (36, 2)
+        bp = self.base_pos[env_id]              # (3,)
+        bq = self.base_quat[env_id]             # (4,)
+
+        line_verts = []
+        line_colors = []
+        for i in range(n_sec):
+            d_eff = sec_dists[i].item()
+            body_r = self._body_radius[i].item()
+            t = d_eff / d_thresh
+
+            if t >= 1.0:
+                color = (0.5, 0.5, 0.5)        # beyond penalty range → grey stub
+                d_draw = d_thresh
+            elif t < 0.5:
+                color = (1.0, t * 2.0, 0.0)    # red → yellow
+                d_draw = d_eff
+            else:
+                color = (2.0 - t * 2.0, 1.0, 0.0)  # yellow → green
+                d_draw = d_eff
+
+            body_dir = torch.tensor([sec_centers[i, 0].item(),
+                                     sec_centers[i, 1].item(), 0.0],
+                                    device=self.device)
+            world_dir = quat_apply(bq, body_dir)
+            start = bp + world_dir * body_r         # body surface
+            end = start + world_dir * d_draw        # obstacle / cap
+
+            p0 = start.cpu().numpy().tolist()
+            p1 = end.cpu().numpy().tolist()
+            line_verts.extend(p0 + p1)
+            line_colors.extend(color + color)
+
+            sphere_pose = gymapi.Transform(gymapi.Vec3(p1[0], p1[1], p1[2]), r=None)
+            sphere_geom = gymutil.WireframeSphereGeometry(0.03, 4, 4, None, color=color)
+            gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[env_id], sphere_pose)
+
+        if line_verts:
+            verts_np = np.array(line_verts, dtype=np.float32)
+            colors_np = np.array(line_colors, dtype=np.float32)
+            self.gym.add_lines(self.viewer, self.envs[env_id], n_sec,
+                               verts_np, colors_np)
 
     def draw_foot_hip_positions(self):
         """Suppressed: clear_lines here would wipe LiDAR debug viz drawn in _draw_debug_vis."""

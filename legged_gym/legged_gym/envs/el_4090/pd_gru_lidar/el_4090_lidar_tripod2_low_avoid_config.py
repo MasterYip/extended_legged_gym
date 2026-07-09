@@ -1,4 +1,4 @@
-from legged_gym.envs.el_4090.lidar.el_4090_lidar_config import (
+from legged_gym.envs.el_4090.pd_gru_lidar.el_4090_lidar_config import (
     El4090LidarCfg,
     El4090LidarCfgPPO,
 )
@@ -11,12 +11,12 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
 
     class terrain(El4090LidarCfg.terrain):
         mesh_type = 'trimesh'
-        curriculum = True
+        curriculum = False
         terrain_length = 16
         terrain_width = 16
         border_size = 5
-        num_rows = 5  # number of terrain rows (levels)
-        num_cols = 4  # number of terrain cols (types)
+        num_rows = 2  # number of terrain rows (levels)
+        num_cols = 1  # number of terrain cols (types)
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
         terrain_proportions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
         difficulty_scale = 1.0
@@ -52,9 +52,9 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
         spawn_offset_range = 0.2
 
     class cmd_safe(El4090LidarCfg.cmd_safe):
-        body_semi_length = 0.26   # EL_4090 half-length, ~0.5 m body
-        body_semi_width = 0.15    # EL_4090 half-width,  ~0.24 m body + leg
-        z_thresh_high = 0.2      # overhead filter threshold (body-frame z)
+        body_semi_length = 0.45   # EL_4090 half-length,
+        body_semi_width = 0.2    # EL_4090 half-width,
+        z_thresh_high = 0.5      # overhead filter threshold (body-frame z)
         d_safety = 0.10           # additional safety gap (m)
         d_safe_max = 1.0          # distance where safe = 1
         cmd_safe_sigma = 0.25     # gaussian kernel width
@@ -112,7 +112,7 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
 
     class sim(El4090LidarCfg.sim):
         class physx(El4090LidarCfg.sim.physx):
-            max_gpu_contact_pairs = 2**24
+            max_gpu_contact_pairs = 2**23
 
 
 class El4090LidarTripod2LowAvoidCfgPPO(El4090LidarCfgPPO):

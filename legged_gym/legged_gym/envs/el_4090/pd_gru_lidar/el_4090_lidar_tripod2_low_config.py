@@ -1,4 +1,4 @@
-from legged_gym.envs.el_4090.lidar.el_4090_lidar_config import (
+from legged_gym.envs.el_4090.pd_gru_lidar.el_4090_lidar_config import (
     El4090LidarCfg,
     El4090LidarCfgPPO,
 )
