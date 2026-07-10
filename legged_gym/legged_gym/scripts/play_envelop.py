@@ -366,13 +366,13 @@ def play(args):
                 for name in ("morphology_front_prior", "morphology_middle_prior", "morphology_back_prior")
                 if name in env.condition_names
             )
-            print(
-                f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, \r"
-                f"ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f},\r "
-                f"{'camera=' + CAMERA_MODE_NAMES[CAMERA_MODES[camera_mode_idx]] + ', ' if FOLLOW_CAMERA else ''}"
-                f"priors: {prior_text},{condition_text}",
-                end="\r",
-            )
+            # print(
+            #     f"当前命令: lin_vel_x={lin_vel_x:.2f}, lin_vel_y={lin_vel_y:.2f}, \r"
+            #     f"ang_vel_yaw={ang_vel_yaw:.2f}, heading={heading:.2f},\r "
+            #     f"{'camera=' + CAMERA_MODE_NAMES[CAMERA_MODES[camera_mode_idx]] + ', ' if FOLLOW_CAMERA else ''}"
+            #     f"priors: {prior_text},{condition_text}",
+            #     end="\r",
+            # )
 
             actions = policy(obs.detach())
             obs, _, rews, dones, infos = env.step(actions.detach())

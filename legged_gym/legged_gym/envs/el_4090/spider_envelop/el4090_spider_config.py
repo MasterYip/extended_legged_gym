@@ -232,40 +232,42 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
 
     ## Rewards V2 (faster&smoother gait, zzl-style)
     class rewards(ElSpiderAirRoughCfg.rewards):
-        max_contact_force = 400.
-        base_height_spider_target = 0.53
-        base_height_mammal_target = 0.64
+        max_contact_force = 400.  # 足端接触力软限制，超过后通过 feet_contact_forces 惩罚
 
-        feet_air_time_target = 0.25
+        base_height_spider_target = 0.53  # 蜘蛛形态下的机身目标高度 [m]
+        base_height_mammal_target = 0.64  # 哺乳形态下的机身目标高度 [m]
 
-        tripod_contact_threshold = 1.0
-        tripod_contact_min_command = 0.1
-        envelope_constraint_margin = 0.0
-        envelope_constraint_min_command = 0.15
-        structure_transition_error_threshold = 0.10
-        structure_transition_reward_ramp_time = 2.0
-        reset_structure_transition_on_resample = True
-        embedded_state_dof_pos_tolerance = 0.12
-        embedded_state_haa_pos_tolerance = 0.35
+        feet_air_time_target = 0.25  # 期望单脚离地时间 [s]，用于 feet_air_time 奖励
 
-        morphology_haa_range_mammal_limit = 0.45
-        morphology_haa_range_relaxed_limit = 1.05
-        morphology_haa_range_active_threshold = 0.60
-        morphology_haa_range_weight_exponent = 2.0
-        haa_swing_min_command = 0.15
-        haa_swing_velocity_clip = 5.0
-        haa_swing_morphology_relief = 0.4
+        tripod_contact_threshold = 1.0  # 判断足端接触的接触力阈值 [N]
+        tripod_contact_min_command = 0.1  # 速度指令小于该值时不激活三足接触模式约束
+        envelope_constraint_margin = 0.0  # 足端允许超出包络边界的余量 [m]
+        envelope_constraint_min_command = 0.15  # 速度指令小于该值时不激活包络约束惩罚
+        structure_transition_error_threshold = 0.10  # 结构目标姿态误差阈值，超过后惩罚过渡期关节速度
+        structure_transition_reward_ramp_time = 2.0  # 结构切换后奖励/惩罚从 0 逐渐生效的时间 [s]
+        reset_structure_transition_on_resample = True  # 重采样 command 时是否重置结构切换过渡计时
+        embedded_state_dof_pos_tolerance = 0.12  # 嵌入状态目标关节位置允许误差 [rad]
+        embedded_state_haa_pos_tolerance = 0.35  # HAA 关节使用的更宽嵌入状态位置允许误差 [rad]
+
+        morphology_haa_range_mammal_limit = 0.45  # 哺乳形态较强时，HAA 相对哺乳默认姿态的软限制范围 [rad]
+        morphology_haa_range_relaxed_limit = 1.05  # 非哺乳/弱哺乳形态时，HAA 相对哺乳默认姿态的放宽范围 [rad]
+        morphology_haa_range_active_threshold = 0.75  # morphology prior 超过该值后逐步激活 HAA 范围限制
+        morphology_haa_range_weight_exponent = 2.0  # HAA 范围限制随 morphology prior 增强的权重指数
         
-        reset_base_height_with_morphology = True
+        haa_swing_min_command = 0.15  # 速度/转向指令超过该值时才奖励 HAA 摆动
+        haa_swing_velocity_clip = 5.0  # HAA 摆动奖励中关节速度归一化前的裁剪上限 [rad/s]
+        haa_swing_morphology_relief = 0.4  # 哺乳形态越强，HAA 摆动奖励按该系数减弱
+        
+        reset_base_height_with_morphology = True  # reset 初始高度是否随当前 morphology prior 插值
 
-        only_positive_rewards = False
+        only_positive_rewards = False  # 是否将总 reward 裁剪为非负；False 保留惩罚项的负值
         # Multi-stage
         # Stage 0: Learn to walk with tripod gait
         # Stage 1: Correct DOF and FootZ positions / Prevent Slip
-        multi_stage_rewards = False  # if true, reward scales should be list
-        reward_stage_threshold = 2.0
-        reward_min_stage = 0  # Start from 0
-        reward_max_stage = 0
+        multi_stage_rewards = False  # 是否启用多阶段 reward；启用时 reward scales 应配置为 list
+        reward_stage_threshold = 2.0  # 阶段切换的平均奖励阈值
+        reward_min_stage = 0  # 最小 reward 阶段，从 0 开始
+        reward_max_stage = 0  # 最大 reward 阶段
 
         class scales:
             termination = -0.0
@@ -283,7 +285,7 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
             dof_acc = -1e-7
 
             feet_slip = -0.05 
-            feet_air_time = 1.5
+            feet_air_time = 3
 
             embedded_state_dof_pos = -5.0
             embedded_state_dof_vel = -0.02
@@ -304,7 +306,7 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
             feet_sync = -0.1
             tripod_contact_pattern = -1
             
-            envelope_constraint = -10.0  #TODO: tune this value
+            envelope_constraint = -20.0  #TODO: tune this value
 
 
     class commands(ElSpiderAirRoughCfg.commands):
