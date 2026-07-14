@@ -11,14 +11,14 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
 
     class terrain(El4090LidarCfg.terrain):
         mesh_type = 'trimesh'
-        curriculum = False
+        curriculum = False  #训练时True
         terrain_length = 16
         terrain_width = 16
         border_size = 5
-        num_rows = 2  # number of terrain rows (levels)
-        num_cols = 1  # number of terrain cols (types)
+        num_rows = 2  # number of terrain rows (levels) 训练时5
+        num_cols = 1  # number of terrain cols (types) 训练时4
         # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
-        terrain_proportions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        terrain_proportions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
         difficulty_scale = 1.0
 
         # 柱子参数（pillar_field_terrain 已通过 getattr 读取）
@@ -32,7 +32,7 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
         pillar_height_max = 2.00
         pillar_min_separation = 2.2  
         pillar_center_clear_radius = 3.0
-        pillar_spawn_radius = 10.0        #约束范围半径
+        pillar_spawn_radius = 7.5        #约束范围半径
         pillar_allow_height_variation = True
 
     class init_state(El4090LidarCfg.init_state):
@@ -112,7 +112,7 @@ class El4090LidarTripod2LowAvoidCfg(El4090LidarCfg):
 
     class sim(El4090LidarCfg.sim):
         class physx(El4090LidarCfg.sim.physx):
-            max_gpu_contact_pairs = 2**23
+            max_gpu_contact_pairs = 2**23  #训练时2**24
 
 
 class El4090LidarTripod2LowAvoidCfgPPO(El4090LidarCfgPPO):

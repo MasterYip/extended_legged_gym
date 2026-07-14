@@ -8,7 +8,7 @@ class El4090Tripod2LowCfg(El4090SpiderCfg):
     """EL4090 2-group tripod gait on flat terrain — low crouching stance."""
 
     class init_state(El4090SpiderCfg.init_state):
-        pos = [0.0, 0.0, 0.4]
+        pos = [0.0, 0.0, 0.45]
         default_joint_angles = {  # = target angles [rad] when action = 0.0
             "RF_HAA": 0.0,
             "RM_HAA": 0.0,
