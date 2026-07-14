@@ -150,6 +150,8 @@ class Terrain:
             gap_terrain(terrain, gap_size=gap_size, platform_size=3.)
         elif choice < self.proportions[7]:
             pillar_field_terrain(terrain, difficulty, self.cfg)
+        elif choice < self.proportions[8]:
+            sin_curve_channel_terrain(terrain, difficulty, self.cfg)
         else:
             pit_terrain(terrain, depth=pit_depth, platform_size=4.)
 
@@ -198,6 +200,45 @@ def pit_terrain(terrain, depth, platform_size=1.):
     y1 = terrain.width // 2 - platform_size
     y2 = terrain.width // 2 + platform_size
     terrain.height_field_raw[x1:x2, y1:y2] = -depth
+
+def sin_curve_channel_terrain(terrain, difficulty, cfg):
+    """Generate a sine-wave channel with walls on both sides.
+
+    Channel runs along terrain width (world x-axis).  The centre varies
+    along terrain length (world y-axis):
+
+        centre = L/2 + amplitude * sin(2*pi*periods * world_pos / W_world)
+
+    Parameters (from cfg):
+        channel_width:   passable channel width (m).  Default 3.0.
+        wall_height:     wall height (m).              Default 2.0.
+        curve_amplitude: sine amplitude (m).           Default 1.0.
+        curve_periods:   number of full sine periods.  Default 1.5.
+    """
+    channel_width = float(getattr(cfg, "channel_width", 3.0))
+    wall_height = float(getattr(cfg, "wall_height", 2.0))
+    curve_amplitude = float(getattr(cfg, "curve_amplitude", 1.0))
+    curve_periods = float(getattr(cfg, "curve_periods", 1.5))
+
+    hs = terrain.horizontal_scale
+    vs = terrain.vertical_scale
+    L = terrain.length
+    W = terrain.width
+    L_world = L * hs
+    W_world = W * hs
+
+    wall_px = int(wall_height / vs)
+    half_px = int(channel_width / 2.0 / hs)
+
+    for py in range(W):
+        world_pos = py * hs
+        centre = L_world / 2.0 + curve_amplitude * np.sin(
+            2.0 * np.pi * curve_periods * world_pos / W_world)
+        centre_px = int(centre / hs)
+        lo = min(L, max(0, centre_px - half_px))
+        hi = max(0, min(L, centre_px + half_px))
+        terrain.height_field_raw[:lo, py] = wall_px
+        terrain.height_field_raw[hi:, py] = wall_px
 
 def pillar_field_terrain(terrain, difficulty, cfg):
     """

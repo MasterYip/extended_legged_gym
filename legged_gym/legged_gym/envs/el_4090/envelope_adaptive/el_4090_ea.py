@@ -8,12 +8,18 @@ from isaacgym.torch_utils import (
     torch_rand_float,
 )
 from isaacgym import gymapi, gymtorch
+import isaacgym.gymutil as gymutil
+import matplotlib.pyplot as plt
 
 from legged_gym.envs.el_4090.spider_nomal.el_4090 import EL_4090
+from legged_gym.utils.math_utils import quat_apply_yaw
 from legged_gym.utils.LidarSensor.LidarSensor.lidar_sensor import LidarSensor
 from legged_gym.utils.LidarSensor.LidarSensor.sensor_config.lidar_sensor_config import LidarConfig, LidarType
 
-from legged_gym.envs.el_4090.envelope_adaptive.envelope_computer import compute_envelope_params
+from legged_gym.envs.el_4090.envelope_adaptive.envelope_computer import (
+    compute_envelope_params, _build_hex_edges, _offset_hexagon,
+)
+from legged_gym.envs.el_4090.envelope_adaptive.avoidance_planner import compute_safe_velocity
 
 
 class EL_4090_EA(EL_4090):
@@ -50,10 +56,17 @@ class EL_4090_EA(EL_4090):
             (self.num_envs, n_pts), d_max, device=self.device,
             dtype=torch.float, requires_grad=False,
         )
-        # Envelope params buffer -- updated per step
+        # Envelope params buffer -- start at max, shrink on obstacle detection
+        ecfg = self.cfg.envelope
         self.env_params = {
-            k: torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-            for k in ["x1", "x3", "l1", "r1", "l2", "r2", "l3", "r3"]
+            "x1": torch.full((self.num_envs,), ecfg.x1_max, device=self.device),
+            "x3": torch.full((self.num_envs,), ecfg.x3_max, device=self.device),
+            "l1": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
+            "r1": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
+            "l2": torch.full((self.num_envs,), ecfg.mid_max, device=self.device),
+            "r2": torch.full((self.num_envs,), ecfg.mid_max, device=self.device),
+            "l3": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
+            "r3": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
         }
 
     # ==================================================================
@@ -193,104 +206,194 @@ class EL_4090_EA(EL_4090):
         """Compute envelope params and draw the 3D prism."""
         if self.lidar_sensor is None:
             return
-
         params = compute_envelope_params(
-            self.lidar_points_base,
-            self.base_pos,
-            self.base_quat,
-            self.cfg.envelope,
+            self.lidar_points_base, self.base_pos, self.base_quat,
+            self.cfg.envelope, self.env_params,
         )
         for k, v in params.items():
             self.env_params[k].copy_(v)
-
         self._draw_envelope()
 
-    def _draw_envelope(self):
-        """Draw 3D prism envelope (top + bottom hexagons + 6 vertical edges)."""
-        if self.viewer is None:
-            return
+    @staticmethod
+    def _build_prism_verts(x1, x3, l1, l2, l3, r1, r2, r3, z):
+        return torch.tensor([
+            [x1,  r1, z], [0.0, r2, z], [x3,  r3, z],
+            [x3, -l3, z], [0.0, -l2, z], [x1, -l1, z],
+        ], dtype=torch.float)
 
-        self.gym.clear_lines(self.viewer)
-
-        z_top = self.cfg.envelope.z_top
-        z_bottom = self.cfg.envelope.z_bottom
-
-        env_id = 0  # draw for env 0 only
-
-        x1 = self.env_params["x1"][env_id].item()
-        x3 = self.env_params["x3"][env_id].item()
-        l1 = self.env_params["l1"][env_id].item()
-        r1 = self.env_params["r1"][env_id].item()
-        l2 = self.env_params["l2"][env_id].item()
-        r2 = self.env_params["r2"][env_id].item()
-        l3 = self.env_params["l3"][env_id].item()
-        r3 = self.env_params["r3"][env_id].item()
-
-        # 6 vertices in body frame (CCW from front-right)
-        # x2 = 0 is implicit
-        vertices_top = torch.tensor([
-            [x1,  r1, z_top],   # 0: front-right
-            [0.0, r2, z_top],   # 1: mid-right
-            [x3,  r3, z_top],   # 2: rear-right
-            [x3, -l3, z_top],   # 3: rear-left
-            [0.0, -l2, z_top],  # 4: mid-left
-            [x1, -l1, z_top],   # 5: front-left
-        ], device=self.device, dtype=torch.float)
-
-        vertices_bottom = torch.tensor([
-            [x1,  r1, z_bottom],
-            [0.0, r2, z_bottom],
-            [x3,  r3, z_bottom],
-            [x3, -l3, z_bottom],
-            [0.0, -l2, z_bottom],
-            [x1, -l1, z_bottom],
-        ], device=self.device, dtype=torch.float)
-
-        # Transform to world frame
-        bp = self.base_pos[env_id]
-        bq = self.base_quat[env_id]
-
-        top_world = bp + quat_apply(bq, vertices_top)
-        bottom_world = bp + quat_apply(bq, vertices_bottom)
-
-        # Build line segments: top hexagon (6) + bottom hexagon (6) + verticals (6) = 18
-        num_lines = 18
-        verts_list = []
-        color_list = []
-
-        envelope_color = (0.0, 1.0, 0.5)  # green-cyan
-
-        for hex_verts in [top_world, bottom_world]:
+    def _draw_hex_prism(self, verts_top, verts_bot, env_id, color, rad):
+        for hex_verts in [verts_top, verts_bot]:
             for i in range(6):
                 j = (i + 1) % 6
-                verts_list.extend(hex_verts[i].cpu().numpy().tolist())
-                verts_list.extend(hex_verts[j].cpu().numpy().tolist())
-                color_list.extend(envelope_color)
-                color_list.extend(envelope_color)
-
-        # Vertical edges
+                self.vis.draw_boldline(env_id, [
+                    hex_verts[i].cpu().numpy().tolist(),
+                    hex_verts[j].cpu().numpy().tolist(),
+                ], rad=rad, color=color)
         for i in range(6):
-            verts_list.extend(top_world[i].cpu().numpy().tolist())
-            verts_list.extend(bottom_world[i].cpu().numpy().tolist())
-            color_list.extend(envelope_color)
-            color_list.extend(envelope_color)
+            self.vis.draw_boldline(env_id, [
+                verts_top[i].cpu().numpy().tolist(),
+                verts_bot[i].cpu().numpy().tolist(),
+            ], rad=rad, color=color)
 
-        verts_np = np.array(verts_list, dtype=np.float32)
-        colors_np = np.array(color_list, dtype=np.float32)
-        self.gym.add_lines(self.viewer, self.envs[env_id], num_lines,
-                           verts_np, colors_np)
+    def _draw_lidar_points(self, eid, bp, bq, p, m, zt, zb):
+        """Draw LiDAR point cloud with colour coding: blue=valid hit, red=in 3D sensitive zone."""
+        pts = self.lidar_points_base[eid]                               # (N, 3) body-frame
+        dists = self.raycast_distances[eid]                             # (N,)
+        d_max = float(self.cfg.raycaster.max_distance)
+        valid = dists < (d_max - 0.001)
+        if not valid.any():
+            return
+        pts = pts[valid]
+        pts_world = (bp.unsqueeze(0) + quat_apply(
+            bq.unsqueeze(0).expand(pts.shape[0], 4), pts)).cpu().numpy()
+
+        # Determine which points are in the 3D sensitive zone
+        x = pts[:, 0]; y = pts[:, 1]; z = pts[:, 2]
+        in_z = (z >= zb) & (z <= zt)
+        # Build inner/outer hexagon edges for XY check
+        _x1 = torch.tensor([p["x1"]], device=self.device)
+        _x3 = torch.tensor([p["x3"]], device=self.device)
+        _l1 = torch.tensor([p["l1"]], device=self.device); _r1 = torch.tensor([p["r1"]], device=self.device)
+        _l2 = torch.tensor([p["l2"]], device=self.device); _r2 = torch.tensor([p["r2"]], device=self.device)
+        _l3 = torch.tensor([p["l3"]], device=self.device); _r3 = torch.tensor([p["r3"]], device=self.device)
+        inner_verts = _build_hex_edges(_x1, _x3, _l1, _l2, _l3, _r1, _r2, _r3)[0]  # (6, 2)
+        outer_verts = _offset_hexagon(inner_verts.unsqueeze(0), m)[0]               # (6, 2)
+
+        def _inside(pts_xy, verts):
+            V = 6
+            nxt = (torch.arange(V) + 1) % V
+            edges = verts[nxt, :] - verts
+            rel = pts_xy.unsqueeze(1) - verts.unsqueeze(0)
+            cross = edges[:, 0] * rel[..., 1] - edges[:, 1] * rel[..., 0]
+            return (cross >= 0).all(dim=-1)
+
+        pts_xy = torch.stack([x, y], dim=-1)
+        in_zone = _inside(pts_xy, outer_verts) & ~_inside(pts_xy, inner_verts) & in_z
+        in_zone_np = in_zone.cpu().numpy()
+
+        # Draw: zone points (red, larger), normal hits (blue, smaller)
+        red_pts = pts_world[in_zone_np]
+        blue_pts = pts_world[~in_zone_np]
+
+        red_geom = gymutil.WireframeSphereGeometry(0.04, 4, 4, None, color=(1, 0, 0))
+        for pt in red_pts:
+            pose = gymapi.Transform(gymapi.Vec3(float(pt[0]), float(pt[1]), float(pt[2])))
+            gymutil.draw_lines(red_geom, self.gym, self.viewer, self.envs[eid], pose)
+
+        blue_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(0.2, 0.4, 1))
+        for pt in blue_pts:
+            pose = gymapi.Transform(gymapi.Vec3(float(pt[0]), float(pt[1]), float(pt[2])))
+            gymutil.draw_lines(blue_geom, self.gym, self.viewer, self.envs[eid], pose)
+
+    def _draw_envelope(self):
+        if self.viewer is None:
+            return
+        self.gym.clear_lines(self.viewer)
+        zt = self.cfg.envelope.z_top
+        zb = self.cfg.envelope.z_bottom
+        m = self.cfg.envelope.margin_distance
+        eid = 0
+        bp = self.base_pos[eid]; bq = self.base_quat[eid]
+
+        p = {k: self.env_params[k][eid].item() for k in self.env_params}
+        # inner
+        it = self._build_prism_verts(p["x1"], p["x3"], p["l1"], p["l2"], p["l3"],
+                                      p["r1"], p["r2"], p["r3"], zt).to(self.device)
+        ib = self._build_prism_verts(p["x1"], p["x3"], p["l1"], p["l2"], p["l3"],
+                                      p["r1"], p["r2"], p["r3"], zb).to(self.device)
+        self._draw_hex_prism(bp + quat_apply(bq, it), bp + quat_apply(bq, ib),
+                             eid, (0.0, 1.0, 0.5), 0.02)
+        # outer
+        ot = self._build_prism_verts(p["x1"]+m, p["x3"]-m,
+                                      p["l1"]+m, p["l2"]+m, p["l3"]+m,
+                                      p["r1"]+m, p["r2"]+m, p["r3"]+m, zt).to(self.device)
+        ob = self._build_prism_verts(p["x1"]+m, p["x3"]-m,
+                                      p["l1"]+m, p["l2"]+m, p["l3"]+m,
+                                      p["r1"]+m, p["r2"]+m, p["r3"]+m, zb).to(self.device)
+        self._draw_hex_prism(bp + quat_apply(bq, ot), bp + quat_apply(bq, ob),
+                             eid, (0.3, 0.7, 0.5), 0.01)
+        # point cloud
+        self._draw_lidar_points(eid, bp, bq, p, m, zt, zb)
 
     # ==================================================================
     # Avoidance velocity (passthrough stub)
     # ==================================================================
 
     def _compute_avoidance_vel(self):
-        """Stub: no avoidance velocity computation yet.
+        if self.lidar_sensor is None:
+            self._desired_cmd = self.commands[:, :3].clone()
+            self._safe_cmd = self.commands[:, :3].clone()
+            return
+        self._desired_cmd = self.commands[:, :3].clone()
+        cfg = getattr(self.cfg, "avoidance", self.cfg.envelope)
+        prev_theta = getattr(self, '_prev_theta_out', None)
+        safe_vx, safe_vy, self._avoid_debug = compute_safe_velocity(
+            self.lidar_points_base, self.raycast_distances,
+            self.base_pos, self.base_quat,
+            self.commands, cfg, prev_theta=prev_theta,
+        )
+        if safe_vx.abs().sum() > 1e-6:
+            self._prev_theta_out = float(np.arctan2(
+                safe_vy[0].item(), safe_vx[0].item()))
+        self.commands[:, 0] = safe_vx
+        self.commands[:, 1] = safe_vy
+        self._safe_cmd = self.commands[:, :3].clone()
 
-        self.commands is used as-is by the policy.
-        Future: use self.env_params + self.commands to compute safe velocity.
-        """
-        pass
+    def _draw_velocity_arrows(self):
+        """Draw desired (yellow) and safe (red) velocity arrows (world-frame)."""
+        if self.viewer is None:
+            return
+        for i in range(self.num_envs):
+            bp = self.root_states[i, :3].cpu().numpy()
+            # desired
+            d_world = quat_apply_yaw(self.base_quat[i:i+1],
+                                     self._desired_cmd[i:i+1]).cpu().numpy()[0]
+            self.vis.draw_arrow(i, bp, bp + d_world * 0.5, color=(1, 1, 0))
+            # safe
+            s_world = quat_apply_yaw(self.base_quat[i:i+1],
+                                     self._safe_cmd[i:i+1]).cpu().numpy()[0]
+            self.vis.draw_arrow(i, bp, bp + s_world * 0.5, color=(1, 0, 0))
+
+    def _draw_avoidance_debug(self):
+        """Matplotlib polar plot: angular-distance curve, spline, peaks."""
+        if not self._avoid_debug:
+            return
+        if not hasattr(self, '_debug_fig'):
+            plt.ion()
+            self._debug_fig, self._debug_ax = plt.subplots(
+                subplot_kw={'projection': 'polar'}, figsize=(5, 5))
+            self._debug_step = 0
+        self._debug_step += 1
+        if self._debug_step % 10 != 0:
+            return
+
+        d = self._avoid_debug
+        ax = self._debug_ax
+        ax.clear()
+        ax.set_theta_zero_location('N')
+        ax.set_theta_direction(-1)
+        ax.set_thetamin(-180); ax.set_thetamax(180)
+
+        theta = d["theta"]; d_raw = d["d_raw"]; d_smooth = d["d_smooth"]
+        ax.scatter(theta, d_raw, s=10, c='blue', label='raw')
+        ax.plot(theta, d_smooth, 'c-', linewidth=1, label='spline')
+
+        for p_theta, p_d in d["peaks"]:
+            ax.plot(p_theta, p_d, 'ro', markersize=6)
+        if d["best_theta"] is not None:
+            # find d at best theta from smooth
+            bth = d["best_theta"]
+            bd = np.interp(bth, theta, d_smooth)
+            ax.plot(bth, bd, 'g*', markersize=12, label='selected')
+
+        # cmd direction
+        t_cmd = d["theta_cmd"]
+        ax.plot([t_cmd, t_cmd], [0, 10], 'm--', linewidth=1, label='cmd')
+
+        ax.set_ylim(0, d_raw.max() + 0.5)
+        ax.legend(loc='lower right', fontsize=6)
+        self._debug_fig.canvas.draw_idle()
+        plt.pause(0.001)
 
     # ==================================================================
     # Step hooks
@@ -301,6 +404,9 @@ class EL_4090_EA(EL_4090):
         self._update_lidar()
         self._update_envelope()
         self._compute_avoidance_vel()
+        self.compute_observations()
+        self._draw_velocity_arrows()
+        self._draw_avoidance_debug()
 
     # ==================================================================
     # Reset
