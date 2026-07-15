@@ -3,10 +3,14 @@ from legged_gym.envs.el_4090.spider_nomal.el4090_tripod2_low_config import (
     El4090Tripod2LowCfgPPO,
 )
 
-# LiDAR sensor constants
-EA_SPHERICAL_AZIMUTH = 40
-EA_SPHERICAL_ELEVATION = 25
-EA_RAY_MAX_DISTANCE = 10.0
+# ── Airy LiDAR sensor constants ──
+EA_AIRY_NUM_CHANNELS = 96                # 垂直通道数（激光线数）
+EA_AIRY_HORIZONTAL_RES = 6.0             # 水平分辨率（度）
+EA_AIRY_VERTICAL_FOV_MIN = 0.0           # 垂直 FOV 下界（度）
+EA_AIRY_VERTICAL_FOV_MAX = 90.0          # 垂直 FOV 上界（度）
+EA_RAY_MAX_DISTANCE = 60.0               # Airy 最大测距 (m)
+EA_SPHERICAL_AZIMUTH = int(360.0 / EA_AIRY_HORIZONTAL_RES)   # 60（buffer 分配）
+EA_SPHERICAL_ELEVATION = EA_AIRY_NUM_CHANNELS                # 96（buffer 分配）
 EA_PROPRIO_DIM = 66
 
 
@@ -48,19 +52,19 @@ class El4090EACfg(El4090Tripod2LowCfg):
         rot_randomization_range = [-3.14, 3.14]
         spawn_offset_range = 0.2
 
-    # ── LiDAR 传感器配置（简化版，无 pd_risknet / cmd_safe） ──
+    # ── Airy LiDAR 传感器配置 ──
     class raycaster:
         enable_raycast = True
         ray_pattern = "spherical"
-        spherical_num_azimuth = EA_SPHERICAL_AZIMUTH
-        spherical_num_elevation = EA_SPHERICAL_ELEVATION
-        max_distance = EA_RAY_MAX_DISTANCE
+        spherical_num_azimuth = EA_SPHERICAL_AZIMUTH    # 60
+        spherical_num_elevation = EA_SPHERICAL_ELEVATION # 96
+        max_distance = EA_RAY_MAX_DISTANCE               # 60.0
         attach_yaw_only = False
-        vertical_fov_deg_min = -2.0
-        vertical_fov_deg_max = 57.0
+        vertical_fov_deg_min = EA_AIRY_VERTICAL_FOV_MIN  # 0.0
+        vertical_fov_deg_max = EA_AIRY_VERTICAL_FOV_MAX  # 90.0
         offset_pos = [0.0, 0.0, 0.25]
-        sensor_offset_rpy = [0.0, 3.1416, 0.0]
-        update_frequency_hz = 50.0
+        sensor_offset_rpy = [0.0, 0.0, 0.0]             # 面朝上方
+        update_frequency_hz = 10.0                       # Airy 工作频率
 
     # ── 包络参数上限 ──
     class envelope:
@@ -78,13 +82,13 @@ class El4090EACfg(El4090Tripod2LowCfg):
     class avoidance:
         ground_threshold = 0.05   # world-frame Z ground filter (m)
         min_valid_dist = 0.15     # min valid hit distance (m)
-        max_valid_dist = 10.0     # max valid (matches LiDAR range, m)
+        max_valid_dist = EA_RAY_MAX_DISTANCE     # max valid (matches LiDAR range, m)
         ellipse_a = 0.6           # robot body ellipse semi-axis (forward, m)
         ellipse_b = 0.3           # robot body ellipse semi-axis (lateral, m)
         spline_smoothing = 0.8    # UnivariateSpline smoothing factor
         cmd_bias = 0.5            # bias toward cmd (m), added only to capped dirs
         cap_distance = 2.0       # distances > this are capped, then biased (m)
-        n_azimuth = 40            # number of azimuth bins
+        n_azimuth = EA_SPHERICAL_AZIMUTH            # number of azimuth bins
 
     class sim(El4090Tripod2LowCfg.sim):
         class physx(El4090Tripod2LowCfg.sim.physx):
