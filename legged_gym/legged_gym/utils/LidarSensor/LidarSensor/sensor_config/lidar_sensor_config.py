@@ -23,6 +23,7 @@ class LidarType(Enum):
     
     # Traditional spinning lidars (to be implemented)
     HDL64 = "hdl64"
+    AIRY = "airy"          # RoboSense Airy 96-line rotating
     VLP32 = "vlp32"
     OS128 = "os128"
 
@@ -127,4 +128,4 @@ class LidarConfig(BaseSensorConfig):
     @property
     def is_spinning_lidar(self) -> bool:
         """Check if this is a traditional spinning lidar"""
-        return self.sensor_type in [LidarType.HDL64, LidarType.VLP32, LidarType.OS128]
+        return self.sensor_type in [LidarType.HDL64, LidarType.AIRY, LidarType.VLP32, LidarType.OS128]
