@@ -33,6 +33,8 @@ class EL_4090_EA(EL_4090):
                  task_name="el_4090_ea"):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless,
                          task_name=task_name)
+        self._lidar_decimation = max(1, round(1.0 / (self.dt * self.cfg.raycaster.update_frequency_hz)))  # 新增
+        self._lidar_step_counter = self._lidar_decimation - 1               # 新增：首帧立即触发更新
 
     # ==================================================================
     # Buffer initialisation
@@ -95,18 +97,18 @@ class EL_4090_EA(EL_4090):
         update_hz = float(getattr(ray_cfg, "update_frequency_hz",
                                   max(1.0, 1.0 / float(self.dt))))
         lidar_cfg = LidarConfig(
-            sensor_type=LidarType.SIMPLE_GRID,
+            sensor_type=LidarType.AIRY,
             dt=float(self.dt),
             update_frequency=update_hz,
             max_range=float(ray_cfg.max_distance),
-            min_range=0.2,
+            min_range=0.1,                    # Airy 盲区 < 0.1m
             num_sensors=1,
             horizontal_line_num=int(ray_cfg.spherical_num_azimuth),
             vertical_line_num=int(ray_cfg.spherical_num_elevation),
             horizontal_fov_deg_min=-180.0,
             horizontal_fov_deg_max=180.0,
-            vertical_fov_deg_min=float(getattr(ray_cfg, "vertical_fov_deg_min", -2.0)),
-            vertical_fov_deg_max=float(getattr(ray_cfg, "vertical_fov_deg_max", 57.0)),
+            vertical_fov_deg_min=float(getattr(ray_cfg, "vertical_fov_deg_min", 0.0)),
+            vertical_fov_deg_max=float(getattr(ray_cfg, "vertical_fov_deg_max", 90.0)),
             return_pointcloud=True,
             pointcloud_in_world_frame=False,
             randomize_placement=False,
@@ -177,6 +179,10 @@ class EL_4090_EA(EL_4090):
         """Update LiDAR point cloud for current step."""
         if self.lidar_sensor is None:
             return
+
+        self._lidar_step_counter += 1
+        if self._lidar_step_counter % self._lidar_decimation != 0:
+            return  # 复用上一帧 lidar_points_base
 
         self.sensor_quat_tensor.copy_(
             quat_mul(self.base_quat, self._sensor_offset_quat))
@@ -419,6 +425,7 @@ class EL_4090_EA(EL_4090):
         d_max = float(self.cfg.raycaster.max_distance)
         self.lidar_points_base[env_ids] = 0.0
         self.raycast_distances[env_ids] = d_max
+        self._lidar_step_counter = self._lidar_decimation - 1      # 新增：下帧立即触发 LiDAR 更新
 
     def _reset_root_states(self, env_ids):
         self.root_states[env_ids] = self.base_init_state
