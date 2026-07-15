@@ -104,11 +104,7 @@ class LidarRayGeneratorFactory:
             return None  # Handled directly in LidarSensor
         elif sensor_type in ["avia", "horizon", "HAP", "mid360", "mid40", "mid70", "tele"]:
             return LivoxGenerator(sensor_type)
-        elif sensor_type == "hdl64":
-            return SpinningLidarGenerator()
-        elif sensor_type == "vlp32":
-            return SpinningLidarGenerator()
-        elif sensor_type == "os128":
+        elif sensor_type in ("hdl64", "vlp32", "os128", "airy"):
             return SpinningLidarGenerator()
         else:
             raise ValueError(f"Unsupported sensor type: {sensor_type}")
@@ -122,6 +118,8 @@ class LidarRayGeneratorFactory:
             return SpinningLidarGenerator.generate_VLP32(**kwargs)
         elif sensor_type == "os128":
             return SpinningLidarGenerator.generate_OS128(**kwargs)
+        elif sensor_type == "airy":
+            return SpinningLidarGenerator.generate_AIRY(**kwargs)
         elif sensor_type in ["avia", "horizon", "HAP", "mid360", "mid40", "mid70", "tele"]:
             generator = LivoxGenerator(sensor_type)
             return generator.sample_ray_angles()
