@@ -297,7 +297,9 @@ class LidarSensor(BaseSensor):
                 return self.ray_generator.generate_VLP32()
             elif sensor_type_str == "os128":
                 return self.ray_generator.generate_OS128()
-        
+            elif sensor_type_str == "airy":
+                return self.ray_generator.generate_AIRY()
+
         raise ValueError(f"Cannot generate ray angles for sensor type: {sensor_type_str}")
 
     def update_ray_vectors(self):
