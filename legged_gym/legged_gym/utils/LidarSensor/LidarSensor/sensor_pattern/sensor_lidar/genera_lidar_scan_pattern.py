@@ -68,6 +68,31 @@ class SpinningLidarGenerator:
         
         return theta_grid.flatten(), phi_grid.flatten()
 
+    @staticmethod
+    def generate_AIRY(n_channels=96, horizontal_resolution_deg=6.0,
+                      phi_range_deg=(0.0, 90.0)):
+        """Generate RoboSense Airy scan pattern (96-line rotating).
+
+        Args:
+            n_channels: Number of vertical channels (laser lines).
+            horizontal_resolution_deg: Azimuth resolution in degrees.
+            phi_range_deg: (min, max) elevation in degrees.
+
+        Returns:
+            (theta_rad, phi_rad): Flattened arrays of spherical coordinates
+            in radians, one full revolution (360 degrees) of ray directions.
+        """
+        phi_min, phi_max = np.deg2rad(phi_range_deg)
+        phi = np.linspace(phi_min, phi_max, n_channels)           # (96,)
+
+        n_azimuth = int(360.0 / horizontal_resolution_deg)         # 60
+        theta = np.linspace(0, 2 * np.pi, n_azimuth, endpoint=False)[:, None]  # (60, 1)
+
+        theta_grid = theta + np.zeros((1, n_channels))             # (60, 96)
+        phi_grid = np.zeros_like(theta) + phi                      # (60, 96)
+
+        return theta_grid.flatten(), phi_grid.flatten()            # (5760,), (5760,)
+
 
 class LidarRayGeneratorFactory:
     """Factory class to create ray generators for different lidar types"""
