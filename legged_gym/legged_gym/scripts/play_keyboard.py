@@ -86,8 +86,9 @@ def play(args):
             elif key == 'e':
                 ang_vel_yaw = -1.0
 
-            env.commands[:] = torch.tensor([[lin_vel_x, lin_vel_y, ang_vel_yaw, 0.0]],
-                                           device=env.device)
+            env.commands[:, 0] = lin_vel_x
+            env.commands[:, 1] = lin_vel_y
+            env.commands[:, 2] = ang_vel_yaw
 
             actions = policy(obs.detach())
             obs, _, rews, dones, infos = env.step(actions.detach())
@@ -113,6 +114,6 @@ def play(args):
 
 if __name__ == '__main__':
     REALTIME_MODE = True
-    CAMERA_FOLLOW = False  # True=跟随机器人, False=固定视角
+    CAMERA_FOLLOW = True  # True=跟随机器人, False=固定视角
     args = get_args()
     play(args)
