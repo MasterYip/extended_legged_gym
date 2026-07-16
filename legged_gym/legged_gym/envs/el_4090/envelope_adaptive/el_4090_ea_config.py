@@ -12,24 +12,32 @@ EA_RAY_MAX_DISTANCE = 60.0               # Airy 最大测距 (m)
 EA_SPHERICAL_AZIMUTH = int(360.0 / EA_AIRY_HORIZONTAL_RES)   # 60（buffer 分配）
 EA_SPHERICAL_ELEVATION = EA_AIRY_NUM_CHANNELS                # 96（buffer 分配）
 EA_PROPRIO_DIM = 66
+EA_CONDITION_DIM = 8
+EA_NUM_OBS = EA_PROPRIO_DIM + EA_CONDITION_DIM  # 74
 
 
 class El4090EACfg(El4090Tripod2LowCfg):
-    """EL_4090 Envelope Adaptive — LiDAR + external obstacle avoidance."""
+    """EL_4090 Envelope Adaptive — LiDAR + external obstacle avoidance.
+
+    接口对齐底层 spider_envelop 训练配置：
+    - num_observations=74, num_commands=12
+    - control_type='P_LOWPASS', PD gains 130/4.0, action_scale=0.35
+    - condition 8 维：5 长度 + 3 先验
+    - 宽限位 URDF ([-3,3] joints)
+    """
 
     class env(El4090Tripod2LowCfg.env):
-        num_observations = EA_PROPRIO_DIM
+        num_observations = EA_NUM_OBS
         num_privileged_obs = None
-    
+
     class terrain(El4090Tripod2LowCfg.terrain):
         mesh_type = 'trimesh'
-        curriculum = False  #训练时True
+        curriculum = False  # 训练时 True
         terrain_length = 16
         terrain_width = 16
         border_size = 5
         num_rows = 1  # number of terrain rows (levels) 训练时5
         num_cols = 2  # number of terrain cols (types) 训练时4
-        # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
         terrain_proportions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5]
         difficulty_scale = 1.0
 
@@ -42,15 +50,121 @@ class El4090EACfg(El4090Tripod2LowCfg):
         pillar_size_y_max = 4.0
         pillar_height_min = 1.00
         pillar_height_max = 2.00
-        pillar_min_separation = 2.2  
+        pillar_min_separation = 2.2
         pillar_center_clear_radius = 3.0
-        pillar_spawn_radius = 7.5        #约束范围半径
+        pillar_spawn_radius = 7.5        # 约束范围半径
         pillar_allow_height_variation = True
 
+    class commands(El4090Tripod2LowCfg.commands):
+        num_commands = 4 + EA_CONDITION_DIM   # = 12
+        condition_dim = EA_CONDITION_DIM
+        curriculum = False
+        resampling_time = 4.
+        heading_command = False
+        small_command_radio = True
+
+        condition_names = [
+            "front_width",
+            "middle_width",
+            "back_width",
+            "forward_limit",
+            "backward_limit",
+            "morphology_front_prior",
+            "morphology_middle_prior",
+            "morphology_back_prior",
+        ]
+        morphology_prior_mode = "directional_ratio"
+        morphology_prior_weights = {
+            "front": {"lateral": 0.35, "longitudinal": 0.5},
+            "middle": {"lateral": 1.0},
+            "back": {"lateral": 0.35, "longitudinal": 0.5},
+        }
+        morphology_middle_front_follow_weight = 0.4
+
+        class ranges(El4090Tripod2LowCfg.commands.ranges):
+            lin_vel_x = [-1.5, 1.5]
+            lin_vel_y = [-1., 1.]
+            ang_vel_yaw = [-1.0, 1.0]
+            heading = [-3.14, 3.14]
+            front_width = [0.3, 0.6]
+            middle_width = [0.3, 0.7]
+            back_width = [0.3, 0.6]
+            forward_limit = [0.6, 0.9]
+            backward_limit = [-0.9, -0.6]
+            morphology_front_prior = [0.0, 1.0]
+            morphology_middle_prior = [0.0, 1.0]
+            morphology_back_prior = [0.0, 1.0]
+
+    class control(El4090Tripod2LowCfg.control):
+        control_type = 'P_LOWPASS'
+        stiffness = {'HAA': 130., 'HFE': 130., 'KFE': 130.}
+        damping = {'HAA': 4., 'HFE': 4., 'KFE': 4.}
+        action_scale = 0.35
+        decimation = 4
+        default_dof_pos_filter_tau = 0.4
+        default_dof_pos_filter_done_threshold = 0.02
+
     class init_state(El4090Tripod2LowCfg.init_state):
+        pos = [0.0, 0.0, 0.52]
         randomize_rot = False
         rot_randomization_range = [-3.14, 3.14]
         spawn_offset_range = 0.2
+        default_joint_angles = {
+            "RF_HAA": 0.0, "RM_HAA": 0.0, "RB_HAA": 0.0,
+            "LF_HAA": 0.0, "LM_HAA": 0.0, "LB_HAA": 0.0,
+            "RF_HFE": 0.6, "RM_HFE": 0.6, "RB_HFE": 0.6,
+            "LF_HFE": 0.6, "LM_HFE": 0.6, "LB_HFE": 0.6,
+            "RF_KFE": -0.6, "RM_KFE": -0.6, "RB_KFE": -0.6,
+            "LF_KFE": -0.6, "LM_KFE": -0.6, "LB_KFE": -0.6,
+        }
+        mammal_default_joint_angles = {
+            "RF_HAA": -1.308, "RM_HAA": 1.308, "RB_HAA": 1.308,
+            "LF_HAA": -1.308, "LM_HAA": 1.308, "LB_HAA": 1.308,
+            "RF_HFE": 1., "RM_HFE": 1., "RB_HFE": 1.,
+            "LF_HFE": 1., "LM_HFE": 1., "LB_HFE": 1.,
+            "RF_KFE": -0.608, "RM_KFE": -0.608, "RB_KFE": -0.608,
+            "LF_KFE": -0.608, "LM_KFE": -0.608, "LB_KFE": -0.608,
+        }
+
+    # ── 包络参数范围统一为底层训练分布 ──
+    # 每个参数拥有 [min, max] 完整范围,与底层 condition ranges 一一对应:
+    #   x1 ∈ [0.6, 0.9]      = forward_limit range
+    #   x3 ∈ [-0.9, -0.6]    = backward_limit range (x3_max=最远后方=数值最小, x3_min=最近后方=数值最大)
+    #   l*/r* front/rear ∈ [0.3, 0.6] = front/back_width range
+    #   l2/r2 ∈ [0.3, 0.7]   = middle_width range
+    class envelope:
+        x1_max = 0.9          # forward_limit 上界
+        x1_min = 0.6          # forward_limit 下界
+        x3_max = -0.9         # backward_limit 下界(最远后方, 数值最小)
+        x3_min = -0.6         # backward_limit 上界(最近后方, 数值最大)
+        front_rear_max = 0.6  # front/back_width 上界
+        front_rear_min = 0.3  # front/back_width 下界
+        mid_max = 0.7         # middle_width 上界
+        mid_min = 0.3         # middle_width 下界
+        z_top = 0.15          # 棱柱上层高度 (m)
+        z_bottom = -0.25      # 棱柱下层高度 (m)
+        margin_distance = 0.2 # outer hexagon offset distance (m)
+        shrink_step = 0.03    # shrinkage per step (m)
+        grow_step = 0.01      # recovery per step (m)
+
+    class normalization(El4090Tripod2LowCfg.normalization):
+        class obs_scales(El4090Tripod2LowCfg.normalization.obs_scales):
+            embedded_state = 1.0
+
+    class asset(El4090Tripod2LowCfg.asset):
+        file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/el_4090/urdf/el_4090_wide_limits.urdf"
+
+    # ── 避障速度规划 ──
+    class avoidance:
+        ground_threshold = 0.05   # world-frame Z ground filter (m)
+        min_valid_dist = 0.15     # min valid hit distance (m)
+        max_valid_dist = EA_RAY_MAX_DISTANCE
+        ellipse_a = 0.6           # robot body ellipse semi-axis (forward, m)
+        ellipse_b = 0.3           # robot body ellipse semi-axis (lateral, m)
+        spline_smoothing = 0.8    # UnivariateSpline smoothing factor
+        cmd_bias = 0.5            # bias toward cmd (m), added only to capped dirs
+        cap_distance = 2.0        # distances > this are capped, then biased (m)
+        n_azimuth = EA_SPHERICAL_AZIMUTH
 
     # ── Airy LiDAR 传感器配置 ──
     class raycaster:
@@ -66,37 +180,19 @@ class El4090EACfg(El4090Tripod2LowCfg):
         sensor_offset_rpy = [0.0, 0.0, 0.0]             # 面朝上方
         update_frequency_hz = 10.0                       # Airy 工作频率
 
-    # ── 包络参数上限 ──
-    class envelope:
-        x1_max = 1.5       # 前节点最大 x 坐标 (m)
-        x3_max = -1.5      # 后节点最大 x 坐标 (m, 负=后方)
-        front_rear_max = 0.8  # 前/后节点 l/r 最大延伸 (m)
-        mid_max = 1.4         # 中节点 l/r 最大延伸 (m)
-        z_top = 0.15          # 棱柱上层高度 (m)
-        z_bottom = -0.25      # 棱柱下层高度 (m)
-        margin_distance = 0.2   # outer hexagon offset distance (m)
-        shrink_step = 0.03       # shrinkage per step (m)
-        grow_step = 0.01        # recovery per step (m)
-
-    # ── 避障速度规划 ──
-    class avoidance:
-        ground_threshold = 0.05   # world-frame Z ground filter (m)
-        min_valid_dist = 0.15     # min valid hit distance (m)
-        max_valid_dist = EA_RAY_MAX_DISTANCE     # max valid (matches LiDAR range, m)
-        ellipse_a = 0.6           # robot body ellipse semi-axis (forward, m)
-        ellipse_b = 0.3           # robot body ellipse semi-axis (lateral, m)
-        spline_smoothing = 0.8    # UnivariateSpline smoothing factor
-        cmd_bias = 0.5            # bias toward cmd (m), added only to capped dirs
-        cap_distance = 2.0       # distances > this are capped, then biased (m)
-        n_azimuth = EA_SPHERICAL_AZIMUTH            # number of azimuth bins
-
     class sim(El4090Tripod2LowCfg.sim):
         class physx(El4090Tripod2LowCfg.sim.physx):
             max_gpu_contact_pairs = 2**23
 
 
 class El4090EACfgPPO(El4090Tripod2LowCfgPPO):
+    class policy(El4090Tripod2LowCfgPPO.policy):
+        actor_hidden_dims = [512, 256, 128]
+        critic_hidden_dims = [512, 256, 128]
+        activation = 'elu'
+        init_noise_std = 0.3
+
     class runner(El4090Tripod2LowCfgPPO.runner):
-        experiment_name = "el4090_ea"  # 复用 tripod2_low 训练好的模型
+        experiment_name = "el4090_ea"  # 复用底层训练好的模型(logs/el4090_ea/1)
         policy_class_name = "ActorCritic"
         algorithm_class_name = "PPO"
