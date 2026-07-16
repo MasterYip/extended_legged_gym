@@ -116,6 +116,10 @@ def compute_envelope_params(
 
     params = {k: prev_params[k].clone() for k in maxes}
 
+    # Pre-create clamp bounds outside loop to avoid per-iteration tensor creation
+    mins_t = {k: torch.tensor(v, device=device) for k, v in mins.items()}
+    maxes_t = {k: torch.tensor(v, device=device) for k, v in maxes.items()}
+
     pts = lidar_points               # (E, N, 3) — body-frame, use XY for polygon, Z for 3D filter
     angles = torch.atan2(pts[..., 1], pts[..., 0])  # (E, N)  [-pi, pi]
 
@@ -150,13 +154,13 @@ def compute_envelope_params(
             # clamp 下界=maxes["x3"](-0.9), 上界=mins["x3"](-0.6)
             delta = torch.where(hit, shrink, -grow)
             new_val = torch.clamp(params[name] + delta,
-                                 torch.tensor(maxes[name], device=device),
-                                 torch.tensor(mins[name], device=device))
+                                 maxes_t[name],
+                                 mins_t[name])
         else:
             delta = torch.where(hit, -shrink, grow)
             new_val = torch.clamp(params[name] + delta,
-                                 torch.tensor(mins[name], device=device),
-                                 torch.tensor(maxes[name], device=device))
+                                 mins_t[name],
+                                 maxes_t[name])
         params[name] = new_val
 
     return params
