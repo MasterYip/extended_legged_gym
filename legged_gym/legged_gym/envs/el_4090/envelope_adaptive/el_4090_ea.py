@@ -173,41 +173,36 @@ class EL_4090_EA(EL_4090):
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
 
     def _compute_torques(self, actions):
-        """PD controller with P_LOWPASS mode for smooth morphology transition."""
-        actions_scaled = actions * self.cfg.control.action_scale
-        control_type = self.cfg.control.control_type
+        """PD controller with P_LOWPASS mode for smooth morphology transition.
 
-        if control_type == "P":
-            torques = (self.p_gains * (actions_scaled + self.default_dof_pos - self.dof_pos)
-                       - self.d_gains * self.dof_vel)
-        elif control_type == "P_LOWPASS":
-            tau = max(float(getattr(self.cfg.control, "default_dof_pos_filter_tau", 0.3)), 1e-6)
-            alpha = 1.0 - np.exp(-self.sim_params.dt / tau)
-            self.filtered_embedded_state_default_dof_pos += alpha * (
-                self.embedded_state_default_dof_pos - self.filtered_embedded_state_default_dof_pos
-            )
-            done_threshold = float(getattr(self.cfg.control,
-                                           "default_dof_pos_filter_done_threshold", 0.02))
-            filter_error = torch.max(
-                torch.abs(self.filtered_embedded_state_default_dof_pos
-                          - self.embedded_state_default_dof_pos),
-                dim=1,
-            ).values
-            use_final_default = (filter_error < done_threshold).unsqueeze(1)
-            default_dof_pos = torch.where(
-                use_final_default,
-                self.embedded_state_default_dof_pos,
-                self.filtered_embedded_state_default_dof_pos,
-            )
-            torques = (self.p_gains * (actions_scaled + default_dof_pos - self.dof_pos)
-                       - self.d_gains * self.dof_vel)
-        elif control_type == "V":
-            torques = (self.p_gains * (actions_scaled - self.dof_vel)
-                       - self.d_gains * (self.dof_vel - self.last_dof_vel) / self.sim_params.dt)
-        elif control_type == "T":
-            torques = actions_scaled
-        else:
-            raise NameError(f"Unknown controller type: {control_type}")
+        P_LOWPASS 之外的控制类型(P/V/T/DELAY)委托给父类实现。
+        """
+        control_type = self.cfg.control.control_type
+        if control_type != "P_LOWPASS":
+            return super()._compute_torques(actions)
+
+        actions_scaled = actions * self.cfg.control.action_scale
+        # guard against tau=0 division by zero
+        tau = max(float(getattr(self.cfg.control, "default_dof_pos_filter_tau", 0.3)), 1e-6)
+        alpha = 1.0 - np.exp(-self.sim_params.dt / tau)
+        self.filtered_embedded_state_default_dof_pos += alpha * (
+            self.embedded_state_default_dof_pos - self.filtered_embedded_state_default_dof_pos
+        )
+        done_threshold = float(getattr(self.cfg.control,
+                                       "default_dof_pos_filter_done_threshold", 0.02))
+        filter_error = torch.max(
+            torch.abs(self.filtered_embedded_state_default_dof_pos
+                      - self.embedded_state_default_dof_pos),
+            dim=1,
+        ).values
+        use_final_default = (filter_error < done_threshold).unsqueeze(1)
+        smoothed_default_dof_pos = torch.where(
+            use_final_default,
+            self.embedded_state_default_dof_pos,
+            self.filtered_embedded_state_default_dof_pos,
+        )
+        torques = (self.p_gains * (actions_scaled + smoothed_default_dof_pos - self.dof_pos)
+                   - self.d_gains * self.dof_vel)
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
 
     def _get_structure_condition(self):
