@@ -256,29 +256,30 @@ class LidarSensor(BaseSensor):
     def _initialize_pattern_rays(self):
         """Initialize ray vectors for pattern-based lidars (Livox, spinning)"""
         rays_theta, rays_phi = self._generate_ray_angles()
-        
+
         # Set dimensions for compatibility
-        self.num_rays = len(rays_phi)
-        self.num_vertical_lines = self.num_rays
+        # Use a local variable since num_rays is a read-only @property
+        n_rays = len(rays_phi)
+        self.num_vertical_lines = n_rays
         self.num_horizontal_lines = 1
-        
+
         # Convert spherical to Cartesian coordinates
         rays_theta_tensor = torch.tensor(rays_theta, dtype=torch.float32, device=self.device)
         rays_phi_tensor = torch.tensor(rays_phi, dtype=torch.float32, device=self.device)
-        
+
         cos_phi = torch.cos(rays_phi_tensor)
         sin_phi = torch.sin(rays_phi_tensor)
         cos_theta = torch.cos(rays_theta_tensor)
         sin_theta = torch.sin(rays_theta_tensor)
-        
+
         # Calculate Cartesian coordinates
         x = cos_phi * cos_theta
         y = cos_phi * sin_theta
         z = sin_phi
-        
+
         # Stack and reshape
         ray_vectors = torch.stack([x, y, z], dim=1)
-        ray_vectors = ray_vectors.reshape(self.num_rays, 1, 3)
+        ray_vectors = ray_vectors.reshape(n_rays, 1, 3)
         
         # Normalize and store
         normalized_rays = ray_vectors / torch.norm(ray_vectors, dim=2, keepdim=True)

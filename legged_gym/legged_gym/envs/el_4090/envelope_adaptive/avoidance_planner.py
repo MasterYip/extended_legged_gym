@@ -63,10 +63,10 @@ def compute_safe_velocity(
         # ---- Step 2: angular-distance curve ----
         # LiDAR bin a maps to SENSOR azimuth π-2π·a/(N-1).
         # Sensor→body azimuth: θ_body = π - θ_sensor = 2π·a/(N-1) ∈ [0, 2π).
-        n_elev = 25
-        pts_3d = pts.reshape(n_elev, n_azimuth, 3)
-        dists_3d = dists.reshape(n_elev, n_azimuth)
-        valid_3d = valid.reshape(n_elev, n_azimuth)
+        n_elev = pts.shape[0] // n_azimuth
+        pts_3d = pts.reshape(n_azimuth, n_elev, 3).transpose(0, 1).contiguous()
+        dists_3d = dists.reshape(n_azimuth, n_elev).t().contiguous()
+        valid_3d = valid.reshape(n_azimuth, n_elev).t().contiguous()
 
         d_curve = np.full(n_azimuth, cap_distance, dtype=np.float64)
         capped = np.ones(n_azimuth, dtype=bool)  # no-hit directions are all capped

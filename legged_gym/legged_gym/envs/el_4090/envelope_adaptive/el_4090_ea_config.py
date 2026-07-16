@@ -62,7 +62,7 @@ class El4090EACfg(El4090Tripod2LowCfg):
         attach_yaw_only = False
         vertical_fov_deg_min = EA_AIRY_VERTICAL_FOV_MIN  # 0.0
         vertical_fov_deg_max = EA_AIRY_VERTICAL_FOV_MAX  # 90.0
-        offset_pos = [0.0, 0.0, 0.25]
+        offset_pos = [0.0, 0.0, -0.05]
         sensor_offset_rpy = [0.0, 0.0, 0.0]             # 面朝上方
         update_frequency_hz = 10.0                       # Airy 工作频率
 
@@ -72,7 +72,7 @@ class El4090EACfg(El4090Tripod2LowCfg):
         x3_max = -1.5      # 后节点最大 x 坐标 (m, 负=后方)
         front_rear_max = 0.8  # 前/后节点 l/r 最大延伸 (m)
         mid_max = 1.4         # 中节点 l/r 最大延伸 (m)
-        z_top = 0.05          # 棱柱上层高度 (m)
+        z_top = 0.15          # 棱柱上层高度 (m)
         z_bottom = -0.25      # 棱柱下层高度 (m)
         margin_distance = 0.2   # outer hexagon offset distance (m)
         shrink_step = 0.03       # shrinkage per step (m)
