@@ -44,6 +44,7 @@ class EL_4090_EA(EL_4090):
         super()._init_buffers()
         self._init_lidar_buffers()
         self._init_lidar()
+        self._init_condition_buffers()
 
     def _init_lidar_buffers(self):
         cfg = self.cfg.raycaster
@@ -70,6 +71,82 @@ class EL_4090_EA(EL_4090):
             "l3": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
             "r3": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
         }
+
+    def _init_condition_buffers(self):
+        """初始化包络 condition 相关 buffer（对齐底层 spider_envelop el_4090.py:100-200）"""
+        # condition 在 commands buffer 中的切片位置
+        self.condition_start_idx = 4
+        self.condition_names = list(self.cfg.commands.condition_names)
+        self.condition_dim = int(self.cfg.commands.condition_dim)
+        self.condition_end_idx = self.condition_start_idx + self.condition_dim
+
+        # condition 上下界 tensor（由 command_ranges 构建）
+        self.condition_low = torch.tensor(
+            [self.command_ranges[name][0] for name in self.condition_names],
+            dtype=torch.float, device=self.device, requires_grad=False,
+        )
+        self.condition_high = torch.tensor(
+            [self.command_ranges[name][1] for name in self.condition_names],
+            dtype=torch.float, device=self.device, requires_grad=False,
+        )
+
+        # mammal 默认关节角
+        mammal_angles = self.cfg.init_state.mammal_default_joint_angles
+        self.mammal_default_dof_pos = torch.zeros(
+            self.num_dof, dtype=torch.float, device=self.device, requires_grad=False,
+        )
+        for i, name in enumerate(self.dof_names):
+            self.mammal_default_dof_pos[i] = mammal_angles[name]
+        self.mammal_default_dof_pos = self.mammal_default_dof_pos.unsqueeze(0)  # (1, 18)
+
+        # morphology prior → 腿组 DOF 索引映射（对齐底层 el_4090.py:163-192）
+        self.morphology_prior_leg_groups = {
+            "morphology_front_prior": ["LF", "RF"],
+            "morphology_middle_prior": ["LM", "RM"],
+            "morphology_back_prior": ["LB", "RB"],
+        }
+        self.morphology_prior_dof_indices = {}
+        for prior_name, leg_names in self.morphology_prior_leg_groups.items():
+            indices = [
+                i for i, dof_name in enumerate(self.dof_names)
+                if any(dof_name.startswith(f"{leg_name}_") for leg_name in leg_names)
+            ]
+            assert len(indices) == 3 * len(leg_names), \
+                f"Expected {3 * len(leg_names)} DOFs for {prior_name}, got {len(indices)}"
+            self.morphology_prior_dof_indices[prior_name] = torch.tensor(
+                indices, dtype=torch.long, device=self.device, requires_grad=False,
+            )
+
+        # embedded_state DOF target 及 P_LOWPASS 滤波器状态
+        self.embedded_state_default_dof_pos = self.default_dof_pos.repeat(self.num_envs, 1)
+        self.filtered_embedded_state_default_dof_pos = self.default_dof_pos.repeat(self.num_envs, 1)
+
+        # 观测缩放因子（对齐底层 el_4090.py:100-102）
+        self.command_lin_vel_scale = torch.tensor(
+            self.obs_scales.lin_vel, device=self.device, requires_grad=False,
+        )
+        self.command_ang_vel_scale = torch.tensor(
+            self.obs_scales.ang_vel, device=self.device, requires_grad=False,
+        )
+        self.command_embedded_state_scale = torch.tensor(
+            self.obs_scales.embedded_state, device=self.device, requires_grad=False,
+        )
+
+    def _get_noise_scale_vec(self, cfg):
+        """74-dim noise vector matching spider_envelop observation layout."""
+        noise_vec = torch.zeros_like(self.obs_buf[0])
+        self.add_noise = self.cfg.noise.add_noise
+        noise_scales = self.cfg.noise.noise_scales
+        noise_level = self.cfg.noise.noise_level
+
+        noise_vec[:3] = noise_scales.lin_vel * noise_level * self.obs_scales.lin_vel
+        noise_vec[3:6] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
+        noise_vec[6:9] = noise_scales.gravity * noise_level
+        noise_vec[9:20] = 0.0   # commands (3 vel + 8 condition)
+        noise_vec[20:38] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
+        noise_vec[38:56] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
+        noise_vec[56:74] = 0.0  # previous actions
+        return noise_vec
 
     # ==================================================================
     # LiDAR sensor (simplified -- no sector safety, no proximal/distal)
