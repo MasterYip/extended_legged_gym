@@ -2,8 +2,6 @@
 
 import torch
 
-_debug_step = 0
-_DEBUG_INTERVAL = 20  # print every N calls
 
 
 def _cross2d(a, b):
@@ -101,6 +99,14 @@ def compute_envelope_params(
     shrink = float(getattr(envelope_cfg, "shrink_step", 0.1))
     grow = float(getattr(envelope_cfg, "grow_step", 0.02))
 
+    # 下界：对应底层 condition ranges 的 min，防止包络收缩到训练分布外
+    # 全部从 config 读取（config 中 x3_min=-0.6 是数值上界，x3_max=-0.9 是数值下界）
+    mins = {
+        "x1": envelope_cfg.x1_min, "x3": envelope_cfg.x3_min,
+        "l1": envelope_cfg.front_rear_min, "r1": envelope_cfg.front_rear_min,
+        "l2": envelope_cfg.mid_min, "r2": envelope_cfg.mid_min,
+        "l3": envelope_cfg.front_rear_min, "r3": envelope_cfg.front_rear_min,
+    }
     maxes = {
         "x1": envelope_cfg.x1_max, "x3": envelope_cfg.x3_max,
         "l1": envelope_cfg.front_rear_max, "r1": envelope_cfg.front_rear_max,
@@ -134,49 +140,101 @@ def compute_envelope_params(
 
     in_zone = in_zone_xy & in_zone_z                      # (E, N)  3D volume
 
-    global _debug_step
-    _debug_step += 1
-    # if _debug_step % _DEBUG_INTERVAL == 0:
-    #     n_zone = in_zone.sum().item()
-    #     outer_x = outer[0, :, 0]; outer_y = outer[0, :, 1]
-    #     print(f"[step {_debug_step}] outer x:[{outer_x.min():.3f},{outer_x.max():.3f}] "
-    #           f"y:[{outer_y.min():.3f},{outer_y.max():.3f}]  zone pts: {n_zone}")
-    #     if n_zone > 0:
-    #         zone_pts = pts[0][in_zone[0]]
-    #         dists_zone = torch.norm(zone_pts[:, :2], dim=-1)
-    #         far_idx = dists_zone.argmax()
-    #         fp = zone_pts[far_idx]
-    #         fp_xy = fp[:2].reshape(1, 1, 2)
-    #         print(f"  farthest zone pt: xy=({fp[0]:.2f},{fp[1]:.2f}) z={fp[2]:.2f} dist={dists_zone[far_idx]:.2f}")
-    #         print(f"  inside_outer? {_point_inside_convex(fp_xy, outer)[0,0].item()}  "
-    #               f"inside_inner? {_point_inside_convex(fp_xy, inner)[0,0].item()}  "
-    #               f"in_Z? {bool((fp[2] >= z_bottom and fp[2] <= z_top).item())}")
-    #         zone_dists = dists_zone
-    #         print(f"  zone dist min/mean/max: {zone_dists.min():.2f}/{zone_dists.mean():.2f}/{zone_dists.max():.2f}  "
-    #               f"Z min/max: {zone_pts[:,2].min():.2f}/{zone_pts[:,2].max():.2f}  "
-    #               f"x1={params['x1'][0].item():.3f} r2={params['r2'][0].item():.3f}")
-
-    _hit_names = []
     for name, (s_start, s_end) in sectors.items():
         in_sector = _angle_in_range(angles, s_start.unsqueeze(-1), s_end.unsqueeze(-1))
         hit = (in_zone & in_sector).any(dim=-1)
-        if hit[0].item():
-            _hit_names.append(name)
 
         if name == "x3":
-            # x3 is negative -- shrink = increase (toward 0), grow = decrease
+            # x3 为负值：hit → +shrink 向 x3_min(-0.6, 最近后方) 收缩;
+            # no-hit → -grow 向 x3_max(-0.9, 最远后方) 恢复
+            # clamp 下界=maxes["x3"](-0.9), 上界=mins["x3"](-0.6)
             delta = torch.where(hit, shrink, -grow)
             new_val = torch.clamp(params[name] + delta,
                                  torch.tensor(maxes[name], device=device),
-                                 torch.zeros_like(params[name]))
+                                 torch.tensor(mins[name], device=device))
         else:
             delta = torch.where(hit, -shrink, grow)
             new_val = torch.clamp(params[name] + delta,
-                                 torch.zeros_like(params[name]),
+                                 torch.tensor(mins[name], device=device),
                                  torch.tensor(maxes[name], device=device))
         params[name] = new_val
 
-    # if _debug_step % _DEBUG_INTERVAL == 0:
-    #     print(f"          hits: {_hit_names if _hit_names else 'none'}")
-
     return params
+
+
+def envelope_params_to_condition(params, cfg):
+    """Convert 8 independent envelope parameters to 8-dim condition tensor.
+
+    Aggregates left/right widths via min(), clips to training ranges,
+    and computes morphology priors via directional_ratio formula.
+
+    Args:
+        params: dict of (E,) tensors — x1, x3, l1, r1, l2, r2, l3, r3
+        cfg: full env config (El4090EACfg instance)
+
+    Returns:
+        (E, 8) tensor ordered as cfg.commands.condition_names
+    """
+    # -- 1. 聚合左右为 5 长度 --
+    front_width = torch.min(params["l1"], params["r1"])
+    middle_width = torch.min(params["l2"], params["r2"])
+    back_width = torch.min(params["l3"], params["r3"])
+    forward_limit = params["x1"]
+    backward_limit = params["x3"]
+
+    # -- 2. Clip 到 command_ranges --
+    ranges = cfg.commands.ranges
+    front_width = _clip_range(front_width, *ranges.front_width)
+    middle_width = _clip_range(middle_width, *ranges.middle_width)
+    back_width = _clip_range(back_width, *ranges.back_width)
+    forward_limit = _clip_range(forward_limit, *ranges.forward_limit)
+    backward_limit = _clip_range(backward_limit, *ranges.backward_limit)
+
+    # -- 3. 归一化 [0, 1] --
+    fw_norm = _norm(front_width, *ranges.front_width)
+    mw_norm = _norm(middle_width, *ranges.middle_width)
+    bw_norm = _norm(back_width, *ranges.back_width)
+    fwd_norm = _norm(forward_limit, *ranges.forward_limit)
+    # backward_limit: flip sign first, then normalize
+    bwd_norm = _norm(-backward_limit,
+                     -ranges.backward_limit[1],  # -(-0.6) = 0.6
+                     -ranges.backward_limit[0])  # -(-0.9) = 0.9
+
+    # -- 4. directional_ratio 先验 --
+    weights = cfg.commands.morphology_prior_weights
+    eps = 1e-6
+    # front
+    fl = float(weights["front"].get("lateral", 0.5))
+    flong = float(weights["front"].get("longitudinal", 0.5))
+    front_prior = (flong * fwd_norm) / torch.clamp(flong * fwd_norm + fl * fw_norm, min=eps)
+    # middle
+    ml = float(weights["middle"].get("lateral", 1.0))
+    middle_prior = 1.0 - mw_norm
+    if ml <= 0.0:
+        middle_prior = torch.full_like(mw_norm, 0.5)
+    fw = min(max(float(getattr(cfg.commands, "morphology_middle_front_follow_weight", 0.0)), 0.0), 1.0)
+    middle_prior = fw * front_prior + (1.0 - fw) * middle_prior
+    # back
+    bl = float(weights["back"].get("lateral", 0.5))
+    blong = float(weights["back"].get("longitudinal", 0.5))
+    back_prior = (blong * bwd_norm) / torch.clamp(blong * bwd_norm + bl * bw_norm, min=eps)
+
+    # -- 5. Clamp priors --
+    front_prior = torch.clamp(front_prior, 0.0, 1.0)
+    middle_prior = torch.clamp(middle_prior, 0.0, 1.0)
+    back_prior = torch.clamp(back_prior, 0.0, 1.0)
+
+    # -- 6. 按 condition_names 顺序输出 --
+    return torch.stack([
+        front_width, middle_width, back_width,
+        forward_limit, backward_limit,
+        front_prior, middle_prior, back_prior,
+    ], dim=-1)  # (E, 8)
+
+
+def _clip_range(tensor, low, high):
+    return torch.clamp(tensor, min=low, max=high)
+
+
+def _norm(tensor, low, high):
+    return torch.clamp((tensor - low) / max(high - low, 1e-6), 0.0, 1.0)
