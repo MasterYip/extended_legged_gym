@@ -26,7 +26,7 @@ class EL_4090_EA(EL_4090):
     """EL_4090 with Envelope Adaptive obstacle avoidance.
 
     LiDAR point cloud processed externally -- no dual-GRU network.
-    Policy receives proprioceptive observation only (66 dims).
+    Policy receives 74-dim observation (66 proprio + 8 envelope condition).
     """
 
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless,
@@ -147,6 +147,90 @@ class EL_4090_EA(EL_4090):
         noise_vec[38:56] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
         noise_vec[56:74] = 0.0  # previous actions
         return noise_vec
+
+    # ==================================================================
+    # Observations, torques, and helpers
+    # ==================================================================
+
+    def compute_observations(self):
+        """74-dim observation matching spider_envelop layout (el_4090.py:1039-1052)."""
+        self.obs_buf = torch.cat((
+            self.base_lin_vel * self.obs_scales.lin_vel,                            # 0:3
+            self.base_ang_vel * self.obs_scales.ang_vel,                            # 3:6
+            self.projected_gravity,                                                  # 6:9
+            self.commands[:, 0:1] * self.command_lin_vel_scale,                      # 9
+            self.commands[:, 1:2] * self.command_lin_vel_scale,                      # 10
+            self.commands[:, 2:3] * self.command_ang_vel_scale,                      # 11
+            self.commands[:, self.condition_start_idx:self.condition_end_idx]
+                * self.command_embedded_state_scale,                                 # 12:20 (8 dims)
+            (self.dof_pos - self.embedded_state_default_dof_pos)
+                * self.obs_scales.dof_pos,                                           # 20:38 (18 dims)
+            self.dof_vel * self.obs_scales.dof_vel,                                  # 38:56 (18 dims)
+            self.actions,                                                            # 56:74 (18 dims)
+        ), dim=-1)
+        # add noise if needed
+        if self.add_noise:
+            self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
+
+    def _compute_torques(self, actions):
+        """PD controller with P_LOWPASS mode for smooth morphology transition."""
+        actions_scaled = actions * self.cfg.control.action_scale
+        control_type = self.cfg.control.control_type
+
+        if control_type == "P":
+            torques = (self.p_gains * (actions_scaled + self.default_dof_pos - self.dof_pos)
+                       - self.d_gains * self.dof_vel)
+        elif control_type == "P_LOWPASS":
+            tau = max(float(getattr(self.cfg.control, "default_dof_pos_filter_tau", 0.3)), 1e-6)
+            alpha = 1.0 - np.exp(-self.sim_params.dt / tau)
+            self.filtered_embedded_state_default_dof_pos += alpha * (
+                self.embedded_state_default_dof_pos - self.filtered_embedded_state_default_dof_pos
+            )
+            done_threshold = float(getattr(self.cfg.control,
+                                           "default_dof_pos_filter_done_threshold", 0.02))
+            filter_error = torch.max(
+                torch.abs(self.filtered_embedded_state_default_dof_pos
+                          - self.embedded_state_default_dof_pos),
+                dim=1,
+            ).values
+            use_final_default = (filter_error < done_threshold).unsqueeze(1)
+            default_dof_pos = torch.where(
+                use_final_default,
+                self.embedded_state_default_dof_pos,
+                self.filtered_embedded_state_default_dof_pos,
+            )
+            torques = (self.p_gains * (actions_scaled + default_dof_pos - self.dof_pos)
+                       - self.d_gains * self.dof_vel)
+        elif control_type == "V":
+            torques = (self.p_gains * (actions_scaled - self.dof_vel)
+                       - self.d_gains * (self.dof_vel - self.last_dof_vel) / self.sim_params.dt)
+        elif control_type == "T":
+            torques = actions_scaled
+        else:
+            raise NameError(f"Unknown controller type: {control_type}")
+        return torch.clip(torques, -self.torque_limits, self.torque_limits)
+
+    def _get_structure_condition(self):
+        """读取 condition 并 clip 到上下界（对齐底层 el_4090.py:1066-1068）"""
+        condition = self.commands[:, self.condition_start_idx:self.condition_end_idx]
+        return torch.minimum(torch.maximum(condition, self.condition_low), self.condition_high)
+
+    def _get_morphology_prior(self, prior_name):
+        """获取指定 morphology prior 的值（对齐底层 el_4090.py:1187-1191）"""
+        if prior_name not in self.condition_names:
+            return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        prior_idx = self.condition_names.index(prior_name)
+        return self._get_structure_condition()[:, prior_idx]
+
+    def _get_condition_target_dof_pos(self):
+        """按 morphology prior 在 spider/mammal 默认关节角间插值（对齐底层 el_4090.py:1218-1225）"""
+        target = self.default_dof_pos.repeat(self.num_envs, 1)
+        for prior_name, dof_indices in self.morphology_prior_dof_indices.items():
+            prior = self._get_morphology_prior(prior_name).unsqueeze(1)
+            spider_pos = self.default_dof_pos[:, dof_indices]
+            mammal_pos = self.mammal_default_dof_pos[:, dof_indices]
+            target[:, dof_indices] = spider_pos + prior * (mammal_pos - spider_pos)
+        return target
 
     # ==================================================================
     # LiDAR sensor (simplified -- no sector safety, no proximal/distal)
