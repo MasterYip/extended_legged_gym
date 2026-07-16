@@ -17,7 +17,8 @@ from legged_gym.utils.LidarSensor.LidarSensor.lidar_sensor import LidarSensor
 from legged_gym.utils.LidarSensor.LidarSensor.sensor_config.lidar_sensor_config import LidarConfig, LidarType
 
 from legged_gym.envs.el_4090.envelope_adaptive.envelope_computer import (
-    compute_envelope_params, _build_hex_edges, _offset_hexagon,
+    compute_envelope_params, envelope_params_to_condition,
+    _build_hex_edges, _offset_hexagon,
 )
 from legged_gym.envs.el_4090.envelope_adaptive.avoidance_planner import compute_safe_velocity
 
@@ -366,7 +367,7 @@ class EL_4090_EA(EL_4090):
     # ==================================================================
 
     def _update_envelope(self):
-        """Compute envelope params and draw the 3D prism."""
+        """Compute envelope params, write condition to commands, and draw the 3D prism."""
         if self.lidar_sensor is None:
             return
         params = compute_envelope_params(
@@ -375,6 +376,11 @@ class EL_4090_EA(EL_4090):
         )
         for k, v in params.items():
             self.env_params[k].copy_(v)
+
+        # 包络参数 → condition，连续流式写入 commands[:, 4:12]
+        condition = envelope_params_to_condition(self.env_params, self.cfg)
+        self.commands[:, self.condition_start_idx:self.condition_end_idx] = condition
+
         self._draw_envelope()
 
     @staticmethod
@@ -565,9 +571,11 @@ class EL_4090_EA(EL_4090):
     def post_physics_step(self):
         super().post_physics_step()
         self._update_lidar()
-        self._update_envelope()
+        self._update_envelope()                 # ← 内部已将 condition 写入 commands[:, 4:12]
+        # 每步更新形态插值目标（condition 变化后立即刷新）
+        self.embedded_state_default_dof_pos = self._get_condition_target_dof_pos()
         self._compute_avoidance_vel()
-        self.compute_observations()
+        self.compute_observations()             # ← 使用最新的 commands + embedded target
         self._draw_velocity_arrows()
         self._draw_avoidance_debug()
 
@@ -579,9 +587,24 @@ class EL_4090_EA(EL_4090):
         if len(env_ids) == 0:
             return
         super().reset_idx(env_ids)
+
+        # LiDAR buffer reset
         d_max = float(self.cfg.raycaster.max_distance)
         self.lidar_points_base[env_ids] = 0.0
         self.raycast_distances[env_ids] = d_max
+
+        # 重置包络参数到 max（防止前一 episode 收缩后的参数泄漏到新 episode）
+        ecfg = self.cfg.envelope
+        self.env_params["x1"][env_ids] = ecfg.x1_max
+        self.env_params["x3"][env_ids] = ecfg.x3_max
+        self.env_params["l1"][env_ids] = ecfg.front_rear_max
+        self.env_params["r1"][env_ids] = ecfg.front_rear_max
+        self.env_params["l2"][env_ids] = ecfg.mid_max
+        self.env_params["r2"][env_ids] = ecfg.mid_max
+        self.env_params["l3"][env_ids] = ecfg.front_rear_max
+        self.env_params["r3"][env_ids] = ecfg.front_rear_max
+        # P_LOWPASS 滤波器从 default_dof_pos 重新开始平滑
+        self.filtered_embedded_state_default_dof_pos[env_ids] = self.default_dof_pos
 
     def _reset_root_states(self, env_ids):
         self.root_states[env_ids] = self.base_init_state
