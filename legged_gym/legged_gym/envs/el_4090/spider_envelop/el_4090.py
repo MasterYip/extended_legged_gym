@@ -1045,7 +1045,7 @@ class EL_4090_ENVELOP(ElSpider):
                                   self.commands[:, 0:1] * self.command_lin_vel_scale,
                                   self.commands[:, 1:2] * self.command_lin_vel_scale,
                                   self.commands[:, 2:3] * self.command_ang_vel_scale,
-                                  self.commands[:, self.condition_start_idx:self.condition_end_idx] * self.command_embedded_state_scale,
+                                  self.commands[:, self.condition_start_idx:self.condition_end_idx]* self.command_embedded_state_scale,
                                   (self.dof_pos - self.embedded_state_default_dof_pos) * self.obs_scales.dof_pos,
                                   self.dof_vel * self.obs_scales.dof_vel,
                                   self.actions,
@@ -1159,14 +1159,25 @@ class EL_4090_ENVELOP(ElSpider):
         back_lateral = float(back_weights.get("lateral", 0.5)) * back_lateral_spider
         back_longitudinal = float(back_weights.get("longitudinal", 0.5)) * back_longitudinal_mammal
 
-        prior_specs = {
-            "morphology_front_prior": front_longitudinal / torch.clamp(front_longitudinal + front_lateral, min=eps),
-            "morphology_middle_prior": 1.0 - middle_lateral_spider,
-            "morphology_back_prior": back_longitudinal / torch.clamp(back_longitudinal + back_lateral, min=eps),
-        }
+        front_prior = front_longitudinal / torch.clamp(front_longitudinal + front_lateral, min=eps)
+        middle_prior = 1.0 - middle_lateral_spider
         middle_lateral_weight = float(middle_weights.get("lateral", 1.0))
         if middle_lateral_weight <= 0.0:
-            prior_specs["morphology_middle_prior"] = torch.full_like(middle_lateral_spider, 0.5)
+            middle_prior = torch.full_like(middle_lateral_spider, 0.5)
+        middle_front_follow_weight = min(max(
+            float(getattr(self.cfg.commands, "morphology_middle_front_follow_weight", 0.0)),
+            0.0,
+        ), 1.0)
+        middle_prior = (
+            middle_front_follow_weight * front_prior
+            + (1.0 - middle_front_follow_weight) * middle_prior
+        )
+
+        prior_specs = {
+            "morphology_front_prior": front_prior,
+            "morphology_middle_prior": middle_prior,
+            "morphology_back_prior": back_longitudinal / torch.clamp(back_longitudinal + back_lateral, min=eps),
+        }
 
         for prior_name, prior in prior_specs.items():
             prior = torch.clamp(prior, 0.0, 1.0)

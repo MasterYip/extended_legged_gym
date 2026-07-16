@@ -34,7 +34,7 @@ from legged_gym.envs.elspider_air.mixed_terrains.elspider_air_rough_config impor
 class El4090EnvelopCfg(ElSpiderAirRoughCfg):
     class env(ElSpiderAirRoughCfg.env):
         num_envs = 4096
-        num_observations = 74 + 11 * 17
+        num_observations = 74
         num_actions = 18
         # Debug settings
         debug_mode = False  # Enable debug output
@@ -84,7 +84,7 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
 
     class lidar:
-        enable = True
+        enable = False
         # For terrain.mesh_type='plane', Isaac's plane has no triangle mesh for Warp raycasts.
         # "raycast" analytically intersects each LiDAR beam with z=0; "max_range" means no hits.
         # "zero" preserves the old all-zero behavior for ablations only.
@@ -270,43 +270,43 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
         reward_max_stage = 0  # 最大 reward 阶段
 
         class scales:
-            termination = -0.0
+            termination = -0.0  # 因非超时原因终止 episode 的惩罚；当前权重为 0，等于关闭
 
-            tracking_lin_vel = 6
-            tracking_ang_vel = 2.5
+            tracking_lin_vel = 6  # 奖励机身水平线速度跟踪指令速度
+            tracking_ang_vel = 2.5  # 奖励偏航角速度跟踪转向指令
 
-            lin_vel_z = -2
-            ang_vel_xy = -0.1
-            orientation = -5
-            base_height = -50
+            lin_vel_z = -2  # 惩罚机身竖直方向速度，减少上下颠簸和跳动
+            ang_vel_xy = -0.1  # 惩罚滚转和俯仰角速度，减少机身晃动
+            orientation = -5  # 惩罚机身偏离水平姿态，保持机身平稳
+            base_height = -50  # 惩罚机身高度偏离当前形态对应的目标高度
 
-            torques = -1e-5
-            dof_vel = -1e-5
-            dof_acc = -1e-7
+            torques = -1e-5  # 惩罚过大关节力矩，降低能耗和执行器负担
+            dof_vel = -1e-5  # 惩罚过大关节速度，抑制过快的关节运动
+            dof_acc = -1e-7  # 惩罚过大关节加速度，使动作更平滑
 
-            feet_slip = -0.05 
-            feet_air_time = 3
+            feet_slip = -0.05  # 惩罚足端接触地面时的水平滑动
+            feet_air_time = 3  # 奖励合理腾空时间，并惩罚过早落脚，用于控制步频和步幅
 
-            embedded_state_dof_pos = -5.0
-            embedded_state_dof_vel = -0.02
-            morphology_haa_range = -3.0
-            haa_swing = 0.35
+            embedded_state_dof_pos = -5.0  # 惩罚关节位置偏离当前嵌入式形态的目标姿态
+            embedded_state_dof_vel = -0.02  # 形态过渡未完成时惩罚过大关节速度
+            morphology_haa_range = -3.0  # 哺乳型形态下惩罚 HAA 关节超出对应允许范围
+            haa_swing = 0.15  # 行走时奖励 HAA 关节有效摆动，哺乳型形态下自动减弱
 
-            collision = -1.0
-            action_rate = -0.001
-            stand_still = -1.5
+            collision = -1.0  # 惩罚设定部位的非期望碰撞，如机身、大腿和小腿触地
+            action_rate = -0.001  # 惩罚相邻时刻动作变化过大，提高控制平滑性
+            stand_still = -1.5  # 零速度指令时惩罚关节偏离目标静止姿态
 
-            dof_pos_limits = -0.5
-            dof_vel_limits = -0.1
-            torque_limits = -0.01
+            dof_pos_limits = -0.5  # 惩罚关节位置接近或超过软限位
+            dof_vel_limits = -0.1  # 惩罚关节速度超过允许上限
+            torque_limits = -0.01  # 惩罚关节力矩超过允许上限
 
-            feet_contact_forces = -0.03
+            feet_contact_forces = -0.03  # 惩罚超过软上限的足端接触力，减小落地冲击
 
-            feet_async = -0.1
-            feet_sync = -0.1
-            tripod_contact_pattern = -1
+            feet_async = -0.1  # 惩罚两组对立三足之间的异步时序误差
+            feet_sync = -0.1  # 惩罚同一三足组内各脚的同步时序误差
+            tripod_contact_pattern = -1  # 惩罚偏离“组内同步、两组反相”的三足接触模式
             
-            envelope_constraint = -20.0  #TODO: tune this value
+            envelope_constraint = -20.0  # 惩罚足端超出当前采样的可达包络边界
 
 
     class commands(ElSpiderAirRoughCfg.commands):
@@ -333,14 +333,17 @@ class El4090EnvelopCfg(ElSpiderAirRoughCfg):
             "morphology_middle_prior",
             "morphology_back_prior",
         ]
-        # directional_ratio: lateral width is spider-like, fore/aft reach is mammal-like.
-        # weighted_sum preserves the older direct weighted normalization.
+        # directional_ratio compares mammal-like fore/aft reach with spider-like width.
+        # A smaller lateral denominator weight smoothly biases the prior toward mammal.
         morphology_prior_mode = "directional_ratio"
         morphology_prior_weights = {
-            "front": {"lateral": 0.5, "longitudinal": 0.5},
+            "front": {"lateral": 0.35, "longitudinal": 0.5},
             "middle": {"lateral": 1.0},
-            "back": {"lateral": 0.5, "longitudinal": 0.5},
+            "back": {"lateral": 0.35, "longitudinal": 0.5},
         }
+        # Blend the original middle-width prior with the front-leg morphology prior.
+        # middle_prior = (1 - weight) * (1 - normalized_middle_width) + weight * front_prior
+        morphology_middle_front_follow_weight = 0.4
         resampling_time = 4.  # time before command are changed[s]
         heading_command = False  # if true: compute ang vel command from heading error
         print_sampled_condition = False
@@ -440,7 +443,7 @@ class El4090EnvelopCfgPPO(ElSpiderAirRoughCfgPPO):
 
         # logging
         save_interval = 50 # check for potential saves every this many iterations
-        experiment_name = 'el_4090_envelop_lowpass'
+        experiment_name = 'el_4090_envelop_lowpass_without_lidar'
         run_name = ''
         # load and resume
         resume = False
