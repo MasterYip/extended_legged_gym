@@ -33,8 +33,8 @@ class EL_4090_EA(EL_4090):
                  task_name="el_4090_ea"):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless,
                          task_name=task_name)
-        self._lidar_decimation = max(1, round(1.0 / (self.dt * self.cfg.raycaster.update_frequency_hz)))  # 新增
-        self._lidar_step_counter = self._lidar_decimation - 1               # 新增：首帧立即触发更新
+        self._lidar_decimation = max(1, round(1.0 / (self.dt * self.cfg.raycaster.update_frequency_hz)))
+        self._lidar_timer = self._lidar_decimation - 1  # 固定时钟，首帧立即触发
 
     # ==================================================================
     # Buffer initialisation
@@ -180,9 +180,10 @@ class EL_4090_EA(EL_4090):
         if self.lidar_sensor is None:
             return
 
-        self._lidar_step_counter += 1
-        if self._lidar_step_counter % self._lidar_decimation != 0:
+        self._lidar_timer += 1
+        if self._lidar_timer % self._lidar_decimation != 0:
             return  # 复用上一帧 lidar_points_base
+        self._lidar_timer = 0
 
         self.sensor_quat_tensor.copy_(
             quat_mul(self.base_quat, self._sensor_offset_quat))
@@ -425,7 +426,6 @@ class EL_4090_EA(EL_4090):
         d_max = float(self.cfg.raycaster.max_distance)
         self.lidar_points_base[env_ids] = 0.0
         self.raycast_distances[env_ids] = d_max
-        self._lidar_step_counter = self._lidar_decimation - 1      # 新增：下帧立即触发 LiDAR 更新
 
     def _reset_root_states(self, env_ids):
         self.root_states[env_ids] = self.base_init_state
