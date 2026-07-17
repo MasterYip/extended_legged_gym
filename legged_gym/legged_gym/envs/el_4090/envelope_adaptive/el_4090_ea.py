@@ -60,17 +60,15 @@ class EL_4090_EA(EL_4090):
             (self.num_envs, n_pts), d_max, device=self.device,
             dtype=torch.float, requires_grad=False,
         )
-        # Envelope params buffer -- start at max, shrink on obstacle detection
-        ecfg = self.cfg.envelope
+        # Envelope params buffer -- start at max envelope, shrink on obstacle detection
+        # 5 个对称参数,键名 = condition 名;边界 = cfg.commands.ranges(单一事实来源)
+        ranges = self.cfg.commands.ranges
         self.env_params = {
-            "x1": torch.full((self.num_envs,), ecfg.x1_max, device=self.device),
-            "x3": torch.full((self.num_envs,), ecfg.x3_max, device=self.device),
-            "l1": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
-            "r1": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
-            "l2": torch.full((self.num_envs,), ecfg.mid_max, device=self.device),
-            "r2": torch.full((self.num_envs,), ecfg.mid_max, device=self.device),
-            "l3": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
-            "r3": torch.full((self.num_envs,), ecfg.front_rear_max, device=self.device),
+            "front_width": torch.full((self.num_envs,), ranges.front_width[1], device=self.device),
+            "middle_width": torch.full((self.num_envs,), ranges.middle_width[1], device=self.device),
+            "back_width": torch.full((self.num_envs,), ranges.back_width[1], device=self.device),
+            "forward_limit": torch.full((self.num_envs,), ranges.forward_limit[1], device=self.device),
+            "backward_limit": torch.full((self.num_envs,), ranges.backward_limit[0], device=self.device),
         }
 
     def _init_condition_buffers(self):
@@ -132,6 +130,18 @@ class EL_4090_EA(EL_4090):
         self.command_embedded_state_scale = torch.tensor(
             self.obs_scales.embedded_state, device=self.device, requires_grad=False,
         )
+
+        # 最大包络对应的 condition 常量(含 3 先验 ≈0.588/0.235/0.588),
+        # 供 reset_idx 写入与 reset 高度插值两处复用
+        max_params = {k: v[:1].clone() for k, v in self.env_params.items()}
+        self._max_envelope_condition = envelope_params_to_condition(max_params, self.cfg)  # (1, 8)
+
+        # P5: reset 初始高度随形态先验插值(对齐底层 spider_envelop;
+        # EA 中 reset 后包络恒为 max → 常量 ≈0.582)
+        spider_h = float(getattr(self.cfg.rewards, "base_height_spider_target", 0.53))
+        mammal_h = float(getattr(self.cfg.rewards, "base_height_mammal_target", spider_h))
+        mean_prior = self._max_envelope_condition[0, 5:8].mean().item()
+        self._reset_base_height = spider_h + mean_prior * (mammal_h - spider_h)
 
     def _get_noise_scale_vec(self, cfg):
         """74-dim noise vector matching spider_envelop observation layout."""
@@ -372,7 +382,7 @@ class EL_4090_EA(EL_4090):
             return
         params = compute_envelope_params(
             self.lidar_points_base, self.base_pos, self.base_quat,
-            self.cfg.envelope, self.env_params,
+            self.cfg, self.env_params,
         )
         for k, v in params.items():
             self.env_params[k].copy_(v)
@@ -382,13 +392,6 @@ class EL_4090_EA(EL_4090):
         self.commands[:, self.condition_start_idx:self.condition_end_idx] = condition
 
         self._draw_envelope()
-
-    @staticmethod
-    def _build_prism_verts(x1, x3, l1, l2, l3, r1, r2, r3, z):
-        return torch.tensor([
-            [x1,  r1, z], [0.0, r2, z], [x3,  r3, z],
-            [x3, -l3, z], [0.0, -l2, z], [x1, -l1, z],
-        ], dtype=torch.float)
 
     def _draw_hex_prism(self, verts_top, verts_bot, env_id, color, rad):
         for hex_verts in [verts_top, verts_bot]:
@@ -404,8 +407,11 @@ class EL_4090_EA(EL_4090):
                 verts_bot[i].cpu().numpy().tolist(),
             ], rad=rad, color=color)
 
-    def _draw_lidar_points(self, eid, bp, bq, p, m, zt, zb):
-        """Draw LiDAR point cloud with colour coding: blue=valid hit, red=in 3D sensitive zone."""
+    def _draw_lidar_points(self, eid, bp, bq, inner_verts, outer_verts, zt, zb):
+        """Draw LiDAR point cloud: blue=valid hit, red=in 3D sensitive zone.
+
+        inner_verts/outer_verts: (6, 2) — 由 _draw_envelope 构建并复用(与检测同一几何)。
+        """
         pts = self.lidar_points_base[eid]                               # (N, 3) body-frame
         dists = self.raycast_distances[eid]                             # (N,)
         d_max = float(self.cfg.raycaster.max_distance)
@@ -416,17 +422,7 @@ class EL_4090_EA(EL_4090):
         pts_world = (bp.unsqueeze(0) + quat_apply(
             bq.unsqueeze(0).expand(pts.shape[0], 4), pts)).cpu().numpy()
 
-        # Determine which points are in the 3D sensitive zone
-        x = pts[:, 0]; y = pts[:, 1]; z = pts[:, 2]
-        in_z = (z >= zb) & (z <= zt)
-        # Build inner/outer hexagon edges for XY check
-        _x1 = torch.tensor([p["x1"]], device=self.device)
-        _x3 = torch.tensor([p["x3"]], device=self.device)
-        _l1 = torch.tensor([p["l1"]], device=self.device); _r1 = torch.tensor([p["r1"]], device=self.device)
-        _l2 = torch.tensor([p["l2"]], device=self.device); _r2 = torch.tensor([p["r2"]], device=self.device)
-        _l3 = torch.tensor([p["l3"]], device=self.device); _r3 = torch.tensor([p["r3"]], device=self.device)
-        inner_verts = _build_hex_edges(_x1, _x3, _l1, _l2, _l3, _r1, _r2, _r3)[0]  # (6, 2)
-        outer_verts = _offset_hexagon(inner_verts.unsqueeze(0), m)[0]               # (6, 2)
+        in_z = (pts[:, 2] >= zb) & (pts[:, 2] <= zt)
 
         def _inside(pts_xy, verts):
             V = 6
@@ -436,11 +432,10 @@ class EL_4090_EA(EL_4090):
             cross = edges[:, 0] * rel[..., 1] - edges[:, 1] * rel[..., 0]
             return (cross >= 0).all(dim=-1)
 
-        pts_xy = torch.stack([x, y], dim=-1)
+        pts_xy = pts[:, :2]
         in_zone = _inside(pts_xy, outer_verts) & ~_inside(pts_xy, inner_verts) & in_z
         in_zone_np = in_zone.cpu().numpy()
 
-        # Draw: zone points (red, larger), normal hits (blue, smaller)
         red_pts = pts_world[in_zone_np]
         blue_pts = pts_world[~in_zone_np]
 
@@ -464,25 +459,28 @@ class EL_4090_EA(EL_4090):
         eid = 0
         bp = self.base_pos[eid]; bq = self.base_quat[eid]
 
-        p = {k: self.env_params[k][eid].item() for k in self.env_params}
-        # inner
-        it = self._build_prism_verts(p["x1"], p["x3"], p["l1"], p["l2"], p["l3"],
-                                      p["r1"], p["r2"], p["r3"], zt).to(self.device)
-        ib = self._build_prism_verts(p["x1"], p["x3"], p["l1"], p["l2"], p["l3"],
-                                      p["r1"], p["r2"], p["r3"], zb).to(self.device)
-        self._draw_hex_prism(bp + quat_apply(bq, it), bp + quat_apply(bq, ib),
+        # inner/outer 2D 顶点只构建一次,绘制与红蓝分类复用(与检测同一几何)
+        p = {k: self.env_params[k][eid:eid + 1] for k in self.env_params}
+        inner_2d = _build_hex_edges(
+            p["forward_limit"], p["backward_limit"],
+            p["front_width"], p["middle_width"], p["back_width"],
+        )                                                   # (1, 6, 2)
+        outer_2d = _offset_hexagon(inner_2d, m)             # (1, 6, 2) 径向,P2 修复
+        inner_v = inner_2d[0]
+        outer_v = outer_2d[0]
+
+        def _prism(verts_2d, z):
+            zc = torch.full((6, 1), float(z), device=verts_2d.device)
+            return torch.cat([verts_2d, zc], dim=-1)        # (6, 3)
+
+        self._draw_hex_prism(bp + quat_apply(bq, _prism(inner_v, zt)),
+                             bp + quat_apply(bq, _prism(inner_v, zb)),
                              eid, (0.0, 1.0, 0.5), 0.02)
-        # outer
-        ot = self._build_prism_verts(p["x1"]+m, p["x3"]-m,
-                                      p["l1"]+m, p["l2"]+m, p["l3"]+m,
-                                      p["r1"]+m, p["r2"]+m, p["r3"]+m, zt).to(self.device)
-        ob = self._build_prism_verts(p["x1"]+m, p["x3"]-m,
-                                      p["l1"]+m, p["l2"]+m, p["l3"]+m,
-                                      p["r1"]+m, p["r2"]+m, p["r3"]+m, zb).to(self.device)
-        self._draw_hex_prism(bp + quat_apply(bq, ot), bp + quat_apply(bq, ob),
+        self._draw_hex_prism(bp + quat_apply(bq, _prism(outer_v, zt)),
+                             bp + quat_apply(bq, _prism(outer_v, zb)),
                              eid, (0.3, 0.7, 0.5), 0.01)
-        # point cloud
-        self._draw_lidar_points(eid, bp, bq, p, m, zt, zb)
+        # point cloud(复用同一 inner/outer 顶点)
+        self._draw_lidar_points(eid, bp, bq, inner_v, outer_v, zt, zb)
 
     # ==================================================================
     # Avoidance velocity (passthrough stub)
@@ -593,22 +591,31 @@ class EL_4090_EA(EL_4090):
         self.lidar_points_base[env_ids] = 0.0
         self.raycast_distances[env_ids] = d_max
 
-        # 重置包络参数到 max（防止前一 episode 收缩后的参数泄漏到新 episode）
-        ecfg = self.cfg.envelope
-        self.env_params["x1"][env_ids] = ecfg.x1_max
-        self.env_params["x3"][env_ids] = ecfg.x3_max
-        self.env_params["l1"][env_ids] = ecfg.front_rear_max
-        self.env_params["r1"][env_ids] = ecfg.front_rear_max
-        self.env_params["l2"][env_ids] = ecfg.mid_max
-        self.env_params["r2"][env_ids] = ecfg.mid_max
-        self.env_params["l3"][env_ids] = ecfg.front_rear_max
-        self.env_params["r3"][env_ids] = ecfg.front_rear_max
+        # 重置包络参数到最大包络端(防止前一 episode 收缩后的参数泄漏到新 episode)
+        ranges = self.cfg.commands.ranges
+        self.env_params["front_width"][env_ids] = ranges.front_width[1]
+        self.env_params["middle_width"][env_ids] = ranges.middle_width[1]
+        self.env_params["back_width"][env_ids] = ranges.back_width[1]
+        self.env_params["forward_limit"][env_ids] = ranges.forward_limit[1]
+        self.env_params["backward_limit"][env_ids] = ranges.backward_limit[0]
+        # condition 立即写入最大包络值(正常路径下同一 post_physics_step 尾部的
+        # _update_envelope 会以相同值覆盖;价值在 lidar 禁用调试路径与防御性鲁棒)
+        self.commands[env_ids, self.condition_start_idx:self.condition_end_idx] = \
+            self._max_envelope_condition
         # P_LOWPASS 滤波器从 default_dof_pos 重新开始平滑
         self.filtered_embedded_state_default_dof_pos[env_ids] = self.default_dof_pos
 
     def _reset_root_states(self, env_ids):
         self.root_states[env_ids] = self.base_init_state
         self.root_states[env_ids, :3] += self.env_origins[env_ids]
+
+        # P5: 初始 base 高度随形态先验插值(对齐底层 el_4090.py:1028-1036;
+        # EA 在唯一一次 gym tensor 写入前替换 z,省去底层的二次 API 调用)
+        if getattr(self.cfg.rewards, "reset_base_height_with_morphology", False):
+            self.root_states[env_ids, 2] = (
+                self.env_origins[env_ids, 2] + self._reset_base_height
+            )
+
         spawn_range = float(getattr(self.cfg.init_state, "spawn_offset_range", 0.5))
         self.root_states[env_ids, :2] += torch_rand_float(
             -spawn_range, spawn_range, (len(env_ids), 2), device=self.device)

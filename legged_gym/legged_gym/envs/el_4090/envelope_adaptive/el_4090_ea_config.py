@@ -126,26 +126,20 @@ class El4090EACfg(El4090Tripod2LowCfg):
             "LF_KFE": -0.608, "LM_KFE": -0.608, "LB_KFE": -0.608,
         }
 
-    # ── 包络参数范围统一为底层训练分布 ──
-    # 每个参数拥有 [min, max] 完整范围,与底层 condition ranges 一一对应:
-    #   x1 ∈ [0.6, 0.9]      = forward_limit range
-    #   x3 ∈ [-0.9, -0.6]    = backward_limit range (x3_max=最远后方=数值最小, x3_min=最近后方=数值最大)
-    #   l*/r* front/rear ∈ [0.3, 0.6] = front/back_width range
-    #   l2/r2 ∈ [0.3, 0.7]   = middle_width range
+    # ── 包络模块参数 ──
+    # 收缩边界 = commands.ranges 的 5 长度范围(单一事实来源,不在此重复定义)
     class envelope:
-        x1_max = 0.9          # forward_limit 上界
-        x1_min = 0.6          # forward_limit 下界
-        x3_max = -0.9         # backward_limit 下界(最远后方, 数值最小)
-        x3_min = -0.6         # backward_limit 上界(最近后方, 数值最大)
-        front_rear_max = 0.6  # front/back_width 上界
-        front_rear_min = 0.3  # front/back_width 下界
-        mid_max = 0.7         # middle_width 上界
-        mid_min = 0.3         # middle_width 下界
         z_top = 0.15          # 棱柱上层高度 (m)
         z_bottom = -0.25      # 棱柱下层高度 (m)
         margin_distance = 0.2 # outer hexagon offset distance (m)
         shrink_step = 0.03    # shrinkage per step (m)
         grow_step = 0.01      # recovery per step (m)
+
+    class rewards(El4090Tripod2LowCfg.rewards):
+        # P5: reset 初始高度随形态先验插值(对齐底层 spider_envelop 训练环境)
+        base_height_spider_target = 0.53
+        base_height_mammal_target = 0.64
+        reset_base_height_with_morphology = True
 
     class normalization(El4090Tripod2LowCfg.normalization):
         class obs_scales(El4090Tripod2LowCfg.normalization.obs_scales):
