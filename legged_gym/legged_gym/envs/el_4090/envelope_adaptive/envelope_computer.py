@@ -73,6 +73,7 @@ def _sector_angles(verts):
     a_A, a_B = _ang(A), _ang(B)
     a_E, a_F = _ang(E_v), _ang(F)
     a_I1, a_I7 = _ang(I1), _ang(I7)
+    a_C, a_D = _ang(C), _ang(D)
     a_G, a_K = _ang(G), _ang(K)
     a_H, a_L = _ang(H), _ang(L)
     a_J1, a_J7 = _ang(J1), _ang(J7)
@@ -80,9 +81,9 @@ def _sector_angles(verts):
     return {
         "forward_limit":  [(a_A, a_B)],                # 前向全宽扇区 (跨 0)
         "backward_limit": [(a_F, a_E)],                # 后向全宽扇区 (跨 ±π)
-        "front_width":    [(a_I7, a_K), (a_G, a_I1)],  # +y 侧 与 -y 侧
+        "front_width":    [(a_I7, a_D), (a_C, a_I1)],  # +y 侧 与 -y 侧 (扩展到侧边顶点D/C)
         "middle_width":   [(a_K, a_L), (a_H, a_G)],
-        "back_width":     [(a_L, a_J7), (a_J1, a_H)],
+        "back_width":     [(a_D, a_J7), (a_J1, a_C)],  # 扩展到侧边顶点D/C (注意: D→J7, J1→C 非wrap方向)
     }
 
 
