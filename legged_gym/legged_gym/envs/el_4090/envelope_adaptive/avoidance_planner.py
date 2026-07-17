@@ -17,7 +17,7 @@ def compute_safe_velocity(
     raycast_distances,     # (E, N)
     base_pos,              # (E, 3) world-frame
     base_quat,             # (E, 4) world-frame
-    commands,              # (E, 4) [vx, vy, omega, heading]
+    commands,              # (E, num_commands) — 仅读取 [:, 0:2] (vx, vy)
     cfg,                   # config.avoidance
     prev_theta=None,       # previous output theta for hysteresis (rad)
 ):
