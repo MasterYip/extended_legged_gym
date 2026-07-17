@@ -17,8 +17,8 @@ from legged_gym.utils.LidarSensor.LidarSensor.lidar_sensor import LidarSensor
 from legged_gym.utils.LidarSensor.LidarSensor.sensor_config.lidar_sensor_config import LidarConfig, LidarType
 
 from legged_gym.envs.el_4090.envelope_adaptive.envelope_computer import (
-    compute_envelope_params, envelope_params_to_condition,
-    _build_hex_edges, _offset_hexagon,
+    compute_envelope_params, envelope_params_to_condition, ENVELOPE_PARAM_NAMES,
+    _build_hex_edges, _offset_hexagon, _make_min_hex,
 )
 from legged_gym.envs.el_4090.envelope_adaptive.avoidance_planner import compute_safe_velocity
 
@@ -70,6 +70,13 @@ class EL_4090_EA(EL_4090):
             "forward_limit": torch.full((self.num_envs,), ranges.forward_limit[1], device=self.device),
             "backward_limit": torch.full((self.num_envs,), ranges.backward_limit[0], device=self.device),
         }
+        # per-param grow cooldown counter (E, 5)
+        self._grow_cooldown = torch.zeros(
+            self.num_envs, len(ENVELOPE_PARAM_NAMES),
+            dtype=torch.int, device=self.device,
+        )
+        # pre-built minimum hexagon for detection band lower bound
+        self._min_hex = _make_min_hex(self.cfg, device=self.device)  # (1, 6, 2)
 
     def _init_condition_buffers(self):
         """初始化包络 condition 相关 buffer（对齐底层 spider_envelop el_4090.py:100-200）"""
@@ -380,9 +387,9 @@ class EL_4090_EA(EL_4090):
         """Compute envelope params, write condition to commands, and draw the 3D prism."""
         if self.lidar_sensor is None:
             return
-        params = compute_envelope_params(
+        params, self._grow_cooldown = compute_envelope_params(
             self.lidar_points_base, self.base_pos, self.base_quat,
-            self.cfg, self.env_params,
+            self.cfg, self.env_params, self._grow_cooldown, self._min_hex,
         )
         for k, v in params.items():
             self.env_params[k].copy_(v)
@@ -604,6 +611,8 @@ class EL_4090_EA(EL_4090):
             self._max_envelope_condition
         # P_LOWPASS 滤波器从 default_dof_pos 重新开始平滑
         self.filtered_embedded_state_default_dof_pos[env_ids] = self.default_dof_pos
+        # cooldown 重置为 0 (reset 后包络在 max, 无需立即 grow)
+        self._grow_cooldown[env_ids] = 0
 
     def _reset_root_states(self, env_ids):
         self.root_states[env_ids] = self.base_init_state

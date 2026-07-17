@@ -134,6 +134,7 @@ class El4090EACfg(El4090Tripod2LowCfg):
         margin_distance = 0.2 # outer hexagon offset distance (m)
         shrink_step = 0.03    # shrinkage per step (m)
         grow_step = 0.01      # recovery per step (m)
+        grow_cooldown_frames = 5  # 连续无hit帧数阈值, 到达后开始扩张 (≈1 LiDAR cycle @10Hz)
 
     class rewards(El4090Tripod2LowCfg.rewards):
         # P5: reset 初始高度随形态先验插值(对齐底层 spider_envelop 训练环境)

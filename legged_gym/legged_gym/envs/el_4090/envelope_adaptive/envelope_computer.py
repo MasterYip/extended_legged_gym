@@ -100,6 +100,8 @@ def compute_envelope_params(
     base_quat,           # (E, 4)  reserved
     cfg,                 # 完整 env config (El4090EACfg) — 需 envelope 与 commands.ranges
     prev_params,         # dict of (E,) tensors, keys = ENVELOPE_PARAM_NAMES
+    cooldown,            # (E, 5) int tensor — consecutive no-hit frames per parameter
+    min_hex,             # (1, 6, 2) — pre-built minimum hexagon (on same device as pts)
 ):
     device = lidar_points.device
     ecfg = cfg.envelope
@@ -129,9 +131,9 @@ def compute_envelope_params(
 
     sectors = _sector_angles(inner)
 
-    outside_inner = ~_point_inside_convex(pts, inner)   # (E, N)  XY only
-    inside_outer = _point_inside_convex(pts, outer)      # (E, N)  XY only
-    in_zone_xy = outside_inner & inside_outer
+    outside_min = ~_point_inside_convex(pts, min_hex)   # (E, N) — fixed lower bound
+    inside_outer = _point_inside_convex(pts, outer)       # (E, N)
+    in_zone_xy = outside_min & inside_outer
 
     # Z-dimension filter: points must be within the 3D prism height
     z_bottom = float(ecfg.z_bottom)
@@ -140,20 +142,34 @@ def compute_envelope_params(
     in_zone_z = (pts_z >= z_bottom) & (pts_z <= z_top)
     in_zone = in_zone_xy & in_zone_z                     # (E, N)  3D volume
 
+    threshold = int(getattr(cfg.envelope, "grow_cooldown_frames", 5))
+    param_idx = {n: i for i, n in enumerate(ENVELOPE_PARAM_NAMES)}
+
     for name, intervals in sectors.items():
+        idx = param_idx[name]
         hit = torch.zeros(pts.shape[0], dtype=torch.bool, device=device)
         for s_start, s_end in intervals:
             in_sector = _angle_in_range(angles, s_start.unsqueeze(-1), s_end.unsqueeze(-1))
             hit |= (in_zone & in_sector).any(dim=-1)
 
+        # cooldown update (strict consecutive no-hit counter)
+        cooldown[:, idx] = torch.where(hit,
+            torch.zeros_like(cooldown[:, idx]),       # reset on hit
+            cooldown[:, idx] + 1,                      # increment on no-hit
+        )
+
+        # shrink on hit; grow only when cooldown >= threshold
+        active_grow = cooldown[:, idx] >= threshold
+        should_grow = ~hit & active_grow
+        should_shrink = hit
+
         if name == "backward_limit":
-            # 负值参数: hit → +shrink 向 -0.6(最近后方)收缩; no-hit → -grow 向 -0.9 恢复
-            delta = torch.where(hit, shrink, -grow)
+            delta = torch.where(should_shrink, shrink, torch.where(should_grow, -grow, 0.0))
         else:
-            delta = torch.where(hit, -shrink, grow)
+            delta = torch.where(should_shrink, -shrink, torch.where(should_grow, grow, 0.0))
         params[name] = torch.clamp(params[name] + delta, lows_t[name], highs_t[name])
 
-    return params
+    return params, cooldown
 
 
 def envelope_params_to_condition(params, cfg):
@@ -218,6 +234,22 @@ def envelope_params_to_condition(params, cfg):
         forward_limit, backward_limit,
         front_prior, middle_prior, back_prior,
     ], dim=-1)  # (E, 8)
+
+
+def _make_min_hex(cfg, device='cpu'):
+    """Build the minimum-extent hexagon (all params at shrink end). (1, 6, 2).
+
+    backward_limit[1]=-0.6 is the shrunk end (closest backward = numerically larger).
+    Must be on same device as lidar_points to avoid CPU/GPU mismatch in _point_inside_convex.
+    """
+    ranges = cfg.commands.ranges
+    return _build_hex_edges(
+        torch.tensor([ranges.forward_limit[0]], device=device),    # 0.6 (closest forward)
+        torch.tensor([ranges.backward_limit[1]], device=device),   # -0.6 (closest backward)
+        torch.tensor([ranges.front_width[0]], device=device),       # 0.3
+        torch.tensor([ranges.middle_width[0]], device=device),      # 0.3
+        torch.tensor([ranges.back_width[0]], device=device),        # 0.3
+    )
 
 
 def _clip_range(tensor, low, high):
