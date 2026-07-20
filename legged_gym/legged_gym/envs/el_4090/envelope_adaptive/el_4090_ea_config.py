@@ -55,6 +55,10 @@ class El4090EACfg(El4090Tripod2LowCfg):
         pillar_spawn_radius = 7.5        # 约束范围半径
         pillar_allow_height_variation = True
 
+        # 通道参数
+        channel_width = 2.0
+        wall_height = 1.5
+
     class commands(El4090Tripod2LowCfg.commands):
         num_commands = 4 + EA_CONDITION_DIM   # = 12
         condition_dim = EA_CONDITION_DIM
@@ -131,9 +135,10 @@ class El4090EACfg(El4090Tripod2LowCfg):
     class envelope:
         z_top = 0.15          # 棱柱上层高度 (m)
         z_bottom = -0.25      # 棱柱下层高度 (m)
-        margin_distance = 0.2 # outer hexagon offset distance (m)
+        margin_distance = 0.25 # outer hexagon offset distance (m)
+        hold_margin = 0.1       # shrink/hold 分界 (0~hold=shrink区, hold~margin=hold区)
         shrink_step = 0.03    # shrinkage per step (m)
-        grow_step = 0.01      # recovery per step (m)
+        grow_step = 0.03      # recovery per step (m)
         grow_cooldown_frames = 5  # 连续无hit帧数阈值, 到达后开始扩张 (≈1 LiDAR cycle @10Hz)
 
     class rewards(El4090Tripod2LowCfg.rewards):

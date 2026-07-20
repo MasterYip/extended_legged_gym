@@ -129,40 +129,44 @@ def compute_envelope_params(
         params["front_width"], params["middle_width"], params["back_width"],
     )
     outer = _offset_hexagon(inner, margin)
+    hold_m = float(getattr(ecfg, "hold_margin", 0.1))
+    inner_shrink = _offset_hexagon(inner, hold_m)  # shrink zone upper boundary
 
     sectors = _sector_angles(inner)
 
     outside_min = ~_point_inside_convex(pts, min_hex)   # (E, N) — fixed lower bound
     inside_outer = _point_inside_convex(pts, outer)       # (E, N)
-    in_zone_xy = outside_min & inside_outer
 
     # Z-dimension filter: points must be within the 3D prism height
     z_bottom = float(ecfg.z_bottom)
     z_top = float(ecfg.z_top)
     pts_z = pts[..., 2]
     in_zone_z = (pts_z >= z_bottom) & (pts_z <= z_top)
-    in_zone = in_zone_xy & in_zone_z                     # (E, N)  3D volume
+
+    # Three-zone detection: shrink | hold | clear
+    in_shrink = outside_min & _point_inside_convex(pts, inner_shrink) & in_zone_z
+    in_hold   = ~_point_inside_convex(pts, inner_shrink) & inside_outer & in_zone_z
 
     threshold = int(getattr(cfg.envelope, "grow_cooldown_frames", 5))
     param_idx = {n: i for i, n in enumerate(ENVELOPE_PARAM_NAMES)}
 
     for name, intervals in sectors.items():
         idx = param_idx[name]
-        hit = torch.zeros(pts.shape[0], dtype=torch.bool, device=device)
+        hit_shrink = torch.zeros(pts.shape[0], dtype=torch.bool, device=device)
+        hit_hold   = torch.zeros(pts.shape[0], dtype=torch.bool, device=device)
         for s_start, s_end in intervals:
             in_sector = _angle_in_range(angles, s_start.unsqueeze(-1), s_end.unsqueeze(-1))
-            hit |= (in_zone & in_sector).any(dim=-1)
+            hit_shrink |= (in_shrink & in_sector).any(dim=-1)
+            hit_hold   |= (in_hold & in_sector).any(dim=-1)
 
-        # cooldown update (strict consecutive no-hit counter)
-        cooldown[:, idx] = torch.where(hit,
-            torch.zeros_like(cooldown[:, idx]),       # reset on hit
-            cooldown[:, idx] + 1,                      # increment on no-hit
+        # shrink resets cooldown; hold preserves; clear increments
+        cooldown[:, idx] = torch.where(hit_shrink,
+            torch.zeros_like(cooldown[:, idx]),
+            torch.where(hit_hold, cooldown[:, idx], cooldown[:, idx] + 1),
         )
 
-        # shrink on hit; grow only when cooldown >= threshold
-        active_grow = cooldown[:, idx] >= threshold
-        should_grow = ~hit & active_grow
-        should_shrink = hit
+        should_shrink = hit_shrink
+        should_grow   = ~hit_shrink & ~hit_hold & (cooldown[:, idx] >= threshold)
 
         if name == "backward_limit":
             delta = torch.where(should_shrink, shrink, torch.where(should_grow, -grow, 0.0))
