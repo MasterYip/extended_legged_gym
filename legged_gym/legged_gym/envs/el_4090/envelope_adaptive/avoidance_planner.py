@@ -12,6 +12,30 @@ def _quat_apply(q, v):
     return v + q[:, 3:4] * t + torch.cross(xyz, t, dim=-1)
 
 
+def _peak_prominence(d_smooth, peak_idx):
+    """Peak prominence: how much the peak stands above the highest saddle
+    to any higher peak on either side.  Scans outward along the shorter
+    angular path (wrapping through 0 / n-1 is safe)."""
+    n = len(d_smooth)
+    peak_d = d_smooth[peak_idx]
+
+    left_valley = peak_d
+    for j in range(1, n):
+        idx = (peak_idx - j) % n
+        left_valley = min(left_valley, d_smooth[idx])
+        if d_smooth[idx] > peak_d:
+            break
+
+    right_valley = peak_d
+    for j in range(1, n):
+        idx = (peak_idx + j) % n
+        right_valley = min(right_valley, d_smooth[idx])
+        if d_smooth[idx] > peak_d:
+            break
+
+    return peak_d - max(left_valley, right_valley)
+
+
 def compute_safe_velocity(
     lidar_points_base,     # (E, N, 3) body-frame
     raycast_distances,     # (E, N)
@@ -121,10 +145,8 @@ def compute_safe_velocity(
                 d_ell = (a_ell * b_ell / np.sqrt(
                     (b_ell * np.cos(theta_p)) ** 2 +
                     (a_ell * np.sin(theta_p)) ** 2))
-                if d_smooth[i] > d_ell:
-                    quality = (d_smooth[i] - d_ell) * fwhm
-                else:
-                    quality = 0.0
+                prominence = _peak_prominence(d_smooth, i)
+                quality = prominence * fwhm if d_smooth[i] > d_ell else 0.0
 
                 # ---- Step 5: direction weighting ----
                 dtheta = theta_p - theta_cmd_02pi
