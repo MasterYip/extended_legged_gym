@@ -494,7 +494,7 @@ class EL_4090_EA(EL_4090):
     # ==================================================================
 
     def _compute_avoidance_vel(self):
-        if self.lidar_sensor is None:
+        if self.lidar_sensor is None or not getattr(self.cfg.avoidance, "enable", True):
             self._desired_cmd = self.commands[:, :3].clone()
             self._safe_cmd = self.commands[:, :3].clone()
             return
@@ -582,7 +582,7 @@ class EL_4090_EA(EL_4090):
         self._compute_avoidance_vel()
         self.compute_observations()             # ← 使用最新的 commands + embedded target
         self._draw_velocity_arrows()
-        self._draw_avoidance_debug()
+        # self._draw_avoidance_debug()
 
     # ==================================================================
     # Reset

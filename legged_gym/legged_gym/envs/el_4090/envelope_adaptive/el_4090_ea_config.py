@@ -151,6 +151,7 @@ class El4090EACfg(El4090Tripod2LowCfg):
 
     # ── 避障速度规划 ──
     class avoidance:
+        enable = True              # False = 直接使用原指令, 不计算避障速度
         ground_threshold = 0.05   # world-frame Z ground filter (m)
         min_valid_dist = 0.15     # min valid hit distance (m)
         max_valid_dist = EA_RAY_MAX_DISTANCE
