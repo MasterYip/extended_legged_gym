@@ -15,6 +15,7 @@ class RolloutStorage:
         def __init__(self):
             self.observations = None
             self.privileged_observations = None
+            self.aux_observations = None
             self.actions = None
             self.privileged_actions = None
             self.rewards = None
@@ -39,6 +40,7 @@ class RolloutStorage:
         actions_shape,
         rnd_state_shape=None,
         device="cpu",
+        aux_obs_shape=None,
     ):
         # store inputs
         self.training_type = training_type
@@ -52,12 +54,18 @@ class RolloutStorage:
 
         # Core
         self.observations = torch.zeros(num_transitions_per_env, num_envs, *obs_shape, device=self.device)
+
+        # Privileged observations: 形状相同时共享 buffer，避免冗余
         if privileged_obs_shape is not None:
-            self.privileged_observations = torch.zeros(
-                num_transitions_per_env, num_envs, *privileged_obs_shape, device=self.device
-            )
+            if privileged_obs_shape == obs_shape:
+                self.privileged_observations = self.observations  # 共享同一块显存
+            else:
+                self.privileged_observations = torch.zeros(
+                    num_transitions_per_env, num_envs, *privileged_obs_shape, device=self.device
+                )
         else:
             self.privileged_observations = None
+
         self.rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
         self.actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
         self.dones = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device).byte()
@@ -79,6 +87,14 @@ class RolloutStorage:
         if rnd_state_shape is not None:
             self.rnd_state = torch.zeros(num_transitions_per_env, num_envs, *rnd_state_shape, device=self.device)
 
+        # Auxiliary observations
+        if aux_obs_shape is not None:
+            self.aux_observations = torch.zeros(
+                num_transitions_per_env, num_envs, *aux_obs_shape, device=self.device
+            )
+        else:
+            self.aux_observations = None
+
         # For RNN networks
         self.saved_hidden_states_a = None
         self.saved_hidden_states_c = None
@@ -93,7 +109,7 @@ class RolloutStorage:
 
         # Core
         self.observations[self.step].copy_(transition.observations)
-        if self.privileged_observations is not None:
+        if self.privileged_observations is not None and self.privileged_observations is not self.observations:
             self.privileged_observations[self.step].copy_(transition.privileged_observations)
         self.actions[self.step].copy_(transition.actions)
         self.rewards[self.step].copy_(transition.rewards.view(-1, 1))
@@ -113,6 +129,10 @@ class RolloutStorage:
         # For RND
         if self.rnd_state_shape is not None:
             self.rnd_state[self.step].copy_(transition.rnd_state)
+
+        # Auxiliary observations
+        if self.aux_observations is not None and transition.aux_observations is not None:
+            self.aux_observations[self.step].copy_(transition.aux_observations)
 
         # For RNN networks
         self._save_hidden_states(transition.hidden_states)
@@ -160,11 +180,11 @@ class RolloutStorage:
             self.returns[step] = advantage + self.values[step]
 
         # Compute the advantages
-        self.advantages = self.returns - self.values
+        torch.sub(self.returns, self.values, out=self.advantages)
         # Normalize the advantages if flag is set
         # This is to prevent double normalization (i.e. if per minibatch normalization is used)
         if normalize_advantage:
-            self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8)
+            self.advantages.sub_(self.advantages.mean()).div_(self.advantages.std() + 1e-8)
 
     # for distillation
     def generator(self):
@@ -209,6 +229,12 @@ class RolloutStorage:
         if self.rnd_state_shape is not None:
             rnd_state = self.rnd_state.flatten(0, 1)
 
+        # NEW: Auxiliary observations
+        if self.aux_observations is not None:
+            aux_observations = self.aux_observations.flatten(0, 1)
+        else:
+            aux_observations = None
+
         for epoch in range(num_epochs):
             for i in range(num_mini_batches):
                 # Select the indices for the mini-batch
@@ -219,7 +245,10 @@ class RolloutStorage:
                 # Create the mini-batch
                 # -- Core
                 obs_batch = observations[batch_idx]
-                privileged_observations_batch = privileged_observations[batch_idx]
+                if privileged_observations is observations:
+                    privileged_observations_batch = obs_batch
+                else:
+                    privileged_observations_batch = privileged_observations[batch_idx]
                 actions_batch = actions[batch_idx]
 
                 # -- For PPO
@@ -236,19 +265,31 @@ class RolloutStorage:
                 else:
                     rnd_state_batch = None
 
+                # NEW: aux_obs batch
+                if aux_observations is not None:
+                    aux_obs_batch = aux_observations[batch_idx]
+                else:
+                    aux_obs_batch = None
+
                 # yield the mini-batch
-                yield obs_batch, privileged_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (
-                    None,
-                    None,
-                ), None, rnd_state_batch
+                yield obs_batch, privileged_observations_batch, actions_batch, \
+                    target_values_batch, advantages_batch, returns_batch, \
+                    old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, \
+                    (None, None), torch.empty(0, device=self.device), rnd_state_batch, aux_obs_batch
 
     # for reinfrocement learning with recurrent networks
     def recurrent_mini_batch_generator(self, num_mini_batches, num_epochs=8):
         if self.training_type != "rl":
             raise ValueError("This function is only available for reinforcement learning training.")
         padded_obs_trajectories, trajectory_masks = split_and_pad_trajectories(self.observations, self.dones)
+
         if self.privileged_observations is not None:
-            padded_privileged_obs_trajectories, _ = split_and_pad_trajectories(self.privileged_observations, self.dones)
+            if self.privileged_observations is self.observations:
+                padded_privileged_obs_trajectories = padded_obs_trajectories
+            else:
+                padded_privileged_obs_trajectories, _ = split_and_pad_trajectories(
+                    self.privileged_observations, self.dones
+                )
         else:
             padded_privileged_obs_trajectories = padded_obs_trajectories
 
@@ -256,6 +297,12 @@ class RolloutStorage:
             padded_rnd_state_trajectories, _ = split_and_pad_trajectories(self.rnd_state, self.dones)
         else:
             padded_rnd_state_trajectories = None
+
+        # NEW: Auxiliary observations trajectory split
+        if self.aux_observations is not None:
+            padded_aux_trajectories, _ = split_and_pad_trajectories(self.aux_observations, self.dones)
+        else:
+            padded_aux_trajectories = None
 
         mini_batch_size = self.num_envs // num_mini_batches
         for ep in range(num_epochs):
@@ -279,6 +326,12 @@ class RolloutStorage:
                     rnd_state_batch = padded_rnd_state_trajectories[:, first_traj:last_traj]
                 else:
                     rnd_state_batch = None
+
+                # NEW: aux_obs batch
+                if padded_aux_trajectories is not None:
+                    aux_obs_batch = padded_aux_trajectories[:, first_traj:last_traj]
+                else:
+                    aux_obs_batch = None
 
                 actions_batch = self.actions[:, start:stop]
                 old_mu_batch = self.mu[:, start:stop]
@@ -308,9 +361,10 @@ class RolloutStorage:
                 hid_a_batch = hid_a_batch[0] if len(hid_a_batch) == 1 else hid_a_batch
                 hid_c_batch = hid_c_batch[0] if len(hid_c_batch) == 1 else hid_c_batch
 
-                yield obs_batch, privileged_obs_batch, actions_batch, values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (
-                    hid_a_batch,
-                    hid_c_batch,
-                ), masks_batch, rnd_state_batch
+                yield obs_batch, privileged_obs_batch, actions_batch, \
+                    values_batch, advantages_batch, returns_batch, \
+                    old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, \
+                    (hid_a_batch, hid_c_batch), masks_batch, rnd_state_batch, \
+                    aux_obs_batch
 
                 first_traj = last_traj

@@ -49,6 +49,7 @@ class El4090MammalCfg(El4090SpiderCfg):
         difficulty_scale = 0.8
         # trimesh only:
         slope_treshold = 0.75  # slopes above this threshold will be corrected to vertical surfaces
+
     class control(El4090SpiderCfg.control):
         control_type = 'P'
         # PD Drive parameters matching Anymal:
@@ -63,7 +64,6 @@ class El4090MammalCfg(El4090SpiderCfg):
 
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
-        
 
 
     class asset(El4090SpiderCfg.asset):

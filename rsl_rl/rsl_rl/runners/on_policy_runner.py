@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import statistics
 import time
@@ -21,8 +22,10 @@ from rsl_rl.modules import (
     EmpiricalNormalization,
     StudentTeacher,
     StudentTeacherRecurrent,
+    LidarPDActorCritic,
 )
 from rsl_rl.utils import store_code_state
+from rsl_rl.utils.lidar_wrapper import LidarWrapper
 
 # Global variable to control interface version support
 # Set to True to use old legged_gym interface (rsl_rl 1.0.2 style)
@@ -98,7 +101,24 @@ class OnPolicyRunner:
         self._configure_multi_gpu()
 
         # Setup observations and training type
+        # LiDAR 标志必须前置到 _setup_observations 之前，num_obs 重算保持在之后
+        self.lidar_wrapper = None
+        self._lidar_wrapper_needed = (
+            self.use_old_interface
+            and hasattr(self.env, 'cfg')
+            and hasattr(self.env.cfg, 'pd_risknet')
+            and getattr(self.env.cfg.pd_risknet, 'enabled', False)
+        )
+
         num_obs, num_privileged_obs = self._setup_observations()
+
+        # LiDAR: 用 wrapped obs dim 覆盖 env 报告的 num_obs
+        if self._lidar_wrapper_needed:
+            p_cfg = self.policy_cfg
+            num_obs = (int(p_cfg.get("proprio_obs_dim", 48))
+                 + int(p_cfg.get("proximal_points", 256)) * 3
+                 + int(p_cfg.get("distal_history_length", 10))
+                 * int(p_cfg.get("distal_points", 128)) * 3)
 
         # Initialize policy
         policy = self._initialize_policy(num_obs, num_privileged_obs)
@@ -128,6 +148,23 @@ class OnPolicyRunner:
         # Initialize environment if using old interface
         if self.use_old_interface:
             self._initialize_old_interface()
+
+        if self._lidar_wrapper_needed:
+            env_cfg = self.env.cfg
+            pd_cfg = env_cfg.pd_risknet
+            self.lidar_wrapper = LidarWrapper(
+                num_envs=self.env.num_envs,
+                num_lidar_points=int(pd_cfg.num_lidar_points),
+                distal_history_length=int(self.policy_cfg.get("distal_history_length", 10)),
+                proximal_points=int(self.policy_cfg.get("proximal_points", 256)),
+                distal_points=int(self.policy_cfg.get("distal_points", 128)),
+                phi_threshold_deg=float(pd_cfg.split_theta_deg),
+                proprio_dim=int(self.policy_cfg.get("proprio_obs_dim", 48)),
+                device=self.device,
+                # ↓ 修正排序坐标系（base frame → sensor frame）
+                sensor_offset_quat=getattr(self.env, "_sensor_offset_quat", None),
+                sensor_translation=getattr(self.env, "_sensor_translation", None),
+            )
 
         if self.training_type == "distillation":
             teacher_model_path = self.cfg.get("teacher_model_path", None)
@@ -212,6 +249,11 @@ class OnPolicyRunner:
                 self.privileged_obs_type = None
                 num_privileged_obs = num_obs
 
+        # 检测是否需要 aux_obs 通道 — 动态发现, 不依赖 _lidar_wrapper_needed
+        self._aux_obs_dim = None
+        if hasattr(self.env, 'aux_obs_buf') and self.env.aux_obs_buf is not None:
+            self._aux_obs_dim = self.env.aux_obs_buf.shape[-1]
+
         return num_obs, num_privileged_obs
 
     def _initialize_policy(self, num_obs: int, num_privileged_obs: int):
@@ -227,8 +269,12 @@ class OnPolicyRunner:
                 # Fallback for old config style
                 policy_class = eval(self.cfg["policy_class_name"])
 
+        # LiDAR: critic 输入 = 完整观测 (与 actor 同维)
+        # 标准: critic 输入 = privileged_obs (可能不同维)
+        critic_obs_dim = num_obs if self._lidar_wrapper_needed else num_privileged_obs
+
         policy = policy_class(
-            num_obs, num_privileged_obs, self.env.num_actions, **self.policy_cfg
+            num_obs, critic_obs_dim, self.env.num_actions, **self.policy_cfg
         ).to(self.device)
 
         return policy
@@ -250,10 +296,37 @@ class OnPolicyRunner:
                 self.alg_cfg["rnd_cfg"]["weight"] *= self.env.unwrapped.step_dt
 
     def _setup_symmetry(self):
-        """Setup symmetry if configured."""
-        if "symmetry_cfg" in self.alg_cfg and self.alg_cfg["symmetry_cfg"] is not None:
-            # This is used by the symmetry function for handling different observation terms
-            self.alg_cfg["symmetry_cfg"]["_env"] = self.env
+        """Setup symmetry if configured.
+
+        When ``symmetry_kwargs`` is present in the symmetry config, extracts
+        runtime sensor parameters from the environment and binds them (along
+        with static dimension constants) to the symmetry function via
+        ``functools.partial``.  Tasks without ``symmetry_kwargs`` are
+        unaffected and keep the existing behaviour.
+        """
+        if "symmetry_cfg" not in self.alg_cfg or self.alg_cfg["symmetry_cfg"] is None:
+            return
+        self.alg_cfg["symmetry_cfg"]["_env"] = self.env
+
+        kwargs = self.alg_cfg["symmetry_cfg"].get("symmetry_kwargs", None)
+        if kwargs is not None:
+            kwargs = dict(kwargs)  # defensive copy
+
+            # Inject runtime sensor parameters from the environment.
+            for src_attr, dst_key in [
+                ("_sensor_offset_quat", "sensor_quat"),
+                ("_sensor_translation", "sensor_trans"),
+            ]:
+                if hasattr(self.env, src_attr):
+                    t = getattr(self.env, src_attr)
+                    kwargs[dst_key] = t[0:1].to(self.device)
+
+            func = self.alg_cfg["symmetry_cfg"]["data_augmentation_func"]
+            if isinstance(func, str):
+                from rsl_rl.utils.utils import string_to_callable
+                func = string_to_callable(func)
+            self.alg_cfg["symmetry_cfg"]["data_augmentation_func"] = \
+                functools.partial(func, **kwargs)
 
     def _initialize_algorithm(self, policy):
         """Initialize the algorithm."""
@@ -287,13 +360,25 @@ class OnPolicyRunner:
 
     def _initialize_storage(self, num_obs: int, num_privileged_obs: int):
         """Initialize rollout storage."""
+        # LiDAR: actor/critic 同维度，不重复分配 buffer
+        # 标准: 保留独立 privileged_obs buffer
+        if self._lidar_wrapper_needed:
+            critic_obs_shape = None    # generator fallback → 复用 observations
+        else:
+            critic_obs_shape = [num_privileged_obs]
+
+        aux_obs_shape = None
+        if hasattr(self, '_aux_obs_dim') and self._aux_obs_dim is not None:
+            aux_obs_shape = [self._aux_obs_dim]
+
         self.alg.init_storage(
             self.training_type,
             self.env.num_envs,
             self.num_steps_per_env,
             [num_obs],
-            [num_privileged_obs],
+            critic_obs_shape,
             [self.env.num_actions],
+            aux_obs_shape=aux_obs_shape,
         )
 
     def _setup_logging(self):
@@ -363,6 +448,9 @@ class OnPolicyRunner:
         # Get initial observations
         obs, privileged_obs = self._get_observations()
         obs, privileged_obs = obs.to(self.device), privileged_obs.to(self.device)
+        if self.lidar_wrapper is not None:
+            init_dones = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
+            obs = self.lidar_wrapper.wrap_obs(obs, self.env.lidar_points_base, init_dones)
         self.train_mode()
 
         # Training loop setup
@@ -395,7 +483,13 @@ class OnPolicyRunner:
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
-                    actions = self.alg.act(obs, privileged_obs)
+                    aux_obs = getattr(self.env, 'aux_obs_buf', None)
+                    if self._lidar_wrapper_needed:
+                        # critic feeds on obs (same as actor)
+                        actions = self.alg.act(obs, obs, aux_obs)
+                    else:
+                        # 标准: critic 消费 privileged_obs
+                        actions = self.alg.act(obs, privileged_obs, aux_obs)
 
                     # Step environment
                     if self.use_old_interface:
@@ -421,6 +515,10 @@ class OnPolicyRunner:
                     # Move to device
                     obs, rewards, dones = obs.to(self.device), rewards.to(self.device), dones.to(self.device)
                     privileged_obs = privileged_obs.to(self.device)
+
+                    # Apply LidarWrapper (before normalization)
+                    if self.lidar_wrapper is not None:
+                        obs = self.lidar_wrapper.wrap_obs(obs, self.env.lidar_points_base, dones)
 
                     # Apply normalization
                     obs = self.obs_normalizer(obs)
@@ -450,9 +548,12 @@ class OnPolicyRunner:
 
                 # Compute returns for RL training
                 if hasattr(self, 'training_type') and self.training_type == "rl":
-                    # Clone the privileged_obs to get a normal tensor that can be used in autograd
-                    privileged_obs_for_returns = privileged_obs.clone()
-                    self.alg.compute_returns(privileged_obs_for_returns)
+                    if self.lidar_wrapper is not None:
+                        self.alg.compute_returns(obs)
+                    else:
+                        self.alg.compute_returns(privileged_obs)
+
+            del obs, privileged_obs
 
             # Update policy
             loss_dict = self.alg.update()
@@ -476,6 +577,13 @@ class OnPolicyRunner:
 
             # Clear episode infos
             ep_infos.clear()
+
+            # Re-acquire observations for next iteration's rollout
+            obs, privileged_obs = self._get_observations()
+            obs, privileged_obs = obs.to(self.device), privileged_obs.to(self.device)
+            if self.lidar_wrapper is not None:
+                init_dones = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
+                obs = self.lidar_wrapper.wrap_obs(obs, self.env.lidar_points_base, init_dones)
 
             # Save code state on first iteration
             if it == start_iter and not self.disable_logs:
@@ -667,6 +775,9 @@ class OnPolicyRunner:
             "iter": self.current_learning_iteration,
             "infos": infos,
         }
+        # -- Save AMP scaler state if used
+        if hasattr(self.alg, 'scaler') and self.alg.scaler is not None:
+            saved_dict["scaler_state_dict"] = self.alg.scaler.state_dict()
         # -- Save RND model if used
         if self.alg.rnd:
             saved_dict["rnd_state_dict"] = self.alg.rnd.state_dict()
@@ -702,6 +813,10 @@ class OnPolicyRunner:
                 # an rl training. Thus the actor normalizer is loaded for the teacher model. The student's normalizer
                 # is not loaded, as the observation space could differ from the previous rl training.
                 self.privileged_obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
+        # -- load AMP scaler state if used
+        if hasattr(self.alg, 'scaler') and self.alg.scaler is not None \
+                and "scaler_state_dict" in loaded_dict:
+            self.alg.scaler.load_state_dict(loaded_dict["scaler_state_dict"])
         # -- load optimizer if used
         if load_optimizer and resumed_training:
             # -- algorithm optimizer
@@ -724,6 +839,19 @@ class OnPolicyRunner:
                 self.obs_normalizer.to(device)
 
             def policy(x): return self.alg.policy.act_inference(self.obs_normalizer(x))  # noqa: E731
+
+        # Inject LidarWrapper so inference path matches training path.
+        # `lidar_pts` is captured by reference — updated each env.step().
+        if self.lidar_wrapper is not None:
+            lidar_w = self.lidar_wrapper
+            lidar_pts = self.env.lidar_points_base
+            base = policy
+
+            def policy(x):
+                dones = torch.zeros(x.shape[0], dtype=torch.bool, device=x.device)
+                wrapped = lidar_w.wrap_obs(x, lidar_pts, dones)
+                return base(wrapped)
+
         return policy
 
     def train_mode(self):

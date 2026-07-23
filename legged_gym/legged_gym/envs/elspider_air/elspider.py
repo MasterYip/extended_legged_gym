@@ -69,7 +69,13 @@ def get_elair_xysym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = No
     """
     device = obs.device if obs is not None else actions.device
     batch_size = obs.shape[0] if obs is not None else actions.shape[0]
-    
+
+    if obs_type not in ("policy", "critic"):
+        raise ValueError(
+            f"get_elair_xysym_obs_act: obs_type must be 'policy' or 'critic', "
+            f"got '{obs_type}'"
+        )
+
     if obs is not None:
         # --- Left-Right Mirrored Observations ---
         obs_lr_mirrored = obs.clone()
@@ -211,10 +217,16 @@ def get_elair_xsym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = Non
     """
     device = obs.device if obs is not None else actions.device
     batch_size = obs.shape[0] if obs is not None else actions.shape[0]
-    
+
+    if obs_type not in ("policy", "critic"):
+        raise ValueError(
+            f"get_elair_xsym_obs_act: obs_type must be 'policy' or 'critic', "
+            f"got '{obs_type}'"
+        )
+
     # Original and mirrored observations/actions
     # [batch*2, dim] where first batch is original, second batch is mirrored
-    
+
     if obs is not None:
         # Mirror the observations for ElSpider which has 6 legs
         # For policy observation, the structure is:

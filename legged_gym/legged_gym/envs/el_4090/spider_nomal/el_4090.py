@@ -599,6 +599,151 @@ class EL_4090(ElSpider):
     
 
 
+    def _movement_command_mask(self):
+        lin_cmd_active = torch.norm(self.commands[:, :2], dim=1) > self.speed_min
+        if self.cfg.commands.heading_command:
+            yaw_cmd_active = torch.abs(self.commands[:, 3]) > self.speed_min
+        else:
+            yaw_cmd_active = torch.abs(self.commands[:, 2]) > self.speed_min
+        return torch.logical_or(lin_cmd_active, yaw_cmd_active)
+
+    def _sync_all_legs_penalty(self):
+        sync_terms = []
+        for foot_0 in range(len(self.feet_indices)):
+            for foot_1 in range(foot_0 + 1, len(self.feet_indices)):
+                sync_terms.append(self._sync_reward_func(foot_0, foot_1))
+        return sum(sync_terms) / len(sync_terms)
+
+    def _stand_contact_penalty(self):
+        foot_contact = self.contact_forces[:, self.feet_indices, 2] > 1.0
+        num_feet_in_contact = torch.sum(foot_contact.float(), dim=1)
+        return len(self.feet_indices) - num_feet_in_contact
+
+    def _reward_gait_wave(self):
+        # Wave gait: keep five legs supporting while one designated leg swings.
+        movement_mask = self._movement_command_mask()
+        foot_contact = self.contact_forces[:, self.feet_indices, 2] > 1.0
+
+        phase_time = self.episode_length_buf.float() * self.dt
+        wave_period = getattr(self.cfg.rewards, "wave_period", 0.72)
+        wave_clearance = getattr(self.cfg.rewards, "wave_clearance", 0.04)
+
+        desired_order = torch.tensor([0, 1, 2, 5, 4, 3], device=self.device, dtype=torch.long)
+        phase_index = torch.remainder(torch.floor(phase_time / wave_period).long(), len(desired_order))
+        swing_foot = desired_order[phase_index]
+
+        desired_mask = torch.zeros_like(foot_contact)
+        desired_mask.scatter_(1, swing_foot.unsqueeze(1), True)
+
+        extra_air_penalty = torch.sum(torch.logical_and(~foot_contact, ~desired_mask).float(), dim=1)
+        desired_contact_penalty = torch.sum(torch.logical_and(foot_contact, desired_mask).float(), dim=1)
+        support_contact_penalty = torch.sum(torch.logical_and(~foot_contact, ~desired_mask).float(), dim=1) / 5.0
+
+        swing_height = self.foot_positions[torch.arange(self.num_envs, device=self.device), swing_foot, 2]
+        swing_height_penalty = torch.relu(wave_clearance - swing_height)
+
+        movement_penalty = (
+            desired_contact_penalty
+            + support_contact_penalty
+            + extra_air_penalty
+            + swing_height_penalty
+        )
+        stand_penalty = self._stand_contact_penalty()
+        return torch.where(movement_mask, movement_penalty, stand_penalty)
+
+    def _reward_jump_sync(self):
+        # Jumping/hopping: encourage all legs to move in sync.
+        # Foot index: LB(0), LF(1), LM(2), RB(3), RF(4), RM(5)
+        movement_mask = self._movement_command_mask()
+
+        # All 15 pair-wise sync penalties for 6 legs
+        sync_all_pairs = [
+            self._sync_reward_func(0, 1), self._sync_reward_func(0, 2), self._sync_reward_func(0, 3),
+            self._sync_reward_func(0, 4), self._sync_reward_func(0, 5),
+            self._sync_reward_func(1, 2), self._sync_reward_func(1, 3),
+            self._sync_reward_func(1, 4), self._sync_reward_func(1, 5),
+            self._sync_reward_func(2, 3), self._sync_reward_func(2, 4),
+            self._sync_reward_func(2, 5), self._sync_reward_func(3, 4),
+            self._sync_reward_func(3, 5), self._sync_reward_func(4, 5),
+        ]
+        sync_all_reward = sum(sync_all_pairs) / len(sync_all_pairs)
+
+        stand_penalty = self._stand_contact_penalty()
+        return torch.where(movement_mask, sync_all_reward, stand_penalty)
+
+    def _reward_jump_takeoff(self):
+        movement_mask = self._movement_command_mask().float()
+
+        # Push phase: detect when (nearly) all legs are in contact using sync state
+        foot_contact = self.contact_forces[:, self.feet_indices, 2] > 1.0
+        num_contacts = torch.sum(foot_contact.float(), dim=1)
+        push_phase_mask = (num_contacts >= len(self.feet_indices) - 1).float()
+
+        jump_target_vertical_velocity = getattr(self.cfg.rewards, "jump_target_vertical_velocity", 0.8)
+        vertical_velocity_deficit = torch.relu(jump_target_vertical_velocity - self.base_lin_vel[:, 2])
+        return torch.square(vertical_velocity_deficit) * movement_mask * push_phase_mask
+
+    def _reward_gait_mammal(self):
+        # Mammal-style gait approximation: alternate left-side and right-side leg groups.
+        movement_mask = self._movement_command_mask()
+
+        left_group = (0, 1, 2)
+        right_group = (3, 4, 5)
+
+        sync_left = (
+            self._sync_reward_func(left_group[0], left_group[1])
+            + self._sync_reward_func(left_group[0], left_group[2])
+            + self._sync_reward_func(left_group[1], left_group[2])
+        ) / 3.0
+        sync_right = (
+            self._sync_reward_func(right_group[0], right_group[1])
+            + self._sync_reward_func(right_group[0], right_group[2])
+            + self._sync_reward_func(right_group[1], right_group[2])
+        ) / 3.0
+
+        async_cross = []
+        for left_foot in left_group:
+            for right_foot in right_group:
+                async_cross.append(self._async_reward_func(left_foot, right_foot))
+        async_cross = sum(async_cross) / len(async_cross)
+
+        movement_penalty = 0.5 * (sync_left + sync_right) + async_cross
+        stand_penalty = self._stand_contact_penalty()
+        return torch.where(movement_mask, movement_penalty, stand_penalty)
+
+    def _reward_haa_guidance_mammal(self):
+        if not hasattr(self, 'haa_indices'):
+            self.haa_indices = [self.dof_names.index(name) for name in [
+                'RF_HAA', 'RM_HAA', 'RB_HAA', 'LF_HAA', 'LM_HAA', 'LB_HAA']]
+
+        target_haa = getattr(self.cfg.rewards, 'mammal_haa_target', 1.57)
+        if isinstance(target_haa, (list, tuple)):
+            target = torch.tensor(target_haa, dtype=torch.float, device=self.device)
+        else:
+            target = torch.full((len(self.haa_indices),), target_haa, device=self.device)
+
+        movement_mask = self._movement_command_mask().float()
+        current_deviation = torch.square(self.dof_pos[:, self.haa_indices] - target).mean(dim=1)
+
+        ema = getattr(self.cfg.rewards, 'mammal_haa_guidance_ema', 0.01)
+        self.haa_guidance_mammal_ema = getattr(
+            self,
+            'haa_guidance_mammal_ema',
+            torch.zeros(self.num_envs, device=self.device),
+        )
+        self.haa_guidance_mammal_ema = (
+            ema * current_deviation + (1.0 - ema) * self.haa_guidance_mammal_ema
+        )
+        return self.haa_guidance_mammal_ema * movement_mask
+
+    def _reward_shank_perp2ground(self):
+        if not hasattr(self, 'hfe_indices'):
+            self.hfe_indices = [self.dof_names.index(name) for name in [
+                'RF_HFE', 'RM_HFE', 'RB_HFE', 'LF_HFE', 'LM_HFE', 'LB_HFE']]
+        if not hasattr(self, 'kfe_indices'):
+            self.kfe_indices = [self.dof_names.index(name) for name in [
+                'RF_KFE', 'RM_KFE', 'RB_KFE', 'LF_KFE', 'LM_KFE', 'LB_KFE']]
+        return torch.square(self.dof_pos[:, self.hfe_indices] + self.dof_pos[:, self.kfe_indices]).sum(dim=1)
 
     def _reward_stand_on_six_legs(self):
         # 低命令下：鼓励六条腿全部着地

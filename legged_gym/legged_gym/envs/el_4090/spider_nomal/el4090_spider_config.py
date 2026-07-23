@@ -183,18 +183,14 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
             feet_terrain_clearance = -5
 
             collision = -1.
-            feet_stumble = -5
-            action_rate = -0.01
-            stand_still = -3
-            dof_pos_limits = -0.5
-            dof_vel_limits = -0.1
-            torque_limits = -0.01
-            feet_contact_forces = -0.01
-            # stand_on_six_legs = -1
-            shank_vertical = -2
-            feet_async = -5.
-            feet_sync = -5.
-            # contact_force_balance = -1
+            feet_stumble = [-0.0, -0.2]
+            action_rate = [-0.005, -0.005]
+            stand_still2 = -0.6  # May affect spot turning
+            dof_pos_limits = -1.0
+            feet_contact_forces = [-0.1, -0.5]
+
+            shank_perp2ground = -0.05
+            gait_2_step = [-0.5, -0.0]
 
 
     class commands(ElSpiderAirRoughCfg.commands):
@@ -250,39 +246,27 @@ class El4090SpiderCfg(ElSpiderAirRoughCfg):
             height_measurements = 0.02
 
 class El4090SpiderCfgPPO(ElSpiderAirRoughCfgPPO):
-    seed = 1
-    runner_class_name = 'OnPolicyRunner'
-    class policy:
-        init_noise_std = 0.3
-        actor_hidden_dims = [512, 256, 128]
-        critic_hidden_dims = [512, 256, 128]
-        activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
-        # only for 'ActorCriticRecurrent':
-        # rnn_type = 'lstm'
-        # rnn_hidden_size = 512
-        # rnn_num_layers = 1
-        
+    class policy(ElSpiderAirRoughCfgPPO.policy):
+        actor_hidden_dims = [128, 64, 32]
+        critic_hidden_dims = [128, 64, 32]
+        activation = 'elu'  # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+
     class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
+        entropy_coef = 0.01
+
+    class runner (ElSpiderAirRoughCfgPPO.runner):
+        run_name = ''
+        experiment_name = 'el4090_spider_normal'
+        load_run = -1
+        max_iterations = 3000
+        multi_stage_rewards = True
+
+    class algorithm(ElSpiderAirRoughCfgPPO.algorithm):
+        entropy_coef = 0.01
         # Symmetry augmentation configuration
         class symmetry_cfg:
             use_data_augmentation = True
             use_mirror_loss = True
             mirror_loss_coeff = 0.6
-            data_augmentation_func = "legged_gym.envs.el_4090.thirdparty.symmetry:get_elair_xsym_obs_act"
-        
-    class runner:
-        policy_class_name = 'ActorCritic'
-        algorithm_class_name = 'PPO'
-        num_steps_per_env = 24 # per iteration
-        max_iterations = 3000 # number of policy updates
-
-        # logging
-        save_interval = 50 # check for potential saves every this many iterations
-        experiment_name = 'el_4090_spider_trimesh'
-        run_name = ''
-        # load and resume
-        resume = False
-        load_run = -1 # -1 = last run
-        checkpoint = -1 # -1 = last saved model
-        resume_path = None # updated from load_run and chkpt
+            data_augmentation_func = "legged_gym.envs.elspider_air.elspider:get_elair_xsym_obs_act"
         
