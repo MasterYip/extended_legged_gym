@@ -490,6 +490,7 @@ class EL_4090_ENVELOP(ElSpider):
         self.lidar_mesh_ids = wp.array([self.lidar_mesh.id], dtype=wp.uint64, device=self.device)
 
         lidar_cfg = LidarConfig(
+            sensor_type="simple_grid",
             max_range=self.cfg.lidar.max_range,
             min_range=self.cfg.lidar.min_range,
             horizontal_line_num=self.cfg.lidar.horizontal_line_num,
@@ -499,7 +500,6 @@ class EL_4090_ENVELOP(ElSpider):
             vertical_fov_deg_min=self.cfg.lidar.vertical_fov_deg_min,
             vertical_fov_deg_max=self.cfg.lidar.vertical_fov_deg_max,
             pointcloud_in_world_frame=self.cfg.lidar.pointcloud_in_world_frame,
-            synchronize=getattr(self.cfg.lidar, "synchronize", False),
         )
 
         self.lidar_env = {

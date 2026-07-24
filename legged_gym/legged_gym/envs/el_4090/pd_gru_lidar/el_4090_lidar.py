@@ -12,8 +12,7 @@ from isaacgym import gymapi, gymtorch, gymutil
 from legged_gym.envs.el_4090.spider_nomal.el_4090 import EL_4090
 from legged_gym.utils.math_utils import quat_apply_yaw
 
-from legged_gym.utils.LidarSensor.LidarSensor.lidar_sensor import LidarSensor
-from legged_gym.utils.LidarSensor.LidarSensor.sensor_config.lidar_sensor_config import LidarConfig, LidarType
+from legged_gym.utils.LidarSensor import LidarSensor, LidarConfig, LidarType
 
 
 class EL_4090_Lidar(EL_4090):

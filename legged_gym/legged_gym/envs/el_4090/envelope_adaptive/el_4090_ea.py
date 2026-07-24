@@ -13,8 +13,7 @@ import matplotlib.pyplot as plt
 
 from legged_gym.envs.el_4090.spider_nomal.el_4090 import EL_4090
 from legged_gym.utils.math_utils import quat_apply_yaw
-from legged_gym.utils.LidarSensor.LidarSensor.lidar_sensor import LidarSensor
-from legged_gym.utils.LidarSensor.LidarSensor.sensor_config.lidar_sensor_config import LidarConfig, LidarType
+from legged_gym.utils.LidarSensor import LidarSensor, LidarConfig, LidarType
 
 from legged_gym.envs.el_4090.envelope_adaptive.envelope_computer import (
     compute_envelope_params, envelope_params_to_condition, ENVELOPE_PARAM_NAMES,
