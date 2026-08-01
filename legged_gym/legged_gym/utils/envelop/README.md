@@ -61,3 +61,43 @@ python utils/envelop/morphology_prior.py --samples 8 --seed 4090
 ```text
 utils/envelop/morphology_prior_3d.png
 ```
+
+## HAA 摆动范围
+
+`network/haa_swing_range.py` 提供三种相同输入/输出契约的实现。输入为 8 维
+envelope + morphology condition，输出为 `[batch, 6, 2]`，最后一维依次为
+每条腿 HAA 的下限和上限。
+
+- `AnalyticHaaRangeEstimator`：解析计算，训练环境默认使用。
+- `MonteCarloHaaRangeEstimator`：随机采样验证或生成标签。
+- `HaaRangeNetwork`：将解析/采样结果蒸馏为小型 MLP。
+
+训练网络：
+
+```bash
+python utils/envelop/network/haa_swing_range.py \
+  --output logs/haa_range.pt \
+  --labels analytic \
+  --steps 2000
+```
+
+若要在 `el4090_envelop_2` 中使用采样或网络实现，修改
+`El4090Envelop2Cfg.haa_swing_range.method` 为 `monte_carlo` 或 `network`；
+网络模式还需设置 `network_checkpoint`。
+
+网络测试与可视化：
+
+```bash
+python utils/envelop/network/visualize_haa_swing_range.py \
+  --output utils/envelop/network/haa_swing_range_visualization.png \
+  --save-checkpoint logs/haa_range.pt
+```
+
+如果已有模型，使用
+`--checkpoint logs/haa_range.pt`，脚本将跳过训练。默认生成 3D 图：显示姿态
+先验对应的机器人、包络棱柱、六条腿在网络预测 HAA 上下界之间扫过的半透明
+空间，以及每个足端的摆动轨迹。添加 `--plot-2d` 可以查看解析法、Monte
+Carlo 和网络上下界的数值对比图。
+
+添加 `--interactive` 会打开交互式 3D UI，可随机包络、切换解析/Monte
+Carlo/网络三种方法，并在同一个窗口中旋转、缩放和刷新当前结果。

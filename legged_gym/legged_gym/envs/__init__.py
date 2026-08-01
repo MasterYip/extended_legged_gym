@@ -139,6 +139,8 @@ from .el_4090.spider_both.el4090_spider_config import El4090BothCfg,El4090BothCf
 
 from .el_4090.spider_envelop.el_4090 import EL_4090_ENVELOP
 from .el_4090.spider_envelop.el4090_spider_config import El4090EnvelopCfg, El4090EnvelopCfgPPO
+from .el_4090.spider_envelop_2.el_4090 import EL_4090_ENVELOP_2
+from .el_4090.spider_envelop_2.el4090_spider_config import El4090Envelop2Cfg, El4090Envelop2CfgPPO
 
 from .el_4090.pd_gru_lidar.el_4090_lidar import EL_4090_Lidar
 from .el_4090.pd_gru_lidar.el_4090_lidar_config import El4090LidarCfg, El4090LidarCfgPPO
@@ -252,6 +254,12 @@ task_registry.register("el_4090_safe", EL_4090_Safe, El4090SafeCfg(), El4090Safe
 task_registry.register("el4090_mammal",EL_4090_Mammal,El4090MammalCfg(),El4090MammalCfgPPO())
 task_registry.register("el4090_both",EL_4090_BOTH,El4090BothCfg(),El4090BothCfgPPO())
 task_registry.register("el4090_envelop", EL_4090_ENVELOP, El4090EnvelopCfg(), El4090EnvelopCfgPPO())
+task_registry.register(
+    "el4090_envelop_2",
+    EL_4090_ENVELOP_2,
+    El4090Envelop2Cfg(),
+    El4090Envelop2CfgPPO(),
+)
 # LiDAR perception environments
 task_registry.register("el4090_lidar", EL_4090_Lidar, El4090LidarCfg(), El4090LidarCfgPPO())
 task_registry.register("el4090_lidar_tripod2_low", EL_4090_Lidar, El4090LidarTripod2LowCfg(), El4090LidarTripod2LowCfgPPO())
