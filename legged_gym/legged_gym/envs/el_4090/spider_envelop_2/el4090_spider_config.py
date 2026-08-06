@@ -7,6 +7,41 @@ from legged_gym.envs.el_4090.spider_envelop.el4090_spider_config import (
 
 
 class El4090Envelop2Cfg(El4090EnvelopCfg):
+    class env(El4090EnvelopCfg.env):
+        # 66 proprioceptive observations; envelope/prior is not policy input.
+        num_observations = 66
+
+    class commands(El4090EnvelopCfg.commands):
+        # Policy command is strictly [vx, vy, yaw_rate].
+        num_commands = 3
+        heading_command = False
+        condition_dim = 0
+        condition_names: list = []
+
+    class envelope:
+        condition_names: list = list(El4090EnvelopCfg.commands.condition_names)
+        morphology_prior_mode = El4090EnvelopCfg.commands.morphology_prior_mode
+        morphology_prior_weights = El4090EnvelopCfg.commands.morphology_prior_weights
+        morphology_middle_front_follow_weight = (
+            El4090EnvelopCfg.commands.morphology_middle_front_follow_weight
+        )
+
+        class ranges:
+            front_width = list(El4090EnvelopCfg.commands.ranges.front_width)
+            middle_width = list(El4090EnvelopCfg.commands.ranges.middle_width)
+            back_width = list(El4090EnvelopCfg.commands.ranges.back_width)
+            forward_limit = list(El4090EnvelopCfg.commands.ranges.forward_limit)
+            backward_limit = list(El4090EnvelopCfg.commands.ranges.backward_limit)
+            morphology_front_prior = list(
+                El4090EnvelopCfg.commands.ranges.morphology_front_prior
+            )
+            morphology_middle_prior = list(
+                El4090EnvelopCfg.commands.ranges.morphology_middle_prior
+            )
+            morphology_back_prior = list(
+                El4090EnvelopCfg.commands.ranges.morphology_back_prior
+            )
+
     class control(El4090EnvelopCfg.control):
         # The environment overrides the P target with the current morphology
         # preset; no temporal low-pass state is used.
@@ -14,7 +49,7 @@ class El4090Envelop2Cfg(El4090EnvelopCfg):
 
     class haa_swing_range:
         # analytic, monte_carlo, or network
-        method = "analytic"
+        method = "network"
         joint_lower = -3.0
         joint_upper = 3.0
         leg_reach = 0.55
@@ -27,7 +62,10 @@ class El4090Envelop2Cfg(El4090EnvelopCfg):
         monte_carlo_samples = 2048
         monte_carlo_quantile = 0.0
         monte_carlo_seed = None
-        network_checkpoint = ""
+        network_checkpoint = (
+            "{LEGGED_GYM_ROOT_DIR}/legged_gym/envs/el_4090/"
+            "spider_envelop_2/envelop_network/haa_range.pt"
+        )
 
     class rewards(El4090EnvelopCfg.rewards):
         haa_range_min_command = 0.15

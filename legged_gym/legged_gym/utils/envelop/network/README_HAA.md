@@ -13,11 +13,12 @@ HAA 合法摆动区间：
 2. Monte Carlo 随机采样法 `MonteCarloHaaRangeEstimator`
 3. 神经网络回归法 `HaaRangeNetwork`
 
-训练环境默认使用解析法，也可以在配置中切换为 Monte Carlo 或已训练的网络。
+`spider_envelop_2` 默认加载已训练网络，也可以在配置中切换为解析法或 Monte
+Carlo。
 
 ## 1. 输入与输出
 
-输入是 8 维 envelope + morphology condition：
+HAA 范围网络的输入是 8 维 envelope + morphology condition：
 
 ```text
 [
@@ -56,6 +57,50 @@ RF, RM, RB, LF, LM, LB
 output[..., 0] = HAA lower
 output[..., 1] = HAA upper
 ```
+
+这里的 8 维输入只进入独立的 HAA 范围网络，不再进入 locomotion policy 的
+observation，也不再存放在 `env.commands` 中。
+
+`spider_envelop_2` 的策略观测已恢复为 66 维：
+
+```text
+base linear velocity:   3
+base angular velocity:  3
+projected gravity:      3
+command [vx, vy, yaw]:  3
+DOF position error:    18
+DOF velocity:          18
+previous actions:      18
+-------------------------
+total:                 66
+```
+
+包络数据由下面的独立状态类持有：
+
+```text
+envs/el_4090/spider_envelop_2/envelope_condition.py
+EnvelopeConditionState
+```
+
+数据流为：
+
+```text
+EnvelopeConditionState: 8-D envelope/prior
+        -> HaaRangeNetwork
+        -> six [lower, upper] ranges
+        -> HAA reward constraints
+
+env.commands: [vx, vy, yaw_rate]
+        -> 66-D locomotion policy observation
+```
+
+外部模块以后可以通过环境接口写入包络：
+
+```python
+env.set_envelope_condition(values, env_ids, derive_priors=True)
+```
+
+其中 `derive_priors=True` 会根据前五个包络量重新推导三个 morphology prior。
 
 例如：
 

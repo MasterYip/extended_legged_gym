@@ -38,6 +38,24 @@ def conditions() -> torch.Tensor:
 
 
 class TestHaaSwingRange(unittest.TestCase):
+    def test_envelop_2_checkpoint_keeps_training_io_contract(self) -> None:
+        checkpoint = (
+            Path(__file__).parents[1]
+            / "envs"
+            / "el_4090"
+            / "spider_envelop_2"
+            / "envelop_network"
+            / "haa_range.pt"
+        )
+        network = HaaRangeNetwork.from_checkpoint(checkpoint)
+        self.assertEqual(network.config.condition_names, HaaRangeConfig().condition_names)
+        self.assertEqual(network.config.leg_names, ("RF", "RM", "RB", "LF", "LM", "LB"))
+        ranges = network(conditions()[2:3])
+        self.assertEqual(ranges.shape, (1, 6, 2))
+        simulator_leg_order = ("LB", "LF", "LM", "RB", "RF", "RM")
+        output_indices = [network.config.leg_names.index(name) for name in simulator_leg_order]
+        self.assertEqual(output_indices, [5, 3, 4, 2, 0, 1])
+
     def test_training_distribution_matches_spider_envelop_config(self) -> None:
         spec = load_envelope_condition_spec()
         self.assertEqual(spec.condition_names, HaaRangeConfig().condition_names)

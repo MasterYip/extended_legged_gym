@@ -13,6 +13,9 @@ from legged_gym.envs.el_4090.spider_envelop.el_4090 import EL_4090_ENVELOP
 from legged_gym.envs.el_4090.spider_envelop_2.el4090_spider_config import (
     El4090Envelop2Cfg,
 )
+from legged_gym.envs.el_4090.spider_envelop_2.envelope_condition import (
+    EnvelopeConditionState,
+)
 from legged_gym.utils.envelop.network.haa_swing_range import (
     AnalyticHaaRangeEstimator,
     HaaRangeConfig,
@@ -22,7 +25,7 @@ from legged_gym.utils.envelop.network.haa_swing_range import (
 
 
 class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
-    """Keep the original 74-D observation while adding HAA range constraints."""
+    """66-D locomotion policy plus a separate envelope-to-HAA network path."""
 
     cfg: El4090Envelop2Cfg
 
@@ -39,6 +42,17 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
 
     def _init_buffers(self) -> None:
         super()._init_buffers()
+        self.envelope_state = EnvelopeConditionState(
+            self.cfg.envelope,
+            self.num_envs,
+            self.device,
+        )
+        # Preserve the names used by inherited morphology/reward helpers, but
+        # source their values from envelope_state rather than commands.
+        self.condition_names = list(self.envelope_state.condition_names)
+        self.condition_dim = self.envelope_state.condition_dim
+        self.condition_low = self.envelope_state.low
+        self.condition_high = self.envelope_state.high
         range_cfg = self.cfg.haa_swing_range
         haa_leg_names = tuple(self.dof_names[index].split("_", 1)[0] for index in self.haa_indices.tolist())
         spider_haa = tuple(float(self.default_dof_pos[0, index]) for index in self.haa_indices.tolist())
@@ -58,6 +72,11 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
             spider_haa=spider_haa,
             mammal_haa=mammal_haa,
         )
+        self._haa_range_output_indices = torch.arange(
+            len(haa_leg_names),
+            dtype=torch.long,
+            device=self.device,
+        )
         self.haa_range_estimator = self._make_haa_range_estimator(estimator_cfg)
         self.haa_swing_ranges = torch.zeros(
             self.num_envs,
@@ -75,6 +94,53 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
             requires_grad=False,
         )
         self._refresh_haa_swing_ranges()
+
+    def _get_noise_scale_vec(self, cfg) -> torch.Tensor:
+        """Noise vector for the 66-D observation without envelope condition."""
+        noise_vec = torch.zeros_like(self.obs_buf[0])
+        self.add_noise = self.cfg.noise.add_noise
+        noise_scales = self.cfg.noise.noise_scales
+        noise_level = self.cfg.noise.noise_level
+        noise_vec[:3] = noise_scales.lin_vel * noise_level * self.obs_scales.lin_vel
+        noise_vec[3:6] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
+        noise_vec[6:9] = noise_scales.gravity * noise_level
+        noise_vec[9:12] = 0.0
+        noise_vec[12:30] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
+        noise_vec[30:48] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
+        noise_vec[48:66] = 0.0
+        return noise_vec
+
+    def compute_observations(self) -> None:
+        """Policy observes only proprioception and [vx, vy, yaw_rate]."""
+        self.obs_buf = torch.cat(
+            (
+                self.base_lin_vel * self.obs_scales.lin_vel,
+                self.base_ang_vel * self.obs_scales.ang_vel,
+                self.projected_gravity,
+                self.commands[:, 0:1] * self.command_lin_vel_scale,
+                self.commands[:, 1:2] * self.command_lin_vel_scale,
+                self.commands[:, 2:3] * self.command_ang_vel_scale,
+                (self.dof_pos - self.embedded_state_default_dof_pos) * self.obs_scales.dof_pos,
+                self.dof_vel * self.obs_scales.dof_vel,
+                self.actions,
+            ),
+            dim=-1,
+        )
+        if getattr(self.cfg.lidar, "enable", False):
+            self.obs_buf = torch.cat((self.obs_buf, self._get_lidar_observations()), dim=-1)
+        elif self.cfg.terrain.measure_heights:
+            heights = torch.clip(
+                self.root_states[:, 2].unsqueeze(1) - 0.45 - self.measured_heights,
+                -5,
+                5.0,
+            ) * self.obs_scales.height_measurements
+            self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
+        if self.add_noise:
+            self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
+
+    def _get_structure_condition(self) -> torch.Tensor:
+        """Return the external envelope state; never read it from commands."""
+        return self.envelope_state.get()
 
     def _make_haa_range_estimator(self, config: HaaRangeConfig):
         range_cfg = self.cfg.haa_swing_range
@@ -94,15 +160,21 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
                 raise ValueError("haa_swing_range.network_checkpoint is required for method='network'")
             checkpoint = checkpoint.format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR)
             network = HaaRangeNetwork.from_checkpoint(Path(checkpoint), device=self.device)
-            if (
-                network.config.condition_names != config.condition_names
-                or network.config.leg_names != config.leg_names
-            ):
+            if network.config.condition_names != config.condition_names:
                 raise ValueError(
-                    "HAA network input/output order does not match the environment: "
-                    f"conditions {network.config.condition_names} != {config.condition_names}, "
-                    f"legs {network.config.leg_names} != {config.leg_names}"
+                    "HAA network input order does not match the environment: "
+                    f"{network.config.condition_names} != {config.condition_names}"
                 )
+            missing_legs = set(config.leg_names).difference(network.config.leg_names)
+            if missing_legs:
+                raise ValueError(f"HAA network is missing legs: {sorted(missing_legs)}")
+            # Keep the checkpoint output contract exactly as trained, then map
+            # RF/RM/RB/LF/LM/LB to Isaac Gym's internal HAA DOF order.
+            self._haa_range_output_indices = torch.tensor(
+                [network.config.leg_names.index(name) for name in config.leg_names],
+                dtype=torch.long,
+                device=self.device,
+            )
             return network
         raise ValueError(
             f"Unknown haa_swing_range.method={range_cfg.method!r}; "
@@ -119,6 +191,7 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
             return
         condition = self._get_structure_condition()[env_ids]
         ranges = self.haa_range_estimator(condition)
+        ranges = ranges[:, self._haa_range_output_indices]
         if ranges.shape != self.haa_swing_ranges[env_ids].shape:
             raise RuntimeError(
                 f"HAA estimator returned {tuple(ranges.shape)}, expected "
@@ -128,9 +201,48 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
         self._haa_range_condition_cache[env_ids] = condition
 
     def _resample_commands(self, env_ids: torch.Tensor) -> None:
-        super()._resample_commands(env_ids)
+        if env_ids.numel() == 0:
+            return
+        for command_index, range_name in enumerate(
+            ("lin_vel_x", "lin_vel_y", "ang_vel_yaw")
+        ):
+            low, high = self.command_ranges[range_name]
+            self.commands[env_ids, command_index] = low + torch.rand(
+                env_ids.numel(),
+                dtype=torch.float,
+                device=self.device,
+            ) * (high - low)
+        self.envelope_state.sample(env_ids)
+        if getattr(self.cfg.rewards, "reset_structure_transition_on_resample", True):
+            self.embedded_state_transition_time[env_ids] = 0.0
+            self.filtered_embedded_state_default_dof_pos[env_ids] = self.default_dof_pos
         if hasattr(self, "haa_range_estimator"):
             self._refresh_haa_swing_ranges(env_ids)
+
+    @torch.no_grad()
+    def set_envelope_condition(
+        self,
+        values,
+        env_ids: Optional[torch.Tensor] = None,
+        *,
+        derive_priors: bool = True,
+    ) -> torch.Tensor:
+        """Public hook for a future external envelope computation module."""
+        updated = self.envelope_state.set(
+            values,
+            env_ids,
+            derive_priors=derive_priors,
+        )
+        target_ids = (
+            torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+            if env_ids is None
+            else env_ids.to(device=self.device, dtype=torch.long)
+        )
+        self._refresh_haa_swing_ranges(target_ids)
+        self.embedded_state_default_dof_pos[target_ids] = self._get_condition_target_dof_pos()[
+            target_ids
+        ]
+        return updated
 
     def _post_physics_step_callback(self) -> None:
         super()._post_physics_step_callback()
