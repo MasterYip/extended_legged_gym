@@ -8,10 +8,11 @@ from legged_gym.envs.el_4090.spider_envelop.el4090_spider_config import (
 
 class El4090Envelop2Cfg(El4090EnvelopCfg):
     class env(El4090EnvelopCfg.env):
-        # 66 proprioception + 3 morphology priors + 6 HAA centers + 6 half-ranges.
-        num_observations = 81
+        # 66 proprioception + 3 priors + 12 HAA range values + sin/cos gait phase.
+        num_observations = 83
         num_physical_priors = 3
         num_haa_range_observations = 12
+        num_gait_phase_observations = 2
 
     class commands(El4090EnvelopCfg.commands):
         # Policy command is strictly [vx, vy, yaw_rate].
@@ -25,6 +26,7 @@ class El4090Envelop2Cfg(El4090EnvelopCfg):
             morphology_prior = 1.0
             haa_range_center = 1.0
             haa_range_half = 1.0
+            gait_phase = 1.0
 
     class envelope:
         condition_names: list = list(El4090EnvelopCfg.commands.condition_names)
@@ -77,6 +79,11 @@ class El4090Envelop2Cfg(El4090EnvelopCfg):
 
     class rewards(El4090EnvelopCfg.rewards):
         haa_range_margin = 0.0
+        haa_phase_period = 0.5
+        haa_phase_amplitude_ratio = 0.6
+        haa_phase_min_command = 0.1
+        haa_phase_full_command = 0.5
+        haa_phase_yaw_weight = 0.5
 
         class scales:
             # Basic locomotion tracking and body stabilization.
@@ -110,8 +117,9 @@ class El4090Envelop2Cfg(El4090EnvelopCfg):
             torque_limits = -0.01
 
             # Keep only the generated per-leg HAA range constraint here. A
-            # separate phase-based reward will be introduced in the next step.
+            # phase target encourages smooth use of the available HAA range.
             haa_range_violation = -3.0
+            haa_phase_tracking = -1.0
 
 
 class El4090Envelop2CfgPPO(El4090EnvelopCfgPPO):

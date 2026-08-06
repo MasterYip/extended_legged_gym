@@ -52,7 +52,7 @@ def _height_measurements_start(obs: torch.Tensor, env=None) -> int:
     """Return the first perception index, keeping structure condition in command obs."""
     if env is not None:
         return _obs_layout(env)["perception_start"]
-    return 81 if obs.shape[1] in (81, 268) else 74 if obs.shape[1] in (74, 261) else 77 if obs.shape[1] in (77, 264) else 75 if obs.shape[1] in (75, 262) else 72 if obs.shape[1] in (72, 259) else 69 if obs.shape[1] in (69, 256) else 67 if obs.shape[1] in (67, 254) else 66
+    return 83 if obs.shape[1] in (83, 270) else 81 if obs.shape[1] in (81, 268) else 74 if obs.shape[1] in (74, 261) else 77 if obs.shape[1] in (77, 264) else 75 if obs.shape[1] in (75, 262) else 72 if obs.shape[1] in (72, 259) else 69 if obs.shape[1] in (69, 256) else 67 if obs.shape[1] in (67, 254) else 66
 
 
 def _condition_dim(env=None) -> int:
@@ -71,13 +71,16 @@ def _obs_layout(env=None) -> Dict[str, int]:
     physical_prior_start = actions_start + 18
     physical_prior_dim = 0
     haa_range_obs_dim = 0
+    gait_phase_obs_dim = 0
     if env is not None:
         cfg = getattr(env, "cfg", None)
         env_cfg = getattr(cfg, "env", None)
         physical_prior_dim = int(getattr(env_cfg, "num_physical_priors", 0))
         haa_range_obs_dim = int(getattr(env_cfg, "num_haa_range_observations", 0))
+        gait_phase_obs_dim = int(getattr(env_cfg, "num_gait_phase_observations", 0))
     haa_range_start = physical_prior_start + physical_prior_dim
-    perception_start = haa_range_start + haa_range_obs_dim
+    gait_phase_start = haa_range_start + haa_range_obs_dim
+    perception_start = gait_phase_start + gait_phase_obs_dim
     return {
         "condition_dim": condition_dim,
         "condition_start": 12,
@@ -88,6 +91,8 @@ def _obs_layout(env=None) -> Dict[str, int]:
         "physical_prior_dim": physical_prior_dim,
         "haa_range_start": haa_range_start,
         "haa_range_obs_dim": haa_range_obs_dim,
+        "gait_phase_start": gait_phase_start,
+        "gait_phase_obs_dim": gait_phase_obs_dim,
         "perception_start": perception_start,
     }
 
@@ -117,6 +122,15 @@ def _mirror_haa_ranges(obs_mirrored: torch.Tensor, obs: torch.Tensor, env=None, 
     half_range = obs[:, start + 6:start + 12]
     obs_mirrored[:, start:start + 6] = center.index_select(1, leg_map)
     obs_mirrored[:, start + 6:start + 12] = half_range.index_select(1, leg_map)
+
+
+def _mirror_gait_phase_left_right(obs_mirrored: torch.Tensor, obs: torch.Tensor, env=None) -> None:
+    """Left-right reflection swaps the two tripod groups, i.e. phase += pi."""
+    layout = _obs_layout(env)
+    if layout["gait_phase_obs_dim"] != 2:
+        return
+    start = layout["gait_phase_start"]
+    obs_mirrored[:, start:start + 2] = -obs[:, start:start + 2]
 
 
 def _mirror_condition_left_right(obs_mirrored: torch.Tensor, obs: torch.Tensor, env=None) -> None:
@@ -240,6 +254,7 @@ def _mirror_elspider_obs_left_right(obs: torch.Tensor, env=None, perception: str
 
     _mirror_condition_left_right(obs_mirrored, obs, env)
     _mirror_haa_ranges(obs_mirrored, obs, env, axis="left_right")
+    _mirror_gait_phase_left_right(obs_mirrored, obs, env)
 
     # Swap left-right DOF positions, velocities, and previous actions.
     obs_mirrored[:, dof_pos_start:dof_pos_start + 9] = obs[:, dof_pos_start + 9:dof_pos_start + 18]
@@ -353,6 +368,7 @@ def get_elair_xysym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = No
         
         _mirror_condition_left_right(obs_lr_mirrored, obs, env)
         _mirror_haa_ranges(obs_lr_mirrored, obs, env, axis="left_right")
+        _mirror_gait_phase_left_right(obs_lr_mirrored, obs, env)
 
         # Swap left-right DOF positions: L(0-8) <-> R(9-17)
         obs_lr_mirrored[:, dof_pos_start:dof_pos_start + 9] = obs[:, dof_pos_start + 9:dof_pos_start + 18]
@@ -509,6 +525,7 @@ def get_elair_xsym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = Non
 
         _mirror_condition_left_right(obs_mirrored, obs, env)
         _mirror_haa_ranges(obs_mirrored, obs, env, axis="left_right")
+        _mirror_gait_phase_left_right(obs_mirrored, obs, env)
 
         # Swap right and left DOF positions
         obs_mirrored[:, dof_pos_start:dof_pos_start + 9] = obs[:, dof_pos_start + 9:dof_pos_start + 18]
