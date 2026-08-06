@@ -25,7 +25,7 @@ from legged_gym.utils.envelop.network.haa_swing_range import (
 
 
 class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
-    """66-D locomotion policy plus a separate envelope-to-HAA network path."""
+    """81-D locomotion policy with explicit per-leg HAA range observations."""
 
     cfg: El4090Envelop2Cfg
 
@@ -53,6 +53,16 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
         self.condition_dim = self.envelope_state.condition_dim
         self.condition_low = self.envelope_state.low
         self.condition_high = self.envelope_state.high
+        self.morphology_prior_obs_indices = torch.tensor(
+            [
+                self.condition_names.index("morphology_front_prior"),
+                self.condition_names.index("morphology_middle_prior"),
+                self.condition_names.index("morphology_back_prior"),
+            ],
+            dtype=torch.long,
+            device=self.device,
+            requires_grad=False,
+        )
         range_cfg = self.cfg.haa_swing_range
         haa_leg_names = tuple(self.dof_names[index].split("_", 1)[0] for index in self.haa_indices.tolist())
         spider_haa = tuple(float(self.default_dof_pos[0, index]) for index in self.haa_indices.tolist())
@@ -96,7 +106,7 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
         self._refresh_haa_swing_ranges()
 
     def _get_noise_scale_vec(self, cfg) -> torch.Tensor:
-        """Noise vector for the 66-D observation without envelope condition."""
+        """Noise vector for the 81-D envelop_2 policy observation."""
         noise_vec = torch.zeros_like(self.obs_buf[0])
         self.add_noise = self.cfg.noise.add_noise
         noise_scales = self.cfg.noise.noise_scales
@@ -108,10 +118,16 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
         noise_vec[12:30] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
         noise_vec[30:48] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
         noise_vec[48:66] = 0.0
+        noise_vec[66:69] = 0.0
+        noise_vec[69:81] = 0.0
         return noise_vec
 
     def compute_observations(self) -> None:
-        """Policy observes only proprioception and [vx, vy, yaw_rate]."""
+        """Policy observes proprioception, morphology priors, and actual HAA ranges."""
+        haa_lower = self.haa_swing_ranges[..., 0]
+        haa_upper = self.haa_swing_ranges[..., 1]
+        haa_center = 0.5 * (haa_lower + haa_upper)
+        haa_half_range = 0.5 * (haa_upper - haa_lower)
         self.obs_buf = torch.cat(
             (
                 self.base_lin_vel * self.obs_scales.lin_vel,
@@ -123,6 +139,10 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
                 (self.dof_pos - self.embedded_state_default_dof_pos) * self.obs_scales.dof_pos,
                 self.dof_vel * self.obs_scales.dof_vel,
                 self.actions,
+                self._get_structure_condition().index_select(1, self.morphology_prior_obs_indices)
+                * self.obs_scales.morphology_prior,
+                haa_center * self.obs_scales.haa_range_center,
+                haa_half_range * self.obs_scales.haa_range_half,
             ),
             dim=-1,
         )
@@ -274,33 +294,13 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
             len(env_ids_int32),
         )
 
-    def _get_haa_moving_mask(self) -> torch.Tensor:
-        threshold = float(getattr(self.cfg.rewards, "haa_range_min_command", 0.15))
-        angular_index = 3 if self.cfg.commands.heading_command else 2
-        return torch.logical_or(
-            torch.norm(self.commands[:, :2], dim=1) > threshold,
-            torch.abs(self.commands[:, angular_index]) > threshold,
-        ).float()
-
-    def _reward_haa_swing_in_range(self) -> torch.Tensor:
-        """Reward useful HAA excursion and velocity only while inside its range."""
-        lower = self.haa_swing_ranges[..., 0]
-        upper = self.haa_swing_ranges[..., 1]
-        position = self.dof_pos[:, self.haa_indices]
-        center = 0.5 * (lower + upper)
-        half_range = (0.5 * (upper - lower)).clamp_min(1e-6)
-        inside = torch.logical_and(position >= lower, position <= upper).float()
-        excursion = torch.clamp(torch.abs(position - center) / half_range, 0.0, 1.0)
-        velocity_clip = max(float(getattr(self.cfg.rewards, "haa_range_velocity_clip", 5.0)), 1e-6)
-        velocity = torch.clamp(torch.abs(self.dof_vel[:, self.haa_indices]) / velocity_clip, 0.0, 1.0)
-        swing = torch.mean(inside * excursion * velocity, dim=1)
-        return swing * self._get_haa_moving_mask() * self._get_gait_reward_active_mask()
-
     def _reward_haa_range_violation(self) -> torch.Tensor:
-        """Quadratic hard-bound penalty for each HAA outside its generated range."""
+        """Penalize each HAA quadratically when it leaves its generated range."""
         margin = float(getattr(self.cfg.rewards, "haa_range_margin", 0.0))
         lower = self.haa_swing_ranges[..., 0] - margin
         upper = self.haa_swing_ranges[..., 1] + margin
         position = self.dof_pos[:, self.haa_indices]
         violation = torch.relu(lower - position) + torch.relu(position - upper)
-        return torch.mean(torch.square(violation), dim=1)
+        half_range = (0.5 * (upper - lower)).clamp_min(1e-6)
+        normalized_violation = violation / half_range
+        return torch.mean(torch.square(normalized_violation), dim=1)

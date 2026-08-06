@@ -51,14 +51,8 @@ from legged_gym.utils.math_utils import quat_apply_yaw
 def _height_measurements_start(obs: torch.Tensor, env=None) -> int:
     """Return the first perception index, keeping structure condition in command obs."""
     if env is not None:
-        cfg = getattr(env, "cfg", None)
-        commands_cfg = getattr(cfg, "commands", None)
-        condition_dim = getattr(commands_cfg, "condition_dim", None)
-        if condition_dim is not None:
-            return 66 + int(condition_dim)
-        num_commands = getattr(commands_cfg, "num_commands", 4)
-        return 67 if num_commands > 4 else 66
-    return 74 if obs.shape[1] in (74, 261) else 77 if obs.shape[1] in (77, 264) else 75 if obs.shape[1] in (75, 262) else 72 if obs.shape[1] in (72, 259) else 67 if obs.shape[1] in (67, 254) else 66
+        return _obs_layout(env)["perception_start"]
+    return 81 if obs.shape[1] in (81, 268) else 74 if obs.shape[1] in (74, 261) else 77 if obs.shape[1] in (77, 264) else 75 if obs.shape[1] in (75, 262) else 72 if obs.shape[1] in (72, 259) else 69 if obs.shape[1] in (69, 256) else 67 if obs.shape[1] in (67, 254) else 66
 
 
 def _condition_dim(env=None) -> int:
@@ -74,15 +68,55 @@ def _obs_layout(env=None) -> Dict[str, int]:
     dof_pos_start = 12 + condition_dim
     dof_vel_start = dof_pos_start + 18
     actions_start = dof_vel_start + 18
-    perception_start = actions_start + 18
+    physical_prior_start = actions_start + 18
+    physical_prior_dim = 0
+    haa_range_obs_dim = 0
+    if env is not None:
+        cfg = getattr(env, "cfg", None)
+        env_cfg = getattr(cfg, "env", None)
+        physical_prior_dim = int(getattr(env_cfg, "num_physical_priors", 0))
+        haa_range_obs_dim = int(getattr(env_cfg, "num_haa_range_observations", 0))
+    haa_range_start = physical_prior_start + physical_prior_dim
+    perception_start = haa_range_start + haa_range_obs_dim
     return {
         "condition_dim": condition_dim,
         "condition_start": 12,
         "dof_pos_start": dof_pos_start,
         "dof_vel_start": dof_vel_start,
         "actions_start": actions_start,
+        "physical_prior_start": physical_prior_start,
+        "physical_prior_dim": physical_prior_dim,
+        "haa_range_start": haa_range_start,
+        "haa_range_obs_dim": haa_range_obs_dim,
         "perception_start": perception_start,
     }
+
+
+def _mirror_physical_prior_back_forth(obs_mirrored: torch.Tensor, obs: torch.Tensor, env=None) -> None:
+    """Swap the appended front/back morphology priors under x-axis reflection."""
+    layout = _obs_layout(env)
+    if layout["physical_prior_dim"] != 3:
+        return
+    start = layout["physical_prior_start"]
+    obs_mirrored[:, start] = obs[:, start + 2]
+    obs_mirrored[:, start + 1] = obs[:, start + 1]
+    obs_mirrored[:, start + 2] = obs[:, start]
+
+
+def _mirror_haa_ranges(obs_mirrored: torch.Tensor, obs: torch.Tensor, env=None, axis="left_right") -> None:
+    """Mirror the six HAA centers and six half-ranges in simulator leg order."""
+    layout = _obs_layout(env)
+    if layout["haa_range_obs_dim"] != 12:
+        return
+    if axis == "left_right":
+        leg_map = torch.tensor([3, 4, 5, 0, 1, 2], dtype=torch.long, device=obs.device)
+    else:
+        leg_map = torch.tensor([1, 0, 2, 4, 3, 5], dtype=torch.long, device=obs.device)
+    start = layout["haa_range_start"]
+    center = obs[:, start:start + 6]
+    half_range = obs[:, start + 6:start + 12]
+    obs_mirrored[:, start:start + 6] = center.index_select(1, leg_map)
+    obs_mirrored[:, start + 6:start + 12] = half_range.index_select(1, leg_map)
 
 
 def _mirror_condition_left_right(obs_mirrored: torch.Tensor, obs: torch.Tensor, env=None) -> None:
@@ -205,6 +239,7 @@ def _mirror_elspider_obs_left_right(obs: torch.Tensor, env=None, perception: str
     obs_mirrored[:, 11] = -obs[:, 11]
 
     _mirror_condition_left_right(obs_mirrored, obs, env)
+    _mirror_haa_ranges(obs_mirrored, obs, env, axis="left_right")
 
     # Swap left-right DOF positions, velocities, and previous actions.
     obs_mirrored[:, dof_pos_start:dof_pos_start + 9] = obs[:, dof_pos_start + 9:dof_pos_start + 18]
@@ -317,6 +352,7 @@ def get_elair_xysym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = No
         obs_lr_mirrored[:, 11] = -obs[:, 11]
         
         _mirror_condition_left_right(obs_lr_mirrored, obs, env)
+        _mirror_haa_ranges(obs_lr_mirrored, obs, env, axis="left_right")
 
         # Swap left-right DOF positions: L(0-8) <-> R(9-17)
         obs_lr_mirrored[:, dof_pos_start:dof_pos_start + 9] = obs[:, dof_pos_start + 9:dof_pos_start + 18]
@@ -357,6 +393,8 @@ def get_elair_xysym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = No
         obs_bf_mirrored[:, 11] = -obs[:, 11]
         
         _mirror_condition_back_forth(obs_bf_mirrored, obs, env)
+        _mirror_physical_prior_back_forth(obs_bf_mirrored, obs, env)
+        _mirror_haa_ranges(obs_bf_mirrored, obs, env, axis="back_forth")
 
         # Swap back-front DOF positions: Back(LB,RB) <-> Front(LF,RF), LM/RM stay as is.
         obs_bf_mirrored[:, dof_pos_start:dof_pos_start + 3] = obs[:, dof_pos_start + 3:dof_pos_start + 6]
@@ -470,6 +508,7 @@ def get_elair_xsym_obs_act(obs: torch.Tensor = None, actions: torch.Tensor = Non
         # Right side DOFs: 0-8, Left side DOFs: 9-17
 
         _mirror_condition_left_right(obs_mirrored, obs, env)
+        _mirror_haa_ranges(obs_mirrored, obs, env, axis="left_right")
 
         # Swap right and left DOF positions
         obs_mirrored[:, dof_pos_start:dof_pos_start + 9] = obs[:, dof_pos_start + 9:dof_pos_start + 18]
