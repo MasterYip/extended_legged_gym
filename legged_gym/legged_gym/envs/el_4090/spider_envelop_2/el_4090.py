@@ -43,6 +43,15 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
 
     def _init_buffers(self) -> None:
         super()._init_buffers()
+        # Keep one action older than the inherited ``last_actions`` buffer so
+        # the reward can penalize the discrete second action difference.
+        self.last_last_actions = torch.zeros_like(self.actions)
+        self.action_history_steps = torch.zeros(
+            self.num_envs,
+            dtype=torch.long,
+            device=self.device,
+            requires_grad=False,
+        )
         self.envelope_state = EnvelopeConditionState(
             self.cfg.envelope,
             self.num_envs,
@@ -115,6 +124,31 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
             requires_grad=False,
         )
         self._refresh_haa_swing_ranges()
+
+    def step(self, actions):
+        """Step the simulator while preserving two valid action-history frames."""
+        previous_actions = self.last_actions.clone()
+        result = super().step(actions)
+        self._update_action_history(previous_actions, result[3])
+        return result
+
+    @torch.no_grad()
+    def _update_action_history(
+        self,
+        previous_actions: torch.Tensor,
+        dones: torch.Tensor,
+    ) -> None:
+        """Advance action history and discard history across episode resets."""
+        done_mask = dones.to(dtype=torch.bool)
+        active_mask = ~done_mask
+        self.last_last_actions[:] = previous_actions
+        self.action_history_steps[active_mask] = torch.clamp(
+            self.action_history_steps[active_mask] + 1,
+            max=2,
+        )
+        self.last_last_actions[done_mask] = 0.0
+        self.last_actions[done_mask] = 0.0
+        self.action_history_steps[done_mask] = 0
 
     def _get_noise_scale_vec(self, cfg) -> torch.Tensor:
         """Noise vector for the 83-D envelop_2 policy observation."""
@@ -344,6 +378,8 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
         super().reset_idx(env_ids)
         if len(env_ids) == 0:
             return
+        self.last_last_actions[env_ids] = 0.0
+        self.action_history_steps[env_ids] = 0
         target = self._get_condition_target_dof_pos()[env_ids]
         self.embedded_state_default_dof_pos[env_ids] = target
         self.dof_pos[env_ids] = target
@@ -366,6 +402,14 @@ class EL_4090_ENVELOP_2(EL_4090_ENVELOP):
         half_range = (0.5 * (upper - lower)).clamp_min(1e-6)
         normalized_violation = violation / half_range
         return torch.mean(torch.square(normalized_violation), dim=1)
+
+    def _reward_action_jerk(self) -> torch.Tensor:
+        """Penalize rapid action reversals using the discrete second difference."""
+        second_difference = (
+            self.actions - 2.0 * self.last_actions + self.last_last_actions
+        )
+        valid_history = (self.action_history_steps >= 2).to(dtype=self.actions.dtype)
+        return torch.sum(torch.square(second_difference), dim=1) * valid_history
 
     def _reward_haa_phase_tracking(self) -> torch.Tensor:
         """Track a smooth, range-aware tripod HAA target without rewarding velocity."""

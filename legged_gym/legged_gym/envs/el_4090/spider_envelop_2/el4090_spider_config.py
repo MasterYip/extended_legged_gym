@@ -98,12 +98,13 @@ class El4090Envelop2Cfg(El4090EnvelopCfg):
             # Smooth and energy-efficient joint motion.
             torques = -1e-5
             dof_vel = -1e-5
-            dof_acc = -1e-7
-            action_rate = -0.001
+            dof_acc = -1e-6
+            action_rate = -0.003
+            action_jerk = -0.005
 
             # Basic foot contact and gait quality.
             feet_slip = -0.05
-            feet_air_time = 3
+            feet_air_time = 5
             collision = -1.0
             stand_still = -1.5
             feet_contact_forces = -0.03
@@ -119,7 +120,7 @@ class El4090Envelop2Cfg(El4090EnvelopCfg):
             # Keep only the generated per-leg HAA range constraint here. A
             # phase target encourages smooth use of the available HAA range.
             haa_range_violation = -3.0
-            haa_phase_tracking = -1.0
+            haa_phase_tracking = -3.0
 
 
 class El4090Envelop2CfgPPO(El4090EnvelopCfgPPO):

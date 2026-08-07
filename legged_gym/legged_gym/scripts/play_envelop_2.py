@@ -39,6 +39,7 @@ CAMERA_MODE_NAMES = {
     "rear_side": "侧后方",
     "rear_top": "后上方",
 }
+MORPHOLOGY_CYCLE_HALF_DURATION_S = 3.0
 
 
 class KeyboardInput:
@@ -80,6 +81,7 @@ def _print_keyboard_table(follow_camera):
         ("M", "切换到最大包络（默认初始状态）"),
         ("R", "随机采样一个包络"),
         ("F", "前腿 mammal 倾向测试包络"),
+        ("O", "全昆虫型 → 全哺乳型 → 全昆虫型"),
     ]
     if follow_camera:
         rows.append(("C", "切换侧后方 / 后上方相机"))
@@ -152,13 +154,56 @@ def _front_mammal_condition(env):
     return condition
 
 
-def _apply_envelope(env, condition):
+def _all_insect_condition(env):
+    """Build an envelope whose derived morphology priors are all zero."""
+    condition = _condition_template(env)
+    state = env.envelope_state
+    names = list(state.condition_names)
+    selections = {
+        "front_width": state.high,
+        "middle_width": state.high,
+        "back_width": state.high,
+        "forward_limit": state.low,
+        "backward_limit": state.high,
+    }
+    for name, bound in selections.items():
+        index = names.index(name)
+        condition[:, index] = bound[index]
+    return condition
+
+
+def _all_mammal_condition(env):
+    """Build an envelope whose derived morphology priors are all one."""
+    condition = _condition_template(env)
+    state = env.envelope_state
+    names = list(state.condition_names)
+    selections = {
+        "front_width": state.low,
+        "middle_width": state.low,
+        "back_width": state.low,
+        "forward_limit": state.high,
+        "backward_limit": state.low,
+    }
+    for name, bound in selections.items():
+        index = names.index(name)
+        condition[:, index] = bound[index]
+    return condition
+
+
+def _morphology_cycle_condition(insect, mammal, step, half_steps):
+    """Cosine-interpolate insect -> mammal -> insect over two half cycles."""
+    cycle_progress = min(max(float(step) / (2.0 * half_steps), 0.0), 1.0)
+    mammal_blend = 0.5 - 0.5 * np.cos(2.0 * np.pi * cycle_progress)
+    return torch.lerp(insect, mammal, float(mammal_blend))
+
+
+def _apply_envelope(env, condition, *, reset_transition=True):
     if not hasattr(env, "set_envelope_condition"):
         raise AttributeError(
             "play_envelop_2.py requires the envelop_2 set_envelope_condition() API"
         )
     updated = env.set_envelope_condition(condition, derive_priors=True)
-    if hasattr(env, "embedded_state_transition_time"):
+    if reset_transition and hasattr(env, "embedded_state_transition_time"):
         env.embedded_state_transition_time[:] = 0.0
     return updated
 
@@ -272,6 +317,7 @@ def play(args):
         print("Exported policy as jit script to:", export_path)
 
     command = {"x": 1.2, "y": 0.0, "yaw": 0.0}
+    morphology_cycle = None
     camera_mode_index = 0
     camera_state = None
     if FOLLOW_CAMERA:
@@ -308,14 +354,32 @@ def play(args):
                 elif key == "x":
                     command = {"x": 0.0, "y": 0.0, "yaw": 0.0}
                 elif key == "m":
+                    morphology_cycle = None
                     active_condition = _apply_envelope(env, _maximum_envelope_condition(env))
                     _print_envelope_state(env, "最大包络")
                 elif key == "r":
+                    morphology_cycle = None
                     active_condition = _apply_envelope(env, _random_envelope_condition(env))
                     _print_envelope_state(env, "随机包络")
                 elif key == "f":
+                    morphology_cycle = None
                     active_condition = _apply_envelope(env, _front_mammal_condition(env))
                     _print_envelope_state(env, "前腿 mammal 测试包络")
+                elif key == "o":
+                    insect_condition = _all_insect_condition(env)
+                    mammal_condition = _all_mammal_condition(env)
+                    half_steps = max(
+                        1,
+                        int(round(MORPHOLOGY_CYCLE_HALF_DURATION_S / env.dt)),
+                    )
+                    morphology_cycle = {
+                        "step": 0,
+                        "half_steps": half_steps,
+                        "insect": insect_condition,
+                        "mammal": mammal_condition,
+                    }
+                    active_condition = _apply_envelope(env, insect_condition)
+                    _print_envelope_state(env, "O 循环开始：全昆虫型")
                 elif key == "c" and FOLLOW_CAMERA:
                     camera_mode_index = (camera_mode_index + 1) % len(CAMERA_MODES)
                     camera_state["position"] = None
@@ -323,6 +387,27 @@ def play(args):
 
             if should_exit:
                 break
+
+            if morphology_cycle is not None:
+                cycle_step = morphology_cycle["step"]
+                half_steps = morphology_cycle["half_steps"]
+                active_condition = _apply_envelope(
+                    env,
+                    _morphology_cycle_condition(
+                        morphology_cycle["insect"],
+                        morphology_cycle["mammal"],
+                        cycle_step,
+                        half_steps,
+                    ),
+                    reset_transition=False,
+                )
+                if cycle_step == half_steps:
+                    _print_envelope_state(env, "O 循环中点：全哺乳型")
+                if cycle_step >= 2 * half_steps:
+                    _print_envelope_state(env, "O 循环完成：全昆虫型")
+                    morphology_cycle = None
+                else:
+                    morphology_cycle["step"] += 1
 
             env.commands[:, 0] = command["x"]
             env.commands[:, 1] = command["y"]
