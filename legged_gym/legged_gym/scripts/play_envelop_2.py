@@ -368,7 +368,7 @@ def play(args):
 
     _print_keyboard_table(FOLLOW_CAMERA)
     _print_envelope_state(env, "初始最大包络")
-    print(f"\nObservation: {obs.shape[-1]} dims; 初始速度 vx={command['x']:.1f}")
+    print(f"\nObservation: {obs.shape[-1]} dims; 初始速度 vx={command[0].item():.1f}")
     if morphology_cycle is not None:
         active_condition = _apply_envelope(env, morphology_cycle["start"])
         _print_envelope_state(env, "多样包络序列开始")
