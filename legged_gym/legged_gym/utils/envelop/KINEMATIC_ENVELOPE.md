@@ -18,11 +18,9 @@ condition vector \([B,8]\), HAA intervals are exported as \([B,6,2]\), and the
 envelope-v2 observation remains \([B,83]\). This is interface compatibility,
 not a claim that the old symmetric parameterization preserves all geometry.
 
-![Kinematic envelope triptych](figures/kinematic_envelope_triptych.png)
-
-Vector originals are available as
-[`kinematic_envelope_triptych.svg`](figures/kinematic_envelope_triptych.svg)
-and [`kinematic_envelope_triptych.pdf`](figures/kinematic_envelope_triptych.pdf).
+The publication figure and its drawing source are paper-owned artifacts and
+belong in the EL4090 paper repository. This RL repository intentionally keeps
+only the geometry implementation, tests, benchmark, and technical evidence.
 
 ## Method
 
@@ -165,17 +163,12 @@ environment evaluations/s**. Output shape was `[2048,64]`. Process peak RSS was
 Timing and RSS are machine- and allocator-dependent, so the JSON artifact is
 evidence for this run rather than a cross-platform guarantee.
 
-## Figure reproduction
+## Publication figure ownership
 
-```bash
-MPLBACKEND=Agg /home/user/miniforge3/envs/isaacgym/bin/python \
-  utils/envelop/visualize_kinematic_envelope.py
-```
-
-The script generates matching PNG, SVG, and PDF assets. The visual vocabulary
-follows the project design system: paper white, graphite structure, teal/cyan
-geometry, red safety/limitation marks, amber joint/reachability data, a shared
-datum crosshair, and no gradients.
+Graph-drawing scripts and rendered publication assets are maintained in the
+EL4090 paper repository rather than `extended_legged_gym`. They should consume
+the equations, coordinate convention, limitations, and recorded benchmark in
+this note without duplicating the executable geometry implementation.
 
 ## Limitations
 
