@@ -2,8 +2,10 @@
 
 ## Scope and coordinate convention
 
-This module replaces the hand-authored symmetric hexagon with an auditable,
-differentiable geometry layer. All planar quantities are expressed in the
+This module adds and proposes an auditable, differentiable geometry layer
+alongside the hand-authored symmetric hexagon. It is not yet wired into the
+training environment or deployed policy path. All planar quantities are
+expressed in the
 EL4090 body-yaw frame: \(+x\) points forward and \(+y\) points left. Two sets
 must remain conceptually separate:
 
@@ -73,14 +75,22 @@ occupied structure, the other sampled reachability.
 
 ## Joint-range export and diagnostics
 
-`export_joint_ranges` accepts sample tensors \([\ldots,S,J]\), intersects the
-sample extrema with effective URDF bounds, and independently evaluates
-registered validation samples \([\ldots,V,J]\). It reports violation count,
-rate, and maximum excursion. The label **conservative on registered validation
-set** is emitted only when the observed violation count is zero; otherwise the
-label is **approximate**.
+`export_envelope_joint_ranges` evaluates capsule support for candidate tensors
+\([\ldots,S,J]\) against a requested allowed support \([\ldots,K]\), derives a
+box only from candidates satisfying every support inequality, and separately
+evaluates validation tensors \([\ldots,V,J]\). Diagnostics report candidate and
+validation feasible counts, false exclusions of feasible validation samples,
+and violations among independent Sobol samples drawn from the exported
+Cartesian box. The label **conservative on registered box-validation samples**
+is emitted only when every batch has feasible candidates and the sampled box
+has zero envelope violations; otherwise it is **approximate**. An empty result
+has `valid=False` and NaN ranges rather than invented limits.
 
-This wording is deliberate. An axis-aligned range covers validated feasible
+`export_sample_bounding_ranges` remains available as a clearly named low-level
+helper when feasibility was established externally. It must not be interpreted
+as envelope-conditioned certification.
+
+This wording is deliberate. An axis-aligned range covers candidate feasible
 samples but does not prove every Cartesian combination inside the box feasible.
 Nor does sample validation establish global conservatism. A stronger claim
 requires interval methods, optimization certificates, or exhaustive bounds.
@@ -122,6 +132,8 @@ The deterministic test suite checks:
 - autograd against centered finite differences away from support ties;
 - deterministic Sobol samples and reachable-foot support shape;
 - conservative/approximate range diagnostics;
+- envelope-conditioned narrowing and empty-range behavior, effective limits,
+  batched allowed support, and Cartesian-box envelope violations;
 - `[B,8]`, `[B,6,2]`, and `[B,83]` contracts plus simulator/legacy remapping.
 
 Run from `legged_gym/legged_gym`:
@@ -130,7 +142,7 @@ Run from `legged_gym/legged_gym`:
 /home/user/miniforge3/envs/isaacgym/bin/python tests/test_kinematic_envelope.py
 ```
 
-The recorded run passed 7/7 tests in 0.104 s. The symmetry golden check has a
+The revised recorded run passed 10/10 tests. The symmetry golden check has a
 5 um tolerance and the float32/float64 support check has a 2e-6 m tolerance.
 CUDA parity was not executed in
 this task because the project GPU was reserved by `RL-SMOKE-002`; no CUDA claim
@@ -179,3 +191,5 @@ datum crosshair, and no gradients.
   representation recommendation.
 - No simulator rollout, checkpoint evaluation, GPU parity, or hardware safety
   validation is part of this CPU-only implementation task.
+- The module is a proposed utility and has not been integrated into the
+  EL4090 environment, observation computation, training loop, or deployment.

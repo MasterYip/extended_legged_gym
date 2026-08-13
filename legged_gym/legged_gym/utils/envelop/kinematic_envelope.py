@@ -74,6 +74,30 @@ class JointRangeExport:
     diagnostics: JointRangeDiagnostics
 
 
+@dataclass(frozen=True)
+class EnvelopeRangeDiagnostics:
+    candidate_samples: int
+    candidate_feasible_count: Tensor
+    validation_samples: int
+    validation_feasible_count: Tensor
+    false_exclusion_count: Tensor
+    box_validation_samples: int
+    box_envelope_violation_count: Tensor
+    box_envelope_violation_rate: Tensor
+    max_box_envelope_violation: Tensor
+    label: str
+
+
+@dataclass(frozen=True)
+class EnvelopeJointRangeExport:
+    lower: Tensor
+    upper: Tensor
+    center: Tensor
+    half_range: Tensor
+    valid: Tensor
+    diagnostics: EnvelopeRangeDiagnostics
+
+
 def _vec(text: Optional[str], default: Sequence[float]) -> Tuple[float, float, float]:
     values = default if text is None else tuple(float(value) for value in text.split())
     if len(values) != 3:
@@ -302,7 +326,7 @@ def reachable_foot_support(
     return projected.amax(dim=(-3, -2))
 
 
-def export_joint_ranges(
+def export_sample_bounding_ranges(
     feasible_samples: Tensor,
     validation_samples: Tensor,
     effective_lower: Tensor,
@@ -310,7 +334,7 @@ def export_joint_ranges(
     *,
     feasibility_tolerance: float = 0.0,
 ) -> JointRangeExport:
-    """Export an axis-aligned joint box with explicit empirical diagnostics.
+    """Low-level box around samples already classified as feasible by a caller.
 
     ``feasible_samples`` defines the box. ``validation_samples`` independently
     diagnoses whether registered feasible samples fall outside that box.
@@ -345,6 +369,107 @@ def export_joint_ranges(
         center=0.5 * (lower + upper),
         half_range=0.5 * (upper - lower),
         diagnostics=diagnostics,
+    )
+
+
+def export_envelope_joint_ranges(
+    kinematics: BatchedUrdfKinematics,
+    candidate_q: Tensor,
+    validation_q: Tensor,
+    directions: Tensor,
+    allowed_support: Tensor,
+    effective_lower: Tensor,
+    effective_upper: Tensor,
+    *,
+    capsules: Optional[Sequence[CapsuleProxy]] = None,
+    tolerance: float = 0.0,
+    box_validation_samples: int = 256,
+    box_validation_seed: int = 4090,
+) -> EnvelopeJointRangeExport:
+    """Derive and audit joint boxes under an occupied-support constraint.
+
+    Inputs use shapes ``[...,S,J]``, ``[...,V,J]``, and broadcastable
+    ``[...,K]``.  Returned ranges are NaN where no candidate is feasible.
+    Cartesian-box samples independently diagnose whether combinations inside
+    each exported axis-aligned box still satisfy the requested envelope.
+    """
+    if candidate_q.ndim < 2 or candidate_q.shape[-1] != kinematics.num_dof:
+        raise ValueError("candidate_q must be [...,S,J]")
+    if candidate_q.shape[-2] == 0:
+        raise ValueError("candidate_q must contain at least one sample")
+    if validation_q.ndim != candidate_q.ndim or validation_q.shape[:-2] != candidate_q.shape[:-2] or validation_q.shape[-1] != kinematics.num_dof:
+        raise ValueError("validation_q must be [...,V,J] with the same batch prefix")
+    if box_validation_samples < 1:
+        raise ValueError("box_validation_samples must be positive")
+    prefix = candidate_q.shape[:-2]
+    count = candidate_q.shape[-2]
+    validation_count = validation_q.shape[-2]
+    directions = directions.to(dtype=candidate_q.dtype, device=candidate_q.device)
+    allowed = torch.broadcast_to(
+        allowed_support.to(dtype=candidate_q.dtype, device=candidate_q.device),
+        (*prefix, directions.shape[0]),
+    )
+    proxies = default_el4090_capsules() if capsules is None else tuple(capsules)
+    effective_lower = torch.broadcast_to(effective_lower.to(candidate_q), (*prefix, kinematics.num_dof))
+    effective_upper = torch.broadcast_to(effective_upper.to(candidate_q), (*prefix, kinematics.num_dof))
+    if torch.any(effective_lower > effective_upper):
+        raise ValueError("effective_lower must not exceed effective_upper")
+    candidate_violation = capsule_support(kinematics, candidate_q, proxies, directions) - allowed.unsqueeze(-2)
+    candidate_in_limits = ((candidate_q >= effective_lower.unsqueeze(-2)) & (candidate_q <= effective_upper.unsqueeze(-2))).all(dim=-1)
+    candidate_feasible = (candidate_violation.amax(dim=-1) <= tolerance) & candidate_in_limits
+    feasible_count = candidate_feasible.sum(dim=-1)
+    valid = feasible_count > 0
+
+    inf = torch.tensor(torch.inf, dtype=candidate_q.dtype, device=candidate_q.device)
+    sample_lower = candidate_q.masked_fill(~candidate_feasible.unsqueeze(-1), inf).amin(dim=-2)
+    sample_upper = candidate_q.masked_fill(~candidate_feasible.unsqueeze(-1), -inf).amax(dim=-2)
+    lower = torch.maximum(sample_lower, effective_lower)
+    upper = torch.minimum(sample_upper, effective_upper)
+    nan = torch.tensor(torch.nan, dtype=candidate_q.dtype, device=candidate_q.device)
+    lower = torch.where(valid.unsqueeze(-1), lower, nan)
+    upper = torch.where(valid.unsqueeze(-1), upper, nan)
+
+    validation_violation = capsule_support(kinematics, validation_q, proxies, directions) - allowed.unsqueeze(-2)
+    validation_in_limits = ((validation_q >= effective_lower.unsqueeze(-2)) & (validation_q <= effective_upper.unsqueeze(-2))).all(dim=-1)
+    validation_feasible = (validation_violation.amax(dim=-1) <= tolerance) & validation_in_limits
+    inside_box = ((validation_q >= lower.unsqueeze(-2)) & (validation_q <= upper.unsqueeze(-2))).all(dim=-1)
+    false_exclusion = (validation_feasible & ~inside_box).sum(dim=-1)
+
+    engine = torch.quasirandom.SobolEngine(kinematics.num_dof, scramble=True, seed=box_validation_seed)
+    unit = engine.draw(box_validation_samples).to(dtype=candidate_q.dtype, device=candidate_q.device)
+    box_q = lower.unsqueeze(-2) + unit.reshape(*(1,) * len(prefix), box_validation_samples, -1) * (upper - lower).unsqueeze(-2)
+    box_violation = capsule_support(kinematics, box_q, proxies, directions) - allowed.unsqueeze(-2)
+    per_box_sample = box_violation.amax(dim=-1)
+    box_bad = (per_box_sample > tolerance) & valid.unsqueeze(-1)
+    box_bad_count = box_bad.sum(dim=-1)
+    max_box_violation = torch.where(
+        valid,
+        per_box_sample.amax(dim=-1).clamp_min(0.0),
+        nan,
+    )
+    conservative = bool(valid.all().item()) and int(box_bad_count.sum().item()) == 0
+    if not bool(valid.all().item()):
+        label = "empty: no feasible candidate samples in one or more batches"
+    else:
+        label = "conservative on registered box-validation samples" if conservative else "approximate"
+    return EnvelopeJointRangeExport(
+        lower=lower,
+        upper=upper,
+        center=0.5 * (lower + upper),
+        half_range=0.5 * (upper - lower),
+        valid=valid,
+        diagnostics=EnvelopeRangeDiagnostics(
+            candidate_samples=count,
+            candidate_feasible_count=feasible_count,
+            validation_samples=validation_count,
+            validation_feasible_count=validation_feasible.sum(dim=-1),
+            false_exclusion_count=false_exclusion,
+            box_validation_samples=box_validation_samples,
+            box_envelope_violation_count=box_bad_count,
+            box_envelope_violation_rate=box_bad_count.to(candidate_q.dtype) / box_validation_samples,
+            max_box_envelope_violation=max_box_violation,
+            label=label,
+        ),
     )
 
 
@@ -402,7 +527,7 @@ def legacy_condition_from_support(
 
 
 def haa_ranges_from_joint_export(
-    export: JointRangeExport,
+    export: JointRangeExport | EnvelopeJointRangeExport,
     joint_names: Sequence[str] = EL4090_JOINT_NAMES,
     output_leg_order: Sequence[str] = EL4090_LEG_NAMES,
 ) -> Tensor:

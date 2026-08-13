@@ -134,16 +134,80 @@ class TestKinematicEnvelope(unittest.TestCase):
         lower = torch.full((18,), -2.7)
         upper = torch.full((18,), 2.7)
         train = KE.deterministic_joint_samples(lower, upper, 128, seed=2)
-        export = KE.export_joint_ranges(train, train[2:], lower, upper)
+        export = KE.export_sample_bounding_ranges(train, train[2:], lower, upper)
         self.assertEqual(export.lower.shape, (18,))
         self.assertTrue(torch.all(export.half_range >= 0))
         self.assertTrue(export.diagnostics.conservative_on_validation)
         outside = train[2:].clone()
         outside[0, 0] = 2.8
-        approximate = KE.export_joint_ranges(train, outside, lower, upper)
+        approximate = KE.export_sample_bounding_ranges(train, outside, lower, upper)
         self.assertFalse(approximate.diagnostics.conservative_on_validation)
         self.assertEqual(approximate.diagnostics.label, "approximate")
         self.assertGreater(approximate.diagnostics.violation_rate, 0.0)
+
+    def test_envelope_conditioned_ranges_narrow_and_become_empty(self):
+        lower = torch.full((18,), -0.8)
+        upper = torch.full((18,), 0.8)
+        candidates = KE.deterministic_joint_samples(lower, upper, 257, seed=21)
+        validation = KE.deterministic_joint_samples(lower, upper, 129, seed=22)
+        directions = KE.support_directions(32)
+        zero_support = KE.capsule_support(
+            self.kin, torch.zeros(1, 18), KE.default_el4090_capsules(), directions,
+        )[0]
+        loose = KE.export_envelope_joint_ranges(
+            self.kin, candidates, validation, directions, zero_support + 0.30,
+            lower, upper, box_validation_samples=64,
+        )
+        tight = KE.export_envelope_joint_ranges(
+            self.kin, candidates, validation, directions, zero_support + 0.15,
+            lower, upper, box_validation_samples=64,
+        )
+        empty = KE.export_envelope_joint_ranges(
+            self.kin, candidates, validation, directions, zero_support - 0.001,
+            lower, upper, box_validation_samples=64,
+        )
+        self.assertGreater(int(loose.diagnostics.candidate_feasible_count), int(tight.diagnostics.candidate_feasible_count))
+        self.assertLessEqual(float(tight.half_range.sum()), float(loose.half_range.sum()))
+        self.assertFalse(bool(empty.valid))
+        self.assertTrue(torch.isnan(empty.lower).all())
+        self.assertIn("empty", empty.diagnostics.label)
+
+    def test_envelope_export_detects_infeasible_cartesian_combinations(self):
+        candidate = torch.zeros(2, 18)
+        indices = torch.tensor([4, 17, 11, 15])
+        candidate[0, indices] = torch.tensor([1.3475, 1.0420, 1.1246, 0.4449])
+        candidate[1, indices] = torch.tensor([-0.8557, 1.3479, -1.4637, -0.9574])
+        directions = KE.support_directions(32)
+        allowed = KE.capsule_support(self.kin, candidate, KE.default_el4090_capsules(), directions).amax(dim=0) + 1e-6
+        lower, upper = self.kin.joint_limits(soft_fraction=0.9)
+        export = KE.export_envelope_joint_ranges(
+            self.kin, candidate, candidate, directions, allowed, lower, upper,
+            box_validation_samples=256, box_validation_seed=7,
+        )
+        self.assertEqual(int(export.diagnostics.candidate_feasible_count), 2)
+        self.assertEqual(int(export.diagnostics.validation_feasible_count), 2)
+        self.assertEqual(int(export.diagnostics.false_exclusion_count), 0)
+        self.assertGreater(int(export.diagnostics.box_envelope_violation_count), 0)
+        self.assertGreater(float(export.diagnostics.max_box_envelope_violation), 0.001)
+        self.assertEqual(export.diagnostics.label, "approximate")
+
+    def test_envelope_export_batches_allowed_support_and_effective_limits(self):
+        lower = torch.full((18,), -0.4)
+        upper = torch.full((18,), 0.4)
+        candidates = KE.deterministic_joint_samples(lower, upper, 33, seed=4).repeat(2, 1, 1)
+        candidates[0, 0, 0] = 0.5
+        directions = KE.support_directions(16)
+        support = KE.capsule_support(self.kin, torch.zeros(2, 18), KE.default_el4090_capsules(), directions)
+        export = KE.export_envelope_joint_ranges(
+            self.kin, candidates, candidates[:, 1:], directions,
+            support + torch.tensor([[0.30], [0.15]]), lower, upper,
+            box_validation_samples=16,
+        )
+        self.assertEqual(export.lower.shape, (2, 18))
+        self.assertEqual(export.diagnostics.candidate_feasible_count.shape, (2,))
+        self.assertLessEqual(int(export.diagnostics.candidate_feasible_count[0]), 32)
+        self.assertTrue(torch.all(export.lower >= lower))
+        self.assertTrue(torch.all(export.upper <= upper))
 
     def test_legacy_contract_and_haa_remap(self):
         batch = 5
@@ -157,7 +221,7 @@ class TestKinematicEnvelope(unittest.TestCase):
         self.assertTrue(torch.all(condition[:, :5] <= condition.new_tensor((0.60, 0.60, 0.60, 0.60, -0.25))))
         lower, upper = self.kin.joint_limits(soft_fraction=0.9)
         samples = KE.deterministic_joint_samples(lower, upper, 32)
-        export = KE.export_joint_ranges(samples, samples, lower, upper)
+        export = KE.export_sample_bounding_ranges(samples, samples, lower, upper)
         haa = KE.haa_ranges_from_joint_export(export)
         self.assertEqual(haa.shape, (6, 2))
         haa_batch = haa.unsqueeze(0).repeat(batch, 1, 1)
@@ -177,7 +241,7 @@ class TestKinematicEnvelope(unittest.TestCase):
         reflected_indices = torch.remainder(-torch.arange(64), 64)
         self.assertLess(float((symmetric - symmetric[reflected_indices]).abs().max()), 5e-6)
 
-        batched = KE.export_joint_ranges(samples.repeat(batch, 1, 1), samples.repeat(batch, 1, 1), lower, upper)
+        batched = KE.export_sample_bounding_ranges(samples.repeat(batch, 1, 1), samples.repeat(batch, 1, 1), lower, upper)
         self.assertEqual(KE.haa_ranges_from_joint_export(batched).shape, (batch, 6, 2))
 
 
