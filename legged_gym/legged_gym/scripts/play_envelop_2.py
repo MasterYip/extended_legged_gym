@@ -203,8 +203,28 @@ def _transition_condition(start, target, step, transition_steps):
     return torch.lerp(start, target, float(blend))
 
 
+def _random_command(env):
+    range_names = ("lin_vel_x", "lin_vel_y", "ang_vel_yaw")
+    return torch.tensor(
+        [
+            float(low) + torch.rand(1).item() * (float(high) - float(low))
+            for low, high in (env.command_ranges[name] for name in range_names)
+        ],
+        dtype=torch.float32,
+        device=env.device,
+    )
+
+
+def _print_command(command, label):
+    print(
+        f"  {label}: vx={command[0].item():.3f} m/s  "
+        f"vy={command[1].item():.3f} m/s  yaw={command[2].item():.3f} rad/s"
+    )
+
+
 def _new_morphology_cycle(env, *, diverse=False):
     insect = _all_insect_condition(env)
+    initial_command = torch.tensor([1.2, 0.0, 0.0], dtype=torch.float32, device=env.device)
     return {
         "step": 0,
         "half_steps": max(1, int(round(MORPHOLOGY_CYCLE_HALF_DURATION_S / env.dt))),
@@ -214,6 +234,9 @@ def _new_morphology_cycle(env, *, diverse=False):
         "start": insect,
         "target": _random_envelope_condition(env) if diverse else None,
         "target_index": 1,
+        "command_start": initial_command,
+        "command_target": _random_command(env) if diverse else None,
+        "vary_command": diverse,
     }
 
 
@@ -336,7 +359,7 @@ def play(args):
         export_policy_as_jit(ppo_runner.alg.policy, export_path)
         print("Exported policy as jit script to:", export_path)
 
-    command = {"x": 1.2, "y": 0.0, "yaw": 0.0}
+    command = torch.tensor([1.2, 0.0, 0.0], dtype=torch.float32, device=env.device)
     morphology_cycle = _new_morphology_cycle(env, diverse=True) if args.cycle_envelope else None
     camera_mode_index = 0
     camera_state = None
@@ -349,6 +372,7 @@ def play(args):
     if morphology_cycle is not None:
         active_condition = _apply_envelope(env, morphology_cycle["start"])
         _print_envelope_state(env, "多样包络序列开始")
+        _print_command(command, "初始运动指令")
 
     keyboard = KeyboardInput()
     keyboard.__enter__()
@@ -370,19 +394,19 @@ def play(args):
                 if key == "\x1b":
                     should_exit = True
                 elif key == "w":
-                    command["x"] = 1.2
+                    command[0] = 1.2
                 elif key == "s":
-                    command["x"] = -1.2
+                    command[0] = -1.2
                 elif key == "a":
-                    command["y"] = 0.8
+                    command[1] = 0.8
                 elif key == "d":
-                    command["y"] = -0.8
+                    command[1] = -0.8
                 elif key == "q":
-                    command["yaw"] = 0.8
+                    command[2] = 0.8
                 elif key == "e":
-                    command["yaw"] = -0.8
+                    command[2] = -0.8
                 elif key == "x":
-                    command = {"x": 0.0, "y": 0.0, "yaw": 0.0}
+                    command.zero_()
                 elif key == "m":
                     morphology_cycle = None
                     active_condition = _apply_envelope(env, _maximum_envelope_condition(env))
@@ -404,6 +428,9 @@ def play(args):
                     camera_state["position"] = None
                     print(f"\n摄像头视角: {CAMERA_MODE_NAMES[CAMERA_MODES[camera_mode_index]]}")
 
+                if key in "wsadqex" and morphology_cycle is not None:
+                    morphology_cycle["vary_command"] = False
+
             if should_exit:
                 break
 
@@ -411,6 +438,13 @@ def play(args):
                 cycle_step = morphology_cycle["step"]
                 half_steps = morphology_cycle["half_steps"]
                 if morphology_cycle["diverse"]:
+                    if morphology_cycle["vary_command"]:
+                        command = _transition_condition(
+                            morphology_cycle["command_start"],
+                            morphology_cycle["command_target"],
+                            cycle_step,
+                            half_steps,
+                        )
                     active_condition = _apply_envelope(
                         env,
                         _transition_condition(
@@ -426,6 +460,15 @@ def play(args):
                             env,
                             f"多样包络目标 {morphology_cycle['target_index']}",
                         )
+                        if morphology_cycle["vary_command"]:
+                            _print_command(
+                                morphology_cycle["command_target"],
+                                f"运动指令目标 {morphology_cycle['target_index']}",
+                            )
+                            morphology_cycle["command_start"] = morphology_cycle[
+                                "command_target"
+                            ]
+                            morphology_cycle["command_target"] = _random_command(env)
                         morphology_cycle["start"] = morphology_cycle["target"]
                         morphology_cycle["target"] = _random_envelope_condition(env)
                         morphology_cycle["target_index"] += 1
@@ -451,9 +494,7 @@ def play(args):
                     else:
                         morphology_cycle["step"] += 1
 
-            env.commands[:, 0] = command["x"]
-            env.commands[:, 1] = command["y"]
-            env.commands[:, 2] = command["yaw"]
+            env.commands[:, :3] = command
             actions = policy(obs.detach())
             obs, _, _, dones, _ = env.step(actions.detach())
             completed_steps += 1
@@ -491,7 +532,7 @@ if __name__ == "__main__":
                 "name": "--cycle_envelope",
                 "action": "store_true",
                 "default": False,
-                "help": "Continuously interpolate through diverse random envelope targets.",
+                "help": "Continuously interpolate through diverse envelope and motion-command targets.",
             },
         ]
     )
