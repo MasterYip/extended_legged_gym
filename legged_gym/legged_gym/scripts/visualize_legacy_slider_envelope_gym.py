@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -51,7 +52,9 @@ class SliderResult:
     parameters: tuple[float, ...]
     border_vertices_xy: torch.Tensor
     problem: LidarProblem
-    trajectory: object
+    # None when the resting pose cannot satisfy this envelope; the viewer then
+    # freezes at the resting pose and shows the red violation.
+    trajectory: object | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -131,8 +134,9 @@ def compute_result(kinematics, context, values, args, generation):
         cloud, directions, point_clearance=args.point_clearance,
         cap_support=context["reference_support"],
     )
-    if float((context["baseline_support"] - free_envelope.support_m).max()) > TOLERANCE:
-        raise ValueError("ZhangHT border is too small for the feasible capsule anchor")
+    # The envelope is computed from the live border unconditionally. A border
+    # that cannot contain the resting pose is a real, visualized condition
+    # (red capsule, frozen motion), not a reason to retain the previous result.
     export = export_envelope_joint_ranges(
         kinematics, context["candidate_q"], context["validation_q"], directions,
         free_envelope.support_m, context["lower"], context["upper"],
@@ -140,8 +144,6 @@ def compute_result(kinematics, context, values, args, generation):
         box_validation_samples=args.box_validation_samples,
         box_validation_seed=args.seed + 300,
     )
-    if not bool(export.valid):
-        raise RuntimeError("slider border produced no feasible exported joint range")
     feasible = (
         capsule_support(
             kinematics, context["candidate_q"], context["capsules"], directions,
@@ -168,9 +170,20 @@ def compute_result(kinematics, context, values, args, generation):
         required_candidate_reduction_fraction=0.0,
         required_joint_shrink_rad=0.0,
     )
-    trajectory = build_motion_trajectory(
-        problem, kinematics, directions, args.motion_period_steps,
-    )
+    resting_inside = float(
+        (context["baseline_support"] - free_envelope.support_m).max()
+    ) <= TOLERANCE
+    if bool(export.valid) and resting_inside:
+        try:
+            trajectory = build_motion_trajectory(
+                problem, kinematics, directions, args.motion_period_steps,
+            )
+        except (ValueError, RuntimeError):
+            # Exported ranges are still shown even when no smooth motion fits;
+            # the viewer then freezes at the resting pose.
+            trajectory = None
+    else:
+        trajectory = None
     return SliderResult(
         parameters=tuple(float(value) for value in parameters),
         border_vertices_xy=legacy_border_vertices(parameters),
@@ -181,12 +194,15 @@ def compute_result(kinematics, context, values, args, generation):
 
 def result_summary(result):
     diagnostics = result.problem.range_export.diagnostics
+    motion = (
+        f"fixed motion scale {float(result.trajectory.accepted_scale[0]):.4f}"
+        if result.trajectory is not None else "motion frozen"
+    )
     return (
         f"feasible {int(diagnostics.candidate_feasible_count)}/"
         f"{diagnostics.candidate_samples}; box violations "
         f"{int(diagnostics.box_envelope_violation_count)}/"
-        f"{diagnostics.box_validation_samples}; fixed motion scale "
-        f"{float(result.trajectory.accepted_scale[0]):.4f}"
+        f"{diagnostics.box_validation_samples}; {motion}"
     )
 
 
@@ -319,12 +335,22 @@ class SliderPanel:
         upper = result.problem.range_export.upper
         for leg in EL4090_LEG_NAMES:
             indices = [EL4090_JOINT_NAMES.index(f"{leg}_{joint}") for joint in ("HAA", "HFE", "KFE")]
-            pieces = [
-                f"{joint} [{float(lower[index]):+.3f}, {float(upper[index]):+.3f}]"
-                for joint, index in zip(("HAA", "HFE", "KFE"), indices)
-            ]
+            pieces = []
+            for joint, index in zip(("HAA", "HFE", "KFE"), indices):
+                lo, hi = float(lower[index]), float(upper[index])
+                if math.isnan(lo) or math.isnan(hi):
+                    pieces.append(f"{joint} infeasible")
+                else:
+                    pieces.append(f"{joint} [{lo:+.3f}, {hi:+.3f}]")
             self.range_labels[leg].set(f"{leg}  " + "   ".join(pieces))
-        self.status.set(f"{result_summary(result)}; recompute {elapsed_ms:.1f} ms")
+        motion = (
+            "motion frozen: resting pose outside envelope"
+            if result.trajectory is None else ""
+        )
+        suffix = f"; {motion}" if motion else ""
+        self.status.set(
+            f"{result_summary(result)}; recompute {elapsed_ms:.1f} ms{suffix}",
+        )
         self.applied_generation = self.requested_generation
 
     def update_error(self, message):
@@ -382,8 +408,11 @@ def main():
     print("ZhangHT border point source -> unchanged LiDAR envelope model")
     print(f"  {result_summary(result)}")
     if args.compute_only:
-        cyclic = torch.cat((result.trajectory.joint_positions, result.trajectory.joint_positions[:1]))
-        print(f"  maximum cyclic joint step {float(torch.diff(cyclic, dim=0).abs().max()):.6f} rad")
+        if result.trajectory is not None:
+            cyclic = torch.cat((result.trajectory.joint_positions, result.trajectory.joint_positions[:1]))
+            print(f"  maximum cyclic joint step {float(torch.diff(cyclic, dim=0).abs().max()):.6f} rad")
+        else:
+            print("  motion frozen: resting pose outside the envelope")
         return
 
     panel = SliderPanel()
@@ -399,16 +428,10 @@ def main():
     history = []
     captured = False
     step = 0
-    # All sweep targets are accepted by the envelope export so the bounded run
-    # exercises real slider recomputes (the prior midpoint target was rejected
-    # and only exercised the retained-envelope fallback).
-    sweep = (
-        LEGACY_MAXIMUM,
-        (0.50, 0.70, 0.60, 0.90, -0.90),
-        (0.60, 0.70, 0.60, 0.80, -0.90),
-        (0.60, 0.70, 0.45, 0.90, -0.90),
-        LEGACY_MAXIMUM,
-    )
+    # The sweep exercises all three regimes: an accepted border (MAX), a
+    # moderately small border that admits some poses but not the resting one,
+    # and a very small border with no feasible pose. All recompute live now.
+    sweep = (LEGACY_MAXIMUM, (0.55, 0.62, 0.55, 0.85, -0.85), LEGACY_MIDPOINT)
     try:
         while panel.running and not gym.query_viewer_has_closed(viewer):
             panel.pump()
@@ -454,20 +477,29 @@ def main():
                         "elapsed_ms": elapsed_ms,
                     })
                     print(f"  update {len(history)}: {result_summary(result)}; {elapsed_ms:.1f} ms")
-            _, pose, naive_excess, accepted = accepted_motion_pose(
-                result.trajectory, state["motion_step"],
-            )
-            update_stats(stats, result.problem, pose, naive_excess, accepted)
+            if result.trajectory is not None:
+                _, pose, naive_excess, accepted = accepted_motion_pose(
+                    result.trajectory, state["motion_step"],
+                )
+                update_stats(stats, result.problem, pose, naive_excess, accepted)
+                violation = (
+                    float(accepted.envelope_excess_m[0]) > TOLERANCE
+                    or float(accepted.joint_excess_rad[0]) > TOLERANCE
+                )
+            else:
+                # Infeasible border: show the resting pose against the fresh
+                # envelope so the red violation is visible, and freeze motion.
+                pose = result.problem.baseline_q
+                naive_excess = 0.0
+                violation = True
             apply_pose(gym, env, actor, q_indices, pose)
-            violation = (
-                float(accepted.envelope_excess_m[0]) > TOLERANCE
-                or float(accepted.joint_excess_rad[0]) > TOLERANCE
-            )
             live_border, live_cloud = live_point_source(
                 panel.snapshot(), context, args, panel.requested_generation,
             )
             scene_state = dict(state)
             scene_state["lidar"] = False  # the point source is drawn live below
+            if not bool(result.problem.range_export.valid):
+                scene_state["haa"] = False  # empty ranges are NaN and must not be drawn
             draw_lidar_scene(
                 gym, viewer, env, kinematics, context["directions"],
                 result.problem, pose, scene_state, violation,
@@ -493,7 +525,7 @@ def main():
                 write_evidence(gym, viewer, args.screenshot, result, state, stats, history, step)
                 panel.capture_requested = False
                 captured = True
-            if state["motion"]:
+            if result.trajectory is not None and state["motion"]:
                 state["motion_step"] += 1
             step += 1
             if args.max_steps > 0 and step >= args.max_steps:
