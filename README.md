@@ -32,3 +32,53 @@ https://github.com/user-attachments/assets/f9a9bcac-ec0e-4ffe-bc07-01bdd7ab75f7
   - gym_visualizer integration
   - benchmarking tools
   - etc.
+
+## EL4090 Envelope Visualization
+
+The standalone LiDAR example generates a sparse 2D point cloud, computes the
+maximum point-free envelope in the declared capped polygon family, exports
+admissible joint intervals, and animates an EL4090 pose that satisfies both the
+joint and envelope constraints. It does not load an RL checkpoint.
+
+Run from the repository root:
+
+```bash
+cd legged_gym
+conda activate isaacgym
+python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
+  --seed 4090 \
+  --point_count 20 \
+  --directions 48 \
+  --near_band_fraction 0.12
+```
+
+### LiDAR example parameters
+
+| Parameter | Default | Meaning |
+| --- | ---: | --- |
+| `--seed` | `4090` | Deterministic cloud seed. Pressing `G` increments it and regenerates the cloud and envelope. |
+| `--point_count` | `20` | Number of synthetic returns. Counts up to the direction count use unique sectors; six sectors near the lateral axes are reserved to constrain the middle-leg workspaces. |
+| `--directions` | `48` | Number of fixed polygon support normals. Must be at least 8. Faces without a return retain the pre-obstacle reachable-support cap. |
+| `--near_band_fraction` | `0.12` | Maximum fraction of the feasible radial annulus used by primary returns. In $r=r^-+\alpha(r^+-r^-)$, this bounds $\alpha$. Reduce it to move points closer to the robot; lateral anchors use at most 35% of this value. Valid range: $(0,1]$. |
+| `--robot_clearance` | `0.05` m | Minimum assigned-normal clearance between each return and the baseline occupied envelope. This is the hard lower-distance control; reducing it permits physically closer points. |
+| `--point_clearance` | `0.02` m | Required separation between a return and its active prescribed-envelope face. It must remain smaller than `--robot_clearance`. |
+| `--reference_containment_margin` | `0.005` m | Inward margin applied to the pre-obstacle reachable reference when generating returns. Must be positive. |
+| `--min_radius` / `--max_radius` | `0.0` / `2.10` m | Global radial bounds. The robot-clearance and reachable-reference constraints can tighten these bounds per ray. |
+| `--min_candidate_reduction_fraction` | `0.05` | Minimum fraction of unconstrained joint candidates that the generated envelope must reject. |
+| `--min_joint_shrink_rad` | `0.03` rad | Required minimum shrinkage of at least one exported joint interval. |
+| `--motion_period_steps` | `120` | Simulator steps per deterministic joint-motion cycle. |
+| `--max_steps` | `0` | Viewer lifetime in steps. `0` is interactive; a positive value runs a bounded validation and exits naturally. |
+| `--compute_only` | off | Compute geometry and run the motion compliance sweep without creating a viewer. |
+| `--no_motion` | off | Start with joint and occupied-envelope animation paused; press `M` to resume. |
+| `--screenshot` | unset | External PNG output path. A matching JSON evidence file is written beside it; paths inside this repository are rejected. |
+| `--screenshot_step` | `5` | Frame used for automatic capture when `--screenshot` is configured. Set it below `--max_steps` for bounded runs. |
+| `--compute_device_id` / `--graphics_device_id` | `0` / `0` | Isaac Gym compute and rendering device indices. |
+
+To move points closer without changing the declared 0.05 m robot clearance,
+reduce only `--near_band_fraction`, for example to `0.06`. Reducing
+`--robot_clearance` changes the safety contract itself.
+
+The viewer uses two vertically offset strokes for every envelope, LiDAR, and
+HAA line primitive. See the complete [envelope visualization guide](legged_gym/doc/envelope_visualization.md)
+for bounded runs, evidence capture, controls, color semantics, and
+troubleshooting.
