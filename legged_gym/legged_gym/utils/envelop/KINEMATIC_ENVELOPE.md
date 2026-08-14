@@ -193,15 +193,20 @@ LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
   scripts/visualize_kinematic_envelope_gym.py --compute_only
 ```
 
-Run a bounded GPU-0 viewer smoke and retain one screenshot plus matching JSON:
+Run a bounded GPU-0 viewer smoke and write one screenshot plus matching JSON
+outside this repository:
 
 ```bash
 LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
 /home/user/miniforge3/envs/isaacgym/bin/python \
   scripts/visualize_kinematic_envelope_gym.py \
   --compute_device_id 0 --graphics_device_id 0 --max_steps 30 \
-  --screenshot utils/envelop/evidence/isaac_gym_envelope_demo.png
+  --screenshot /tmp/isaac_gym_envelope_demo.png
 ```
+
+Generated captures and numeric evidence are task-owned artifacts. Keep them in
+the task record or another external results location, never in the
+`extended_legged_gym` Git repository.
 
 ## Limitations
 
