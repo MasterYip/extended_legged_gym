@@ -223,10 +223,43 @@ the task record or another external results location, never in the
 ## LiDAR-derived point-free envelope demo
 
 `scripts/visualize_lidar_free_envelope_gym.py` demonstrates the complete
-LiDAR-to-motion contract on one real, fixed-base EL4090 model. A deterministic
-synthetic scan provides full angular-sector coverage, three near-return
-clusters, and two farther gaps. Arguments expose the seed, return count, radius
-bounds, minimum robot clearance, and prescribed point clearance.
+LiDAR-to-motion contract on one real, fixed-base EL4090 model. Before generating
+obstacles, it samples the declared unconstrained joint box $Q_0$ and computes a
+pre-obstacle reachable-foot reference
+
+$$
+h_k^{\mathrm{ref}}=
+\max_{q\in Q_0,\ell\in\mathcal L}u_k^\top f_\ell(q).
+$$
+
+This order avoids defining the reference from already constrained candidates.
+A deterministic synthetic scan then provides full angular-sector coverage,
+three near-return clusters, and two farther gaps. Arguments expose the seed,
+return count, radius bounds, minimum robot clearance, point clearance,
+reference-containment margin, and material-impact thresholds.
+
+For ray unit vector $v_i$, the feasible radial annulus is resolved from the
+baseline occupied support and every face of the eroded reference polygon:
+
+$$
+r_i^-=
+\max\left\{r_{\min},
+\frac{h_{s(i)}^{\mathrm{occ}}(q_0)+d_{\mathrm{robot}}}
+{u_{s(i)}^\top v_i}\right\},
+$$
+
+$$
+r_i^+=
+\min\left\{r_{\max},
+\min_{k:u_k^\top v_i>0}
+\frac{h_k^{\mathrm{ref}}-d_{\mathrm{ref}}}{u_k^\top v_i}
+\right\}.
+$$
+
+The generator fails with the affected sector indices when $r_i^-\ge r_i^+$.
+Thus every generated return is outside the baseline capsule envelope by the
+declared clearance and inside the pre-obstacle reachable polygon by a numeric
+inward margin.
 
 Let normalized fixed normals be $u_k$, and assign each return $p_i$ to its
 nearest angular sector $s(i)$. The example declares the restricted polygon
@@ -264,10 +297,17 @@ q^-\le q(t)\le q^+,
 h_k^{\mathrm{occ}}(q(t))\le h_k^\star\quad\forall k.
 $$
 
+The default build additionally requires at least 5% of unconstrained candidates
+to be rejected and at least one exported joint interval to shrink by 0.03 rad.
+It records the achieved candidate-reduction fraction and all 18 interval
+shrinkages. These are example acceptance thresholds, not global guarantees.
+
 Light cyan means the prescribed LiDAR-derived envelope; dark teal means the
 current occupied capsule envelope. White crosses are returns, cyan spokes mark
 active limiting clearances, amber shows physical HAA ranges, and muted blue is
-the optional reachable-foot layer. Red is reserved for a true violation.
+the pre-obstacle unconstrained reachable reference. The blue layer is visible
+by default, so the lost blue-to-cyan free space and white returns inside it are
+directly inspectable. Red is reserved for a true violation.
 Controls are printed at launch: `G` regenerates with the next seed; `M`
 pauses motion; `X` resets phase; `L`, `P`, `O`, `H`, and `R` toggle
 layers; `C` changes camera; `S` captures; and Esc exits.
@@ -284,20 +324,21 @@ LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
 Run the bounded GPU viewer, keeping generated output outside this repository:
 
 ```bash
-mkdir -p /tmp/ENV-DESIGN-003-lidar
+mkdir -p /tmp/ENV-DESIGN-003-lidar-v2
 LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
 /home/user/miniforge3/envs/isaacgym/bin/python \
   scripts/visualize_lidar_free_envelope_gym.py \
   --compute_device_id 0 --graphics_device_id 0 \
   --seed 4090 --point_count 192 --directions 48 \
   --max_steps 180 --motion_period_steps 120 --screenshot_step 179 \
-  --screenshot /tmp/ENV-DESIGN-003-lidar/lidar_free_envelope.png
+  --screenshot /tmp/ENV-DESIGN-003-lidar-v2/lidar_free_envelope.png
 ```
 
-The matching JSON records scan parameters, active limiting returns, prescribed
-support and vertices, exported ranges for all 18 joints, visible-layer
-semantics, and motion compliance. The viewer aborts if an accepted frame
-exceeds either its joint interval or occupied-envelope support.
+The matching JSON records scan parameters, ray annuli, reference containment,
+active limiting returns, reference and prescribed supports and vertices,
+candidate rejection, per-joint shrinkage, exported ranges for all 18 joints,
+visible-layer semantics, and motion compliance. The viewer aborts if an
+accepted frame exceeds either its joint interval or occupied-envelope support.
 
 ## Limitations
 

@@ -21,6 +21,9 @@ class SyntheticLidarCloud:
     min_radius_m: float
     max_radius_m: float
     robot_clearance_m: float
+    reference_containment_margin_m: float
+    ray_inner_radius_m: Tensor
+    ray_outer_radius_m: Tensor
 
 
 @dataclass(frozen=True)
@@ -49,37 +52,52 @@ def _wrapped_angle_delta(angles: Tensor, centers: Tensor) -> Tensor:
 def generate_synthetic_lidar_cloud(
     directions: Tensor,
     baseline_support: Tensor,
+    reference_reachable_support: Tensor,
     *,
     count: int,
     seed: int,
     min_radius: float,
     max_radius: float,
     robot_clearance: float,
+    reference_containment_margin: float,
 ) -> SyntheticLidarCloud:
-    """Generate full-coverage returns with near clusters and far gaps.
+    """Generate full-coverage returns inside a pre-obstacle reachable polygon.
 
     Every normal sector receives at least one return. Three angular clusters
     pull returns inward while two gap directions push returns outward. The
     assigned-normal separation from the baseline support polygon is at least
-    ``robot_clearance``.
+    ``robot_clearance``. Each ray's upper radius is resolved from the
+    pre-obstacle reachable polygon, independently of the constrained export.
     """
     if directions.ndim != 2 or directions.shape[1] != 2:
         raise ValueError("directions must have shape [K,2]")
     sectors = directions.shape[0]
     if baseline_support.shape != (sectors,):
         raise ValueError("baseline_support must match the direction count")
+    if reference_reachable_support.shape != (sectors,):
+        raise ValueError("reference_reachable_support must match the direction count")
     if count < sectors:
         raise ValueError("point count must cover every angular sector")
-    if min_radius <= 0.0 or max_radius <= min_radius:
-        raise ValueError("radius bounds must satisfy 0 < min < max")
+    if min_radius < 0.0 or max_radius <= min_radius:
+        raise ValueError("radius bounds must satisfy 0 <= min < max")
     if robot_clearance <= 0.0:
         raise ValueError("robot_clearance must be positive")
+    if reference_containment_margin <= 0.0:
+        raise ValueError("reference_containment_margin must be positive")
+    eroded_reference = reference_reachable_support - reference_containment_margin
+    if bool((eroded_reference <= 0.0).any()):
+        raise ValueError("reference containment margin erodes through the origin")
 
     generator = torch.Generator(device=directions.device).manual_seed(int(seed))
     sector_indices = torch.arange(count, device=directions.device) % sectors
     sector_angles = torch.atan2(directions[:, 1], directions[:, 0])
     sector_width = 2.0 * torch.pi / sectors
-    jitter = (torch.rand(count, generator=generator, dtype=directions.dtype, device=directions.device) - 0.5) * (0.70 * sector_width)
+    jitter = (
+        torch.rand(
+            count, generator=generator, dtype=directions.dtype,
+            device=directions.device,
+        ) - 0.5
+    ) * (0.24 * sector_width)
     angles = sector_angles[sector_indices] + jitter
     unit = torch.stack((torch.cos(angles), torch.sin(angles)), dim=-1)
     assigned_projection_scale = (unit * directions[sector_indices]).sum(dim=-1)
@@ -89,13 +107,33 @@ def generate_synthetic_lidar_cloud(
     cluster_strength = torch.exp(-0.5 * (_wrapped_angle_delta(angles, cluster_centers) / 0.34) ** 2).amax(dim=1)
     gap_strength = torch.exp(-0.5 * (_wrapped_angle_delta(angles, gap_centers) / 0.28) ** 2).amax(dim=1)
     noise = torch.rand(count, generator=generator, dtype=directions.dtype, device=directions.device)
-    radial_fraction = torch.clamp(0.58 - 0.34 * cluster_strength + 0.28 * gap_strength + 0.10 * (noise - 0.5), 0.08, 0.95)
+    radial_fraction = torch.clamp(
+        0.16 - 0.11 * cluster_strength + 0.42 * gap_strength
+        + 0.08 * (noise - 0.5),
+        0.03,
+        0.68,
+    )
 
     required_radius = (baseline_support[sector_indices] + robot_clearance) / assigned_projection_scale
     inner_radius = torch.maximum(required_radius, torch.full_like(required_radius, min_radius))
-    if bool((inner_radius >= max_radius).any()):
-        raise ValueError("max_radius cannot provide the requested baseline clearance")
-    radii = inner_radius + radial_fraction * (max_radius - inner_radius)
+    all_projection_scale = unit @ directions.T
+    radial_caps = torch.where(
+        all_projection_scale > 1e-7,
+        eroded_reference.unsqueeze(0) / all_projection_scale.clamp_min(1e-7),
+        torch.full_like(all_projection_scale, torch.inf),
+    )
+    polygon_outer_radius = radial_caps.amin(dim=-1)
+    outer_radius = torch.minimum(
+        polygon_outer_radius, torch.full_like(polygon_outer_radius, max_radius),
+    )
+    infeasible = inner_radius >= outer_radius
+    if bool(infeasible.any()):
+        failed = torch.unique(sector_indices[infeasible]).detach().cpu().tolist()
+        raise ValueError(
+            "no feasible LiDAR annulus between baseline clearance and the "
+            f"eroded reference reachable polygon for sectors {failed}"
+        )
+    radii = inner_radius + radial_fraction * (outer_radius - inner_radius)
     points = radii[:, None] * unit
     return SyntheticLidarCloud(
         points_xy=points,
@@ -106,7 +144,21 @@ def generate_synthetic_lidar_cloud(
         min_radius_m=float(min_radius),
         max_radius_m=float(max_radius),
         robot_clearance_m=float(robot_clearance),
+        reference_containment_margin_m=float(reference_containment_margin),
+        ray_inner_radius_m=inner_radius,
+        ray_outer_radius_m=outer_radius,
     )
+
+
+def polygon_support_excess(points_xy: Tensor, directions: Tensor, support: Tensor) -> Tensor:
+    """Maximum half-space excess for every point; non-positive means inside."""
+    if points_xy.ndim != 2 or points_xy.shape[1] != 2:
+        raise ValueError("points_xy must have shape [N,2]")
+    if directions.ndim != 2 or directions.shape[1] != 2:
+        raise ValueError("directions must have shape [K,2]")
+    if support.shape != (directions.shape[0],):
+        raise ValueError("support must match the direction count")
+    return (points_xy @ directions.T - support.unsqueeze(0)).amax(dim=-1)
 
 
 def maximum_sector_point_free_envelope(

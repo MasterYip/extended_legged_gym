@@ -43,6 +43,7 @@ from lidar_free_envelope import (  # noqa: E402
     envelope_excess,
     generate_synthetic_lidar_cloud,
     maximum_sector_point_free_envelope,
+    polygon_support_excess,
 )
 
 
@@ -67,7 +68,13 @@ class LidarProblem:
     free_envelope: object
     range_export: object
     haa_ranges: torch.Tensor
-    reachable_support: torch.Tensor
+    reference_reachable_support: torch.Tensor
+    candidate_lower: torch.Tensor
+    candidate_upper: torch.Tensor
+    joint_shrinkage: torch.Tensor
+    candidate_reduction_fraction: float
+    required_candidate_reduction_fraction: float
+    required_joint_shrink_rad: float
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,10 +84,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=4090)
     parser.add_argument("--point_count", type=int, default=192)
     parser.add_argument("--directions", type=int, default=48)
-    parser.add_argument("--min_radius", type=float, default=1.05)
+    parser.add_argument("--min_radius", type=float, default=0.0)
     parser.add_argument("--max_radius", type=float, default=2.10)
-    parser.add_argument("--robot_clearance", type=float, default=0.34)
-    parser.add_argument("--point_clearance", type=float, default=0.12)
+    parser.add_argument("--robot_clearance", type=float, default=0.05)
+    parser.add_argument("--point_clearance", type=float, default=0.02)
+    parser.add_argument("--reference_containment_margin", type=float, default=0.005)
+    parser.add_argument("--min_candidate_reduction_fraction", type=float, default=0.05)
+    parser.add_argument("--min_joint_shrink_rad", type=float, default=0.03)
     parser.add_argument("--motion_period_steps", type=int, default=120)
     parser.add_argument("--max_steps", type=int, default=0, help="0 keeps the viewer interactive")
     parser.add_argument("--compute_only", action="store_true")
@@ -100,21 +110,6 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
     baseline_support = capsule_support(
         kinematics, baseline_q.unsqueeze(0), capsules, directions,
     )[0]
-    cloud = generate_synthetic_lidar_cloud(
-        directions,
-        baseline_support,
-        count=args.point_count,
-        seed=seed,
-        min_radius=args.min_radius,
-        max_radius=args.max_radius,
-        robot_clearance=args.robot_clearance,
-    )
-    free_envelope = maximum_sector_point_free_envelope(
-        cloud, directions, point_clearance=args.point_clearance,
-    )
-    if float((baseline_support - free_envelope.support_m).max()) > TOLERANCE:
-        raise RuntimeError("LiDAR envelope does not contain the feasible anchor")
-
     effective_lower, effective_upper = kinematics.joint_limits(soft_fraction=0.9)
     half_width = torch.tensor([0.95, 0.42, 0.48] * 6)
     candidate_lower = torch.maximum(baseline_q - half_width, effective_lower)
@@ -126,6 +121,33 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
     validation_q = deterministic_joint_samples(
         candidate_lower, candidate_upper, 257, seed=seed + 200,
     )
+    reference_reachable_support = reachable_foot_support(
+        kinematics, candidate_q.unsqueeze(0), directions,
+    )[0]
+    cloud = generate_synthetic_lidar_cloud(
+        directions,
+        baseline_support,
+        reference_reachable_support,
+        count=args.point_count,
+        seed=seed,
+        min_radius=args.min_radius,
+        max_radius=args.max_radius,
+        robot_clearance=args.robot_clearance,
+        reference_containment_margin=args.reference_containment_margin,
+    )
+    reference_excess = polygon_support_excess(
+        cloud.points_xy, directions, reference_reachable_support,
+    )
+    if float(reference_excess.max()) > -args.reference_containment_margin + 5e-6:
+        raise RuntimeError("LiDAR return escaped the eroded reference reachable envelope")
+    free_envelope = maximum_sector_point_free_envelope(
+        cloud, directions, point_clearance=args.point_clearance,
+    )
+    if float((baseline_support - free_envelope.support_m).max()) > TOLERANCE:
+        raise RuntimeError("LiDAR envelope does not contain the feasible anchor")
+    if float((free_envelope.support_m - reference_reachable_support).max()) > TOLERANCE:
+        raise RuntimeError("prescribed envelope exceeds pre-obstacle reachable reference")
+
     export = export_envelope_joint_ranges(
         kinematics,
         candidate_q,
@@ -144,9 +166,23 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         capsule_support(kinematics, candidate_q, capsules, directions)
         <= free_envelope.support_m.unsqueeze(0) + TOLERANCE
     ).all(dim=-1)
-    reachable = reachable_foot_support(
-        kinematics, candidate_q[feasible].unsqueeze(0), directions,
-    )[0]
+    feasible_count = int(feasible.sum())
+    candidate_reduction_fraction = 1.0 - feasible_count / candidate_q.shape[0]
+    joint_shrinkage = (candidate_upper - candidate_lower) - (
+        export.upper - export.lower
+    )
+    if candidate_reduction_fraction < args.min_candidate_reduction_fraction:
+        raise RuntimeError(
+            "LiDAR constraints are not material: candidate reduction "
+            f"{candidate_reduction_fraction:.6f} is below "
+            f"{args.min_candidate_reduction_fraction:.6f}"
+        )
+    if float(joint_shrinkage.max()) < args.min_joint_shrink_rad:
+        raise RuntimeError(
+            "LiDAR constraints are not material: maximum joint shrinkage "
+            f"{float(joint_shrinkage.max()):.6f} rad is below "
+            f"{args.min_joint_shrink_rad:.6f} rad"
+        )
     return LidarProblem(
         seed=seed,
         baseline_q=baseline_q,
@@ -155,7 +191,13 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         free_envelope=free_envelope,
         range_export=export,
         haa_ranges=haa_ranges_from_joint_export(export),
-        reachable_support=reachable,
+        reference_reachable_support=reference_reachable_support,
+        candidate_lower=candidate_lower,
+        candidate_upper=candidate_upper,
+        joint_shrinkage=joint_shrinkage,
+        candidate_reduction_fraction=candidate_reduction_fraction,
+        required_candidate_reduction_fraction=args.min_candidate_reduction_fraction,
+        required_joint_shrink_rad=args.min_joint_shrink_rad,
     )
 
 
@@ -258,15 +300,24 @@ def print_problem(problem, directions) -> None:
         problem.cloud.points_xy * directions[problem.cloud.sector_indices]
     ).sum(dim=-1) - problem.baseline_support[problem.cloud.sector_indices]
     diagnostics = problem.range_export.diagnostics
+    reference_excess = polygon_support_excess(
+        problem.cloud.points_xy, directions, problem.reference_reachable_support,
+    )
     print("\nLiDAR free-envelope definition")
     print(f"  seed: {problem.seed}")
     print(f"  returns: {problem.cloud.points_xy.shape[0]} across {directions.shape[0]} angular sectors")
     print("  structure: full sector coverage; near clusters at 0.25, 2.35, 4.45 rad; far gaps at 1.35, 5.35 rad")
     print(f"  baseline capsule-envelope clearance: {float(baseline_clearance.min()):.6f} m minimum")
     print(f"  prescribed point clearance: {float(clearance.min()):.6f} m minimum")
+    print(
+        "  reference reachable containment: "
+        f"{-float(reference_excess.max()):.6f} m minimum inward margin"
+    )
     print(f"  optimality: {problem.free_envelope.optimality_scope}")
     print(f"  exported candidates: {int(diagnostics.candidate_feasible_count)}/{diagnostics.candidate_samples} feasible")
-    print("  colors: white returns; light cyan prescribed; dark teal occupied; amber HAA; blue reachable; red violations only")
+    print(f"  candidate reduction: {100.0 * problem.candidate_reduction_fraction:.2f}%")
+    print(f"  maximum joint-interval shrinkage: {float(problem.joint_shrinkage.max()):.6f} rad")
+    print("  colors: white returns inside blue pre-obstacle reachable reference; light cyan prescribed; dark teal occupied; amber HAA; red violations only")
 
 
 def print_controls() -> None:
@@ -278,7 +329,7 @@ def print_controls() -> None:
         ("P", "toggle light-cyan prescribed free envelope"),
         ("O", "toggle dark-teal current occupied envelope"),
         ("H", "toggle amber HAA ranges"),
-        ("R", "toggle optional blue reachable-foot envelope"),
+        ("R", "toggle blue pre-obstacle reachable reference"),
         ("C", "cycle overview and top cameras"),
         ("S", "capture screenshot and JSON evidence"),
         ("Esc", "exit"),
@@ -361,7 +412,7 @@ def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, v
     if state["reachable"]:
         draw_boundary(
             gym, viewer, env,
-            support_polygon(directions, problem.reachable_support),
+            support_polygon(directions, problem.reference_reachable_support),
             0.030, REACHABLE_BLUE,
         )
 
@@ -474,6 +525,12 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
     baseline_clearances = (
         problem.cloud.points_xy * directions[problem.cloud.sector_indices]
     ).sum(dim=-1) - problem.baseline_support[problem.cloud.sector_indices]
+    baseline_polygon_excess = polygon_support_excess(
+        problem.cloud.points_xy, directions, problem.baseline_support,
+    )
+    reference_excess = polygon_support_excess(
+        problem.cloud.points_xy, directions, problem.reference_reachable_support,
+    )
     polygon = support_polygon(directions, problem.free_envelope.support_m)
     evidence = {
         "screenshot": str(path),
@@ -492,17 +549,58 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             ],
             "required_baseline_clearance_m": problem.cloud.robot_clearance_m,
             "minimum_baseline_clearance_m": float(baseline_clearances.min()),
+            "minimum_baseline_polygon_outside_excess_m": float(
+                baseline_polygon_excess.min()
+            ),
+            "all_points_outside_baseline_occupied_envelope": bool(
+                (baseline_polygon_excess > 0.0).all()
+            ),
             "required_point_clearance_m": problem.free_envelope.point_clearance_m,
             "minimum_point_clearance_m": float(clearances.min()),
+            "reference_containment_margin_m": problem.cloud.reference_containment_margin_m,
+            "minimum_reference_inward_margin_m": -float(reference_excess.max()),
+            "all_points_inside_reference_reachable_envelope": bool(
+                (reference_excess <= TOLERANCE).all()
+            ),
+            "ray_inner_radius_bounds_m": [
+                float(problem.cloud.ray_inner_radius_m.min()),
+                float(problem.cloud.ray_inner_radius_m.max()),
+            ],
+            "ray_outer_radius_bounds_m": [
+                float(problem.cloud.ray_outer_radius_m.min()),
+                float(problem.cloud.ray_outer_radius_m.max()),
+            ],
         },
         "optimality_scope": problem.free_envelope.optimality_scope,
         "directions_xy": directions.detach().cpu().tolist(),
         "prescribed_support_m": problem.free_envelope.support_m.detach().cpu().tolist(),
         "prescribed_vertices_xy": polygon.tolist(),
+        "reference_reachable_support_m": problem.reference_reachable_support.detach().cpu().tolist(),
+        "reference_reachable_vertices_xy": support_polygon(
+            directions, problem.reference_reachable_support,
+        ).tolist(),
+        "prescribed_inside_reference_max_support_excess_m": float(
+            (problem.free_envelope.support_m - problem.reference_reachable_support).max()
+        ),
         "limiting_point_indices": problem.free_envelope.limiting_point_indices.detach().cpu().tolist(),
         "joint_order": list(EL4090_JOINT_NAMES),
         "exported_joint_lower_rad": problem.range_export.lower.detach().cpu().tolist(),
         "exported_joint_upper_rad": problem.range_export.upper.detach().cpu().tolist(),
+        "range_impact": {
+            "unconstrained_candidate_count": problem.range_export.diagnostics.candidate_samples,
+            "constrained_feasible_count": int(
+                problem.range_export.diagnostics.candidate_feasible_count
+            ),
+            "candidate_reduction_fraction": problem.candidate_reduction_fraction,
+            "required_candidate_reduction_fraction": (
+                problem.required_candidate_reduction_fraction
+            ),
+            "unconstrained_candidate_lower_rad": problem.candidate_lower.detach().cpu().tolist(),
+            "unconstrained_candidate_upper_rad": problem.candidate_upper.detach().cpu().tolist(),
+            "per_joint_interval_shrinkage_rad": problem.joint_shrinkage.detach().cpu().tolist(),
+            "maximum_joint_interval_shrinkage_rad": float(problem.joint_shrinkage.max()),
+            "required_joint_interval_shrinkage_rad": problem.required_joint_shrink_rad,
+        },
         "motion_summary": compact_stats(stats),
         "visible_layers": {key: state[key] for key in ("lidar", "prescribed", "occupied", "haa", "reachable")},
         "semantic_mapping": {
@@ -510,7 +608,7 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             "light_cyan": "prescribed point-free envelope and active clearance spokes",
             "dark_teal": "current occupied capsule envelope",
             "amber": "exported HAA intervals and current markers",
-            "blue": "optional reachable-foot envelope",
+            "blue": "pre-obstacle unconstrained reachable-foot reference",
             "red": "actual constraint violation only",
         },
     }
@@ -529,6 +627,12 @@ def validate_args(args) -> None:
         raise ValueError("--motion_period_steps must be positive")
     if args.point_clearance >= args.robot_clearance:
         raise ValueError("--point_clearance must be smaller than --robot_clearance")
+    if args.reference_containment_margin <= 0.0:
+        raise ValueError("--reference_containment_margin must be positive")
+    if not 0.0 < args.min_candidate_reduction_fraction < 1.0:
+        raise ValueError("--min_candidate_reduction_fraction must be in (0,1)")
+    if args.min_joint_shrink_rad <= 0.0:
+        raise ValueError("--min_joint_shrink_rad must be positive")
 
 
 def main() -> None:
@@ -577,7 +681,7 @@ def main() -> None:
         "prescribed": True,
         "occupied": True,
         "haa": True,
-        "reachable": False,
+        "reachable": True,
         "camera": 0,
     }
     set_camera(gym, viewer, state["camera"])

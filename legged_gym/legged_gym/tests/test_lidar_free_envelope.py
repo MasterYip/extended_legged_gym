@@ -34,11 +34,25 @@ class TestLidarFreeEnvelope(unittest.TestCase):
         cls.anchor_support = KE.capsule_support(
             cls.kinematics, cls.anchor.unsqueeze(0), cls.capsules, cls.directions,
         )[0]
+        effective_lower, effective_upper = cls.kinematics.joint_limits(soft_fraction=0.9)
+        half_width = torch.tensor([0.95, 0.42, 0.48] * 6)
+        cls.candidate_lower = torch.maximum(cls.anchor - half_width, effective_lower)
+        cls.candidate_upper = torch.minimum(cls.anchor + half_width, effective_upper)
+        cls.candidate_q = torch.cat((
+            cls.anchor.unsqueeze(0),
+            KE.deterministic_joint_samples(
+                cls.candidate_lower, cls.candidate_upper, 768, seed=4190,
+            ),
+        ))
+        cls.reference_support = KE.reachable_foot_support(
+            cls.kinematics, cls.candidate_q.unsqueeze(0), cls.directions,
+        )[0]
 
     def make_cloud(self, seed=4090):
         return LFE.generate_synthetic_lidar_cloud(
-            self.directions, self.anchor_support, count=192, seed=seed,
-            min_radius=1.05, max_radius=2.10, robot_clearance=0.34,
+            self.directions, self.anchor_support, self.reference_support,
+            count=192, seed=seed, min_radius=0.0, max_radius=2.10,
+            robot_clearance=0.05, reference_containment_margin=0.005,
         )
 
     def test_cloud_is_deterministic_structured_and_clear_of_robot(self):
@@ -48,31 +62,77 @@ class TestLidarFreeEnvelope(unittest.TestCase):
         self.assertTrue(torch.equal(first.points_xy, second.points_xy))
         self.assertFalse(torch.equal(first.points_xy, changed.points_xy))
         self.assertEqual(first.points_xy.shape, (192, 2))
-        self.assertTrue(bool((first.radii_m >= 1.05).all()))
+        self.assertTrue(bool((first.radii_m >= first.ray_inner_radius_m).all()))
+        self.assertTrue(bool((first.radii_m <= first.ray_outer_radius_m).all()))
         self.assertTrue(bool((first.radii_m <= 2.10).all()))
         self.assertTrue(torch.equal(torch.unique(first.sector_indices), torch.arange(48)))
         projection = (first.points_xy * self.directions[first.sector_indices]).sum(-1)
         clearance = projection - self.anchor_support[first.sector_indices]
-        self.assertGreaterEqual(float(clearance.min()), 0.34 - 2e-6)
+        self.assertGreaterEqual(float(clearance.min()), 0.05 - 2e-6)
+        baseline_excess = LFE.polygon_support_excess(
+            first.points_xy, self.directions, self.anchor_support,
+        )
+        self.assertGreaterEqual(float(baseline_excess.min()), 0.05 - 2e-6)
+        reference_excess = LFE.polygon_support_excess(
+            first.points_xy, self.directions, self.reference_support,
+        )
+        self.assertLessEqual(float(reference_excess.max()), -0.005 + 2e-6)
 
     def test_restricted_family_envelope_is_point_free_and_maximal(self):
         cloud = self.make_cloud()
         envelope = LFE.maximum_sector_point_free_envelope(
-            cloud, self.directions, point_clearance=0.12,
+            cloud, self.directions, point_clearance=0.02,
         )
         clearances = LFE.assigned_point_clearances(
             cloud, self.directions, envelope.support_m,
         )
-        self.assertGreaterEqual(float(clearances.min()), 0.12 - 2e-6)
+        self.assertGreaterEqual(float(clearances.min()), 0.02 - 2e-6)
         limiting = clearances[envelope.limiting_point_indices]
-        self.assertTrue(torch.allclose(limiting, torch.full((48,), 0.12), atol=2e-6))
+        self.assertTrue(torch.allclose(limiting, torch.full((48,), 0.02), atol=2e-6))
+        self.assertLessEqual(
+            float((envelope.support_m - self.reference_support).max()), 1e-6,
+        )
 
         # Raising any face breaks clearance at that face's active return.
         raised = envelope.support_m.unsqueeze(0).repeat(48, 1)
         raised[torch.arange(48), torch.arange(48)] += 1e-4
         points = cloud.points_xy[envelope.limiting_point_indices]
         projection = (points * self.directions).sum(-1)
-        self.assertTrue(bool((projection - raised.diagonal() < 0.12).all()))
+        self.assertTrue(bool((projection - raised.diagonal() < 0.02).all()))
+
+    def test_obstacles_materially_reduce_candidates_and_joint_ranges(self):
+        cloud = self.make_cloud()
+        envelope = LFE.maximum_sector_point_free_envelope(
+            cloud, self.directions, point_clearance=0.02,
+        )
+        support = KE.capsule_support(
+            self.kinematics, self.candidate_q, self.capsules, self.directions,
+        )
+        feasible = (support <= envelope.support_m.unsqueeze(0) + 1e-6).all(-1)
+        reduction = 1.0 - float(feasible.sum()) / self.candidate_q.shape[0]
+        self.assertGreaterEqual(reduction, 0.05)
+
+        validation_q = KE.deterministic_joint_samples(
+            self.candidate_lower, self.candidate_upper, 257, seed=4290,
+        )
+        lower, upper = self.kinematics.joint_limits(soft_fraction=0.9)
+        export = KE.export_envelope_joint_ranges(
+            self.kinematics,
+            self.candidate_q,
+            validation_q,
+            self.directions,
+            envelope.support_m,
+            lower,
+            upper,
+            capsules=self.capsules,
+            box_validation_samples=256,
+            box_validation_seed=4390,
+        )
+        shrinkage = (self.candidate_upper - self.candidate_lower) - (
+            export.upper - export.lower
+        )
+        self.assertTrue(bool(export.valid))
+        self.assertGreaterEqual(float(shrinkage.max()), 0.03)
 
     def test_backtracking_rejects_naive_box_pose_and_returns_compliant_pose(self):
         lower, upper = self.kinematics.joint_limits(soft_fraction=0.9)
