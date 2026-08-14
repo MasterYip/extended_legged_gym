@@ -260,6 +260,14 @@ def default_el4090_capsules() -> Tuple[CapsuleProxy, ...]:
     return tuple(proxies)
 
 
+def default_el4090_torso_capsules() -> Tuple[CapsuleProxy, ...]:
+    """The torso-only capsule set (the base/body link), a strict subset of
+    ``default_el4090_capsules()``. The occupied-layer visualization uses this
+    so the red/teal envelope reflects the body shape rather than the full
+    leg reach."""
+    return default_el4090_capsules()[:1]
+
+
 def support_directions(
     count: int,
     *,

@@ -92,6 +92,26 @@ class TestKinematicEnvelope(unittest.TestCase):
         support32 = KE.capsule_support(self.kin, q.float(), capsules, directions.float()).double()
         self.assertLess(float((support - support32).abs().max()), 2e-6)
 
+    def test_torso_capsules_subset_and_smaller(self):
+        full = KE.default_el4090_capsules()
+        torso = KE.default_el4090_torso_capsules()
+        self.assertEqual(len(torso), 1)
+        self.assertEqual(torso[0].link, "BASE")
+        self.assertEqual(torso, full[:1])
+        q = torch.cat((torch.zeros(3, 18), torch.randn(5, 18).clamp(-0.8, 0.8)), dim=0)
+        directions = KE.support_directions(32)
+        full_support = KE.capsule_support(self.kin, q, full, directions)
+        torso_support = KE.capsule_support(self.kin, q, torso, directions)
+        # Torso is a strict subset of the full capsule set, so its occupied
+        # support can never exceed the full robot's support in any direction.
+        self.assertTrue(torch.all(torso_support <= full_support + 1e-6))
+        # At the resting pose the legs extend beyond the body laterally, so the
+        # torso envelope is strictly smaller in the +y direction.
+        resting_full = KE.capsule_support(self.kin, torch.zeros(1, 18), full, directions)[0]
+        resting_torso = KE.capsule_support(self.kin, torch.zeros(1, 18), torso, directions)[0]
+        plus_y = int(torch.argmin((directions - torch.tensor([0.0, 1.0])).norm(dim=-1)))
+        self.assertLess(float(resting_torso[plus_y]), float(resting_full[plus_y]))
+
     def test_margin_and_point_queries(self):
         q = torch.zeros(2, 18)
         directions = KE.support_directions(16)
