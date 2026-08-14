@@ -238,7 +238,9 @@ $$
 This order avoids defining the reference from already constrained candidates.
 A deterministic synthetic scan then guarantees full angular-sector coverage
 while randomizing extra-return sector density, three near-cluster angles, two
-far-gap angles, angular offsets, and radial placement from the seed. One
+far-gap angles, angular offsets, and radial placement from the seed. All five
+semantic centers have at least 0.60 rad circular separation, preventing a near
+cluster and far gap from cancelling each other. One
 near-biased anchor return per sector preserves the limiting geometry while
 additional returns scatter broadly across the feasible annulus, so pressing
 `G` produces a visibly different cloud. Arguments expose the seed, return

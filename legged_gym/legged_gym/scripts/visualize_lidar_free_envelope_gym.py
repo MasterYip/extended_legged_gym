@@ -551,7 +551,8 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             "structure": {
                 "randomization": (
                     "seeded uneven sector density, randomized cluster/gap "
-                    "centers, wide angular jitter, and broad radial scatter"
+                    "centers with 0.60 rad circular separation, wide angular "
+                    "jitter, and broad radial scatter"
                 ),
                 "near_cluster_centers_rad": (
                     problem.cloud.near_cluster_centers_rad.detach().cpu().tolist()

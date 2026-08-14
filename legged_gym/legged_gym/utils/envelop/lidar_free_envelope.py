@@ -11,6 +11,9 @@ from torch import Tensor
 from kinematic_envelope import BatchedUrdfKinematics, CapsuleProxy, capsule_support
 
 
+MIN_STRUCTURE_CENTER_SEPARATION_RAD = 0.60
+
+
 @dataclass(frozen=True)
 class SyntheticLidarCloud:
     points_xy: Tensor
@@ -50,6 +53,30 @@ class BacktrackedPose:
 def _wrapped_angle_delta(angles: Tensor, centers: Tensor) -> Tensor:
     delta = angles[:, None] - centers[None, :]
     return torch.atan2(torch.sin(delta), torch.cos(delta)).abs()
+
+
+def _sample_separated_angles(
+    count: int,
+    *,
+    generator: torch.Generator,
+    dtype: torch.dtype,
+    device: torch.device,
+    minimum_separation_rad: float,
+) -> Tensor:
+    """Sample circular angles with deterministic bounded rejection."""
+    selected = []
+    for _ in range(512):
+        candidate = 2.0 * torch.pi * torch.rand(
+            (), generator=generator, dtype=dtype, device=device,
+        )
+        if not selected or bool((
+            _wrapped_angle_delta(candidate.reshape(1), torch.stack(selected))
+            >= minimum_separation_rad
+        ).all()):
+            selected.append(candidate)
+            if len(selected) == count:
+                return torch.stack(selected)
+    raise RuntimeError("failed to sample separated LiDAR structure centers")
 
 
 def generate_synthetic_lidar_cloud(
@@ -120,18 +147,15 @@ def generate_synthetic_lidar_cloud(
     )
     jitter = raw_jitter * jitter_span * sector_width
 
-    cluster_centers = torch.sort(
-        2.0 * torch.pi * torch.rand(
-            3, generator=generator, dtype=directions.dtype,
-            device=directions.device,
-        ),
-    ).values
-    gap_centers = torch.sort(
-        2.0 * torch.pi * torch.rand(
-            2, generator=generator, dtype=directions.dtype,
-            device=directions.device,
-        ),
-    ).values
+    structure_centers = _sample_separated_angles(
+        5,
+        generator=generator,
+        dtype=directions.dtype,
+        device=directions.device,
+        minimum_separation_rad=MIN_STRUCTURE_CENTER_SEPARATION_RAD,
+    )
+    cluster_centers = torch.sort(structure_centers[:3]).values
+    gap_centers = torch.sort(structure_centers[3:]).values
     noise = torch.rand(
         count, generator=generator, dtype=directions.dtype,
         device=directions.device,

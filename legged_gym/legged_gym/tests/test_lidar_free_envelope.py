@@ -61,11 +61,15 @@ class TestLidarFreeEnvelope(unittest.TestCase):
         changed = self.make_cloud(seed=4091)
         self.assertTrue(torch.equal(first.points_xy, second.points_xy))
         self.assertFalse(torch.equal(first.points_xy, changed.points_xy))
-        self.assertGreater(
-            float(torch.linalg.vector_norm(first.points_xy - changed.points_xy, dim=-1).mean()),
-            0.10,
+        pairwise_distance = torch.cdist(first.points_xy, changed.points_xy)
+        symmetric_cloud_distance = 0.5 * (
+            pairwise_distance.amin(dim=0).mean()
+            + pairwise_distance.amin(dim=1).mean()
         )
-        self.assertFalse(torch.equal(first.sector_indices, changed.sector_indices))
+        self.assertGreater(
+            float(symmetric_cloud_distance), 0.02,
+        )
+        self.assertFalse(torch.equal(first.sector_counts, changed.sector_counts))
         self.assertFalse(
             torch.equal(first.near_cluster_centers_rad, changed.near_cluster_centers_rad),
         )
@@ -87,6 +91,25 @@ class TestLidarFreeEnvelope(unittest.TestCase):
             first.points_xy, self.directions, self.reference_support,
         )
         self.assertLessEqual(float(reference_excess.max()), -0.005 + 2e-6)
+
+        for seed in range(4090, 4096):
+            cloud = self.make_cloud(seed=seed)
+            centers = torch.cat((
+                cloud.near_cluster_centers_rad, cloud.far_gap_centers_rad,
+            ))
+            separation = LFE._wrapped_angle_delta(centers, centers)
+            separation.fill_diagonal_(torch.inf)
+            self.assertGreaterEqual(
+                float(separation.min()),
+                LFE.MIN_STRUCTURE_CENTER_SEPARATION_RAD - 1e-6,
+            )
+            self.assertTrue(torch.equal(torch.unique(cloud.sector_indices), torch.arange(48)))
+            self.assertLessEqual(
+                float(LFE.polygon_support_excess(
+                    cloud.points_xy, self.directions, self.reference_support,
+                ).max()),
+                -0.005 + 2e-6,
+            )
 
     def test_restricted_family_envelope_is_point_free_and_maximal(self):
         cloud = self.make_cloud()
