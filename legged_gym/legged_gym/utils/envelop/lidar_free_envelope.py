@@ -24,6 +24,9 @@ class SyntheticLidarCloud:
     reference_containment_margin_m: float
     ray_inner_radius_m: Tensor
     ray_outer_radius_m: Tensor
+    near_cluster_centers_rad: Tensor
+    far_gap_centers_rad: Tensor
+    sector_counts: Tensor
 
 
 @dataclass(frozen=True)
@@ -89,42 +92,92 @@ def generate_synthetic_lidar_cloud(
         raise ValueError("reference containment margin erodes through the origin")
 
     generator = torch.Generator(device=directions.device).manual_seed(int(seed))
-    sector_indices = torch.arange(count, device=directions.device) % sectors
+    guaranteed_sectors = torch.arange(sectors, device=directions.device)
+    extra_sectors = torch.randint(
+        sectors,
+        (count - sectors,),
+        generator=generator,
+        device=directions.device,
+    )
+    sector_indices = torch.cat((guaranteed_sectors, extra_sectors))
+    guaranteed = torch.cat((
+        torch.ones(sectors, dtype=torch.bool, device=directions.device),
+        torch.zeros(count - sectors, dtype=torch.bool, device=directions.device),
+    ))
+    permutation = torch.randperm(count, generator=generator, device=directions.device)
+    sector_indices = sector_indices[permutation]
+    guaranteed = guaranteed[permutation]
     sector_angles = torch.atan2(directions[:, 1], directions[:, 0])
     sector_width = 2.0 * torch.pi / sectors
-    jitter = (
-        torch.rand(
-            count, generator=generator, dtype=directions.dtype,
-            device=directions.device,
-        ) - 0.5
-    ) * (0.24 * sector_width)
-    angles = sector_angles[sector_indices] + jitter
-    unit = torch.stack((torch.cos(angles), torch.sin(angles)), dim=-1)
-    assigned_projection_scale = (unit * directions[sector_indices]).sum(dim=-1)
+    raw_jitter = torch.rand(
+        count, generator=generator, dtype=directions.dtype,
+        device=directions.device,
+    ) - 0.5
+    jitter_span = torch.where(
+        guaranteed,
+        torch.full((count,), 0.36, dtype=directions.dtype, device=directions.device),
+        torch.full((count,), 0.90, dtype=directions.dtype, device=directions.device),
+    )
+    jitter = raw_jitter * jitter_span * sector_width
 
-    cluster_centers = torch.tensor((0.25, 2.35, 4.45), dtype=directions.dtype, device=directions.device)
-    gap_centers = torch.tensor((1.35, 5.35), dtype=directions.dtype, device=directions.device)
+    cluster_centers = torch.sort(
+        2.0 * torch.pi * torch.rand(
+            3, generator=generator, dtype=directions.dtype,
+            device=directions.device,
+        ),
+    ).values
+    gap_centers = torch.sort(
+        2.0 * torch.pi * torch.rand(
+            2, generator=generator, dtype=directions.dtype,
+            device=directions.device,
+        ),
+    ).values
+    noise = torch.rand(
+        count, generator=generator, dtype=directions.dtype,
+        device=directions.device,
+    )
+
+    # Wide jitter makes the cloud visibly irregular. In geometrically narrow
+    # sectors, contract only the affected rays until their annulus is valid.
+    for _ in range(8):
+        angles = sector_angles[sector_indices] + jitter
+        unit = torch.stack((torch.cos(angles), torch.sin(angles)), dim=-1)
+        assigned_projection_scale = (unit * directions[sector_indices]).sum(dim=-1)
+        required_radius = (
+            baseline_support[sector_indices] + robot_clearance
+        ) / assigned_projection_scale
+        inner_radius = torch.maximum(
+            required_radius, torch.full_like(required_radius, min_radius),
+        )
+        all_projection_scale = unit @ directions.T
+        radial_caps = torch.where(
+            all_projection_scale > 1e-7,
+            eroded_reference.unsqueeze(0) / all_projection_scale.clamp_min(1e-7),
+            torch.full_like(all_projection_scale, torch.inf),
+        )
+        polygon_outer_radius = radial_caps.amin(dim=-1)
+        outer_radius = torch.minimum(
+            polygon_outer_radius, torch.full_like(polygon_outer_radius, max_radius),
+        )
+        infeasible = inner_radius >= outer_radius
+        if not bool(infeasible.any()):
+            break
+        jitter = torch.where(infeasible, jitter * 0.5, jitter)
+
     cluster_strength = torch.exp(-0.5 * (_wrapped_angle_delta(angles, cluster_centers) / 0.34) ** 2).amax(dim=1)
     gap_strength = torch.exp(-0.5 * (_wrapped_angle_delta(angles, gap_centers) / 0.28) ** 2).amax(dim=1)
-    noise = torch.rand(count, generator=generator, dtype=directions.dtype, device=directions.device)
-    radial_fraction = torch.clamp(
-        0.16 - 0.11 * cluster_strength + 0.42 * gap_strength
-        + 0.08 * (noise - 0.5),
-        0.03,
-        0.68,
+    limiting_fraction = torch.clamp(
+        0.04 + 0.28 * noise - 0.05 * cluster_strength + 0.10 * gap_strength,
+        0.02,
+        0.42,
     )
-
-    required_radius = (baseline_support[sector_indices] + robot_clearance) / assigned_projection_scale
-    inner_radius = torch.maximum(required_radius, torch.full_like(required_radius, min_radius))
-    all_projection_scale = unit @ directions.T
-    radial_caps = torch.where(
-        all_projection_scale > 1e-7,
-        eroded_reference.unsqueeze(0) / all_projection_scale.clamp_min(1e-7),
-        torch.full_like(all_projection_scale, torch.inf),
+    scattered_fraction = torch.clamp(
+        0.06 + 0.88 * noise - 0.12 * cluster_strength + 0.10 * gap_strength,
+        0.02,
+        0.96,
     )
-    polygon_outer_radius = radial_caps.amin(dim=-1)
-    outer_radius = torch.minimum(
-        polygon_outer_radius, torch.full_like(polygon_outer_radius, max_radius),
+    radial_fraction = torch.where(
+        guaranteed, limiting_fraction, scattered_fraction,
     )
     infeasible = inner_radius >= outer_radius
     if bool(infeasible.any()):
@@ -147,6 +200,9 @@ def generate_synthetic_lidar_cloud(
         reference_containment_margin_m=float(reference_containment_margin),
         ray_inner_radius_m=inner_radius,
         ray_outer_radius_m=outer_radius,
+        near_cluster_centers_rad=cluster_centers,
+        far_gap_centers_rad=gap_centers,
+        sector_counts=torch.bincount(sector_indices, minlength=sectors),
     )
 
 

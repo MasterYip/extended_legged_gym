@@ -178,7 +178,10 @@ loads three fixed-base EL4090 actors without a policy checkpoint and compares
 compact-mammal, nominal-spider, and wide-low presets. Each actor carries its
 occupied capsule boundary, sampled reachable-foot boundary, and six physical
 hip-centered HAA interval arcs with bound rays and current-angle markers. The
-actors move through smooth deterministic paths inside their own exported
+arc radial direction follows each leg's hip-to-HFE attachment vector from the
+EL4090 URDF, so the marker points toward the physical leg rather than assuming
+a shared hip-frame axis. The actors move through smooth deterministic paths
+inside their own exported
 18-joint intervals; the occupied boundaries and HAA markers update from those
 same poses on every rendered frame.
 
@@ -233,9 +236,13 @@ h_k^{\mathrm{ref}}=
 $$
 
 This order avoids defining the reference from already constrained candidates.
-A deterministic synthetic scan then provides full angular-sector coverage,
-three near-return clusters, and two farther gaps. Arguments expose the seed,
-return count, radius bounds, minimum robot clearance, point clearance,
+A deterministic synthetic scan then guarantees full angular-sector coverage
+while randomizing extra-return sector density, three near-cluster angles, two
+far-gap angles, angular offsets, and radial placement from the seed. One
+near-biased anchor return per sector preserves the limiting geometry while
+additional returns scatter broadly across the feasible annulus, so pressing
+`G` produces a visibly different cloud. Arguments expose the seed, return
+count, radius bounds, minimum robot clearance, point clearance,
 reference-containment margin, and material-impact thresholds.
 
 For ray unit vector $v_i$, the feasible radial annulus is resolved from the

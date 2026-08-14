@@ -306,7 +306,16 @@ def print_problem(problem, directions) -> None:
     print("\nLiDAR free-envelope definition")
     print(f"  seed: {problem.seed}")
     print(f"  returns: {problem.cloud.points_xy.shape[0]} across {directions.shape[0]} angular sectors")
-    print("  structure: full sector coverage; near clusters at 0.25, 2.35, 4.45 rad; far gaps at 1.35, 5.35 rad")
+    cluster_text = ", ".join(
+        f"{float(value):.2f}" for value in problem.cloud.near_cluster_centers_rad
+    )
+    gap_text = ", ".join(
+        f"{float(value):.2f}" for value in problem.cloud.far_gap_centers_rad
+    )
+    print(
+        "  structure: randomized sector density; guaranteed full coverage; "
+        f"near clusters at {cluster_text} rad; far gaps at {gap_text} rad"
+    )
     print(f"  baseline capsule-envelope clearance: {float(baseline_clearance.min()):.6f} m minimum")
     print(f"  prescribed point clearance: {float(clearance.min()):.6f} m minimum")
     print(
@@ -540,8 +549,20 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             "count": int(problem.cloud.points_xy.shape[0]),
             "angular_coverage": "every fixed-normal sector has at least one jittered return",
             "structure": {
-                "near_cluster_centers_rad": [0.25, 2.35, 4.45],
-                "far_gap_centers_rad": [1.35, 5.35],
+                "randomization": (
+                    "seeded uneven sector density, randomized cluster/gap "
+                    "centers, wide angular jitter, and broad radial scatter"
+                ),
+                "near_cluster_centers_rad": (
+                    problem.cloud.near_cluster_centers_rad.detach().cpu().tolist()
+                ),
+                "far_gap_centers_rad": (
+                    problem.cloud.far_gap_centers_rad.detach().cpu().tolist()
+                ),
+                "sector_count_bounds": [
+                    int(problem.cloud.sector_counts.min()),
+                    int(problem.cloud.sector_counts.max()),
+                ],
             },
             "radius_bounds_m": [problem.cloud.min_radius_m, problem.cloud.max_radius_m],
             "observed_radius_bounds_m": [
@@ -607,7 +628,10 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             "white": "LiDAR returns",
             "light_cyan": "prescribed point-free envelope and active clearance spokes",
             "dark_teal": "current occupied capsule envelope",
-            "amber": "exported HAA intervals and current markers",
+            "amber": (
+                "exported HAA intervals and current markers directed from each "
+                "hip toward its URDF HFE attachment"
+            ),
             "blue": "pre-obstacle unconstrained reachable-foot reference",
             "red": "actual constraint violation only",
         },

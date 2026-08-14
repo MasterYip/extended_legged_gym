@@ -136,9 +136,15 @@ def haa_arc_geometry(
     arc_q = current_q.repeat(samples, 1)
     arc_q[:, haa_indices] = torch.lerp(haa_ranges[:, 0], haa_ranges[:, 1], alpha[:, None])
     links = [f"{leg}_HIP" for leg in EL4090_LEG_NAMES]
+    joints_by_name = {joint.name: joint for joint in kinematics.joints}
+    hfe_offsets = current_q.new_tensor([
+        joints_by_name[f"{leg}_HFE"].origin_xyz for leg in EL4090_LEG_NAMES
+    ])
+    hfe_offset_norms = hfe_offsets.norm(dim=-1, keepdim=True)
+    if bool((hfe_offset_norms <= torch.finfo(current_q.dtype).eps).any()):
+        raise ValueError("HFE joint origins must define nonzero outward leg directions")
     origins_local = torch.zeros((6, 1, 3), dtype=current_q.dtype, device=current_q.device)
-    marker_local = origins_local.clone()
-    marker_local[:, 0, 0] = radius
+    marker_local = radius * hfe_offsets[:, None, :] / hfe_offset_norms[:, None, :]
     origins = kinematics.points(current_q.unsqueeze(0), links, origins_local)[0, :, 0]
     arcs = kinematics.points(arc_q, links, marker_local)[:, :, 0].transpose(0, 1)
     markers = kinematics.points(current_q.unsqueeze(0), links, marker_local)[0, :, 0]

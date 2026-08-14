@@ -61,11 +61,21 @@ class TestLidarFreeEnvelope(unittest.TestCase):
         changed = self.make_cloud(seed=4091)
         self.assertTrue(torch.equal(first.points_xy, second.points_xy))
         self.assertFalse(torch.equal(first.points_xy, changed.points_xy))
+        self.assertGreater(
+            float(torch.linalg.vector_norm(first.points_xy - changed.points_xy, dim=-1).mean()),
+            0.10,
+        )
+        self.assertFalse(torch.equal(first.sector_indices, changed.sector_indices))
+        self.assertFalse(
+            torch.equal(first.near_cluster_centers_rad, changed.near_cluster_centers_rad),
+        )
         self.assertEqual(first.points_xy.shape, (192, 2))
         self.assertTrue(bool((first.radii_m >= first.ray_inner_radius_m).all()))
         self.assertTrue(bool((first.radii_m <= first.ray_outer_radius_m).all()))
         self.assertTrue(bool((first.radii_m <= 2.10).all()))
         self.assertTrue(torch.equal(torch.unique(first.sector_indices), torch.arange(48)))
+        self.assertEqual(int(first.sector_counts.min()), 1)
+        self.assertGreater(int(first.sector_counts.max()), int(first.sector_counts.min()))
         projection = (first.points_xy * self.directions[first.sector_indices]).sum(-1)
         clearance = projection - self.anchor_support[first.sector_indices]
         self.assertGreaterEqual(float(clearance.min()), 0.05 - 2e-6)
