@@ -114,6 +114,48 @@ class TestGymEnvelopeGeometry(unittest.TestCase):
             arcs[:, :, 2], origins[:, None, 2].expand(-1, 17), atol=1e-12,
         ))
 
+    def test_haa_arc_interval_matches_full_arc_when_interval_is_full_range(self):
+        current = torch.tensor([0.1, 0.6, -0.6] * 6, dtype=torch.float64)
+        ranges = torch.tensor([[-0.4, 0.5]] * 6, dtype=torch.float64)
+        _, arcs, _ = GEOM.haa_arc_geometry(
+            self.kinematics, current, ranges, radius=0.2, samples=17,
+        )
+        for leg in range(6):
+            sub = GEOM.haa_arc_geometry_interval(
+                self.kinematics, current, ranges, leg, -0.4, 0.5,
+                radius=0.2, samples=17,
+            )
+            self.assertEqual(sub.shape, (17, 3))
+            self.assertTrue(torch.allclose(sub, arcs[leg], atol=1e-12))
+
+    def test_haa_arc_interval_sub_range_stays_on_the_hip_arc(self):
+        current = torch.tensor([0.1, 0.6, -0.6] * 6, dtype=torch.float64)
+        ranges = torch.tensor([[-0.4, 0.5]] * 6, dtype=torch.float64)
+        origins, _, _ = GEOM.haa_arc_geometry(
+            self.kinematics, current, ranges, radius=0.2, samples=17,
+        )
+        sub = GEOM.haa_arc_geometry_interval(
+            self.kinematics, current, ranges, 3, -0.2, 0.3,
+            radius=0.2, samples=17,
+        )
+        self.assertEqual(sub.shape, (17, 3))
+        self.assertTrue(torch.allclose(
+            (sub - origins[3]).norm(dim=-1),
+            torch.full((17,), 0.2, dtype=torch.float64), atol=1e-12,
+        ))
+        self.assertTrue(torch.allclose(
+            sub[:, 2], origins[3, 2].expand(17), atol=1e-12,
+        ))
+        angle0 = torch.atan2(sub[0, 1] - origins[3, 1], sub[0, 0] - origins[3, 0])
+        angle1 = torch.atan2(sub[-1, 1] - origins[3, 1], sub[-1, 0] - origins[3, 0])
+        sweep = abs((angle1 - angle0 + torch.pi) % (2.0 * torch.pi) - torch.pi)
+        self.assertGreater(float(sweep), 0.1)
+        with self.assertRaises(ValueError):
+            GEOM.haa_arc_geometry_interval(
+                self.kinematics, current, ranges, 3, 0.3, -0.2,
+                radius=0.2, samples=17,
+            )
+
     def test_demo_preset_is_deterministic_and_has_numeric_haa_ranges(self):
         directions = KE.support_directions(24)
         lower, upper = self.kinematics.joint_limits(soft_fraction=0.9)

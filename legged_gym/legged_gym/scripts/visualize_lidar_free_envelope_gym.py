@@ -21,18 +21,21 @@ sys.path.insert(0, str(ENVELOPE_DIR))
 
 from gym_envelope_geometry import (  # noqa: E402
     haa_arc_geometry,
+    haa_arc_geometry_interval,
     interpolate_joint_ranges,
     polyline_segments,
     support_polygon,
 )
 from kinematic_envelope import (  # noqa: E402
     EL4090_JOINT_NAMES,
+    EL4090_LEG_NAMES,
     BatchedUrdfKinematics,
     capsule_support,
     default_el4090_capsules,
     deterministic_joint_samples,
     export_envelope_joint_ranges,
     haa_ranges_from_joint_export,
+    joint_rejection_ranges,
     load_urdf_joints,
     reachable_foot_support,
     support_directions,
@@ -55,6 +58,7 @@ DARK_TEAL = (0.00, 0.72, 0.60)
 AMBER = (1.00, 0.64, 0.06)
 REACHABLE_BLUE = (0.16, 0.42, 1.00)
 RED = (1.00, 0.10, 0.06)
+REJECTION_RED = (1.00, 0.25, 0.65)
 BASE_HEIGHT = 0.58
 TOLERANCE = 1e-6
 
@@ -75,6 +79,7 @@ class LidarProblem:
     candidate_reduction_fraction: float
     required_candidate_reduction_fraction: float
     required_joint_shrink_rad: float
+    rejection_ranges: object = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_joint_shrink_rad", type=float, default=0.03)
     parser.add_argument("--motion_period_steps", type=int, default=120)
     parser.add_argument("--max_steps", type=int, default=0, help="0 keeps the viewer interactive")
+    parser.add_argument(
+        "--show_rejection", action="store_true",
+        help="show rejected sub-intervals of the exported joint ranges",
+    )
     parser.add_argument("--compute_only", action="store_true")
     parser.add_argument("--no_motion", action="store_true")
     parser.add_argument("--screenshot", type=Path)
@@ -220,6 +229,10 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         candidate_reduction_fraction=candidate_reduction_fraction,
         required_candidate_reduction_fraction=args.min_candidate_reduction_fraction,
         required_joint_shrink_rad=args.min_joint_shrink_rad,
+        rejection_ranges=joint_rejection_ranges(
+            kinematics, capsules, directions, free_envelope.support_m,
+            export.lower, export.upper, baseline_q, tolerance=TOLERANCE,
+        ),
     )
 
 
@@ -425,7 +438,35 @@ def print_problem(problem, directions) -> None:
     print(f"  exported candidates: {int(diagnostics.candidate_feasible_count)}/{diagnostics.candidate_samples} feasible")
     print(f"  candidate reduction: {100.0 * problem.candidate_reduction_fraction:.2f}%")
     print(f"  maximum joint-interval shrinkage: {float(problem.joint_shrinkage.max()):.6f} rad")
-    print("  colors: white returns inside blue pre-obstacle reachable reference; light cyan prescribed; dark teal occupied; amber HAA; red violations only")
+    print("  colors: white returns inside blue pre-obstacle reachable reference; light cyan prescribed; dark teal occupied; amber HAA; magenta rejected; red violations only")
+    if problem.rejection_ranges is not None:
+        print_rejection(problem.rejection_ranges)
+
+
+def print_rejection(rejection) -> None:
+    if rejection is None:
+        return
+    print(f"\nPer-joint rejected sub-intervals (reference: {rejection.reference_source})")
+    if not rejection.feasible_reference:
+        print(f"  {rejection.reference_source}")
+        return
+    print(
+        f"  rejected joints: {rejection.rejected_joint_count}; "
+        f"max span {rejection.max_rejected_span_rad:.4f} rad at "
+        f"{EL4090_JOINT_NAMES[rejection.max_rejected_joint_index]}"
+    )
+    for joint, intervals in enumerate(rejection.rejected_intervals):
+        if intervals:
+            rendered = ", ".join(f"[{lo:+.4f}, {hi:+.4f}]" for lo, hi in intervals)
+            print(f"  {EL4090_JOINT_NAMES[joint]:8s} {rendered}")
+
+
+def print_exported_box(problem) -> None:
+    lower = problem.range_export.lower.detach().cpu().numpy()
+    upper = problem.range_export.upper.detach().cpu().numpy()
+    print("\nExported joint box [rad]")
+    for joint, name in enumerate(EL4090_JOINT_NAMES):
+        print(f"  {name:8s} [{lower[joint]:+.4f}, {upper[joint]:+.4f}]")
 
 
 def print_controls() -> None:
@@ -437,6 +478,7 @@ def print_controls() -> None:
         ("P", "toggle light-cyan prescribed free envelope"),
         ("O", "toggle dark-teal current occupied envelope"),
         ("H", "toggle amber HAA ranges"),
+        ("J", "toggle magenta rejected HAA sub-intervals"),
         ("R", "toggle blue pre-obstacle reachable reference"),
         ("C", "cycle overview and top cameras"),
         ("S", "capture screenshot and JSON evidence"),
@@ -496,7 +538,7 @@ def draw_cloud(gym, viewer, env, problem) -> None:
     add_bold_segments(gym, viewer, env, spokes, LIGHT_CYAN)
 
 
-def draw_haa(gym, viewer, env, kinematics, problem, pose) -> None:
+def draw_haa(gym, viewer, env, kinematics, problem, pose, rejection=None) -> None:
     origins, arcs, markers = haa_arc_geometry(
         kinematics, pose, problem.haa_ranges, radius=0.25, samples=41,
     )
@@ -504,6 +546,7 @@ def draw_haa(gym, viewer, env, kinematics, problem, pose) -> None:
     origins = origins.detach().cpu().numpy() + translation
     arcs = arcs.detach().cpu().numpy() + translation
     markers = markers.detach().cpu().numpy() + translation
+    haa_indices = [EL4090_JOINT_NAMES.index(f"{leg}_HAA") for leg in EL4090_LEG_NAMES]
     for index in range(6):
         add_bold_segments(
             gym, viewer, env, polyline_segments(arcs[index]), AMBER,
@@ -514,6 +557,20 @@ def draw_haa(gym, viewer, env, kinematics, problem, pose) -> None:
         add_bold_segments(
             gym, viewer, env, np.stack((origins[index], endpoint)), AMBER,
         )
+        if rejection is not None and rejection.feasible_reference:
+            for lo_v, hi_v in rejection.rejected_intervals[haa_indices[index]]:
+                sub = haa_arc_geometry_interval(
+                    kinematics, pose, problem.haa_ranges, index, lo_v, hi_v,
+                    radius=0.25, samples=17,
+                )
+                sub = sub.detach().cpu().numpy() + translation
+                # Elevate the rejected band so it renders above the amber arc
+                # instead of depth-fighting at the same z.
+                elevated = sub.copy()
+                elevated[:, 2] += 0.02
+                add_bold_segments(
+                    gym, viewer, env, polyline_segments(elevated), REJECTION_RED,
+                )
 
 
 def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, violation) -> None:
@@ -536,7 +593,8 @@ def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, v
             0.112, RED if violation else DARK_TEAL,
         )
     if state["haa"]:
-        draw_haa(gym, viewer, env, kinematics, problem, pose)
+        rejection = problem.rejection_ranges if state.get("rejection") else None
+        draw_haa(gym, viewer, env, kinematics, problem, pose, rejection=rejection)
     if state["reachable"]:
         draw_boundary(
             gym, viewer, env,
@@ -628,6 +686,7 @@ def create_simulation(args, initial_q):
         (gymapi.KEY_P, "prescribed"),
         (gymapi.KEY_O, "occupied"),
         (gymapi.KEY_H, "haa"),
+        (gymapi.KEY_J, "rejection"),
         (gymapi.KEY_R, "reachable"),
         (gymapi.KEY_C, "camera"),
         (gymapi.KEY_S, "capture"),
@@ -780,7 +839,11 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             "required_joint_interval_shrinkage_rad": problem.required_joint_shrink_rad,
         },
         "motion_summary": compact_stats(stats),
-        "visible_layers": {key: state[key] for key in ("lidar", "prescribed", "occupied", "haa", "reachable")},
+        "visible_layers": {key: state[key] for key in ("lidar", "prescribed", "occupied", "haa", "rejection", "reachable")},
+        "rejection_ranges": (
+            problem.rejection_ranges.to_evidence_dict()
+            if problem.rejection_ranges is not None else None
+        ),
         "semantic_mapping": {
             "white": "LiDAR returns",
             "light_cyan": "prescribed point-free envelope and active clearance spokes",
@@ -789,6 +852,7 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
                 "exported HAA intervals and current markers directed in body XY "
                 "from each URDF hip origin toward its physical FOOT link"
             ),
+            "magenta": "rejected sub-intervals of the exported HAA ranges",
             "blue": "pre-obstacle unconstrained reachable-foot reference",
             "red": "actual constraint violation only",
         },
@@ -846,6 +910,7 @@ def main() -> None:
     )
 
     if args.compute_only:
+        print_exported_box(problem)
         print(
             f"Compute-only motion: {trajectory.proposed_q.shape[0]} frames; "
             f"{int((trajectory.naive_excess_m > TOLERANCE).sum())} naive violations; "
@@ -864,6 +929,7 @@ def main() -> None:
         "prescribed": True,
         "occupied": True,
         "haa": True,
+        "rejection": args.show_rejection,
         "reachable": True,
         "camera": 0,
     }
@@ -893,7 +959,7 @@ def main() -> None:
                 elif event.action == "reset":
                     state["motion_step"] = 0
                     print("Motion phase reset")
-                elif event.action in ("lidar", "prescribed", "occupied", "haa", "reachable"):
+                elif event.action in ("lidar", "prescribed", "occupied", "haa", "rejection", "reachable"):
                     state[event.action] = not state[event.action]
                     print(f"{event.action} visible: {state[event.action]}")
                 elif event.action == "camera":
