@@ -92,6 +92,15 @@ class TestKinematicEnvelope(unittest.TestCase):
         support32 = KE.capsule_support(self.kin, q.float(), capsules, directions.float()).double()
         self.assertLess(float((support - support32).abs().max()), 2e-6)
 
+    def test_full_urdf_joint_limits_reach_three_rad(self):
+        # Regression: the demos' candidate reach spans the full URDF mechanical
+        # range (soft_fraction=1.0 => every joint ±3.0 rad) so the exported
+        # joint ranges can genuinely reach the URDF limit.
+        lower, upper = self.kin.joint_limits(soft_fraction=1.0, dtype=torch.float64)
+        self.assertTrue(torch.allclose(lower, torch.full_like(lower, -3.0)))
+        self.assertTrue(torch.allclose(upper, torch.full_like(upper, 3.0)))
+        self.assertTrue(torch.allclose((upper - lower) / 2, torch.full_like(upper, 3.0)))
+
     def test_torso_capsules_subset_and_smaller(self):
         full = KE.default_el4090_capsules()
         torso = KE.default_el4090_torso_capsules()

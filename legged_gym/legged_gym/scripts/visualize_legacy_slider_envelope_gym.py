@@ -89,20 +89,12 @@ def baseline_joint_pose():
     return torch.tensor([0.0, 0.60, -0.60] * 6)
 
 
-# The URDF HAA limits are ±3 rad (a full rotation), which is not the
-# physically meaningful range. The EL4090 RL pipeline
-# (envs/el_4090/spider_envelop/el4090_spider_config.py) bounds HAA by
-# morphology_haa_range_mammal_limit = 0.45 rad and
-# morphology_haa_range_relaxed_limit = 1.05 rad, relative to the mammal pose.
-# This demo's resting pose is the spider baseline (HAA = 0), so the effective
-# HAA excursion is bounded between those limits. 0.45 is too tight: the
-# reference reachable foot support can no longer contain the resting capsule
-# at the default MAX border (it pokes out ~2 mm). 0.50 rad is the smallest
-# round value above the mammal limit that keeps the resting pose feasible and
-# bounds the reference reach (~0.70 m lateral) to the same order as the
-# ZhangHT border widths (0.3-0.7 m), so the border binds across the slider
-# range instead of staying flat until the width approaches the body width.
-EFFECTIVE_HAA_HALF_RANGE = 0.50
+# MasterYip requested that the joint ranges genuinely reach the URDF
+# mechanical limits (±3 rad for every EL4090 joint). The candidate box and the
+# reference reachable cap therefore span the full URDF range. Consequence: the
+# width sliders no longer tighten the exported ranges until the border narrows
+# below the body width (the robot can tuck its legs inside any wider border),
+# which reverses the earlier 0.50 rad effective-HAA cap.
 
 
 def build_context(kinematics, args):
@@ -112,8 +104,8 @@ def build_context(kinematics, args):
     baseline_support = capsule_support(
         kinematics, baseline_q.unsqueeze(0), capsules, directions,
     )[0]
-    lower, upper = kinematics.joint_limits(soft_fraction=0.9)
-    half = torch.tensor([EFFECTIVE_HAA_HALF_RANGE, 0.42, 0.48] * 6)
+    lower, upper = kinematics.joint_limits(soft_fraction=1.0)
+    half = (upper - lower) / 2
     candidate_lower = torch.maximum(baseline_q - half, lower)
     candidate_upper = torch.minimum(baseline_q + half, upper)
     candidate_q = torch.cat((
