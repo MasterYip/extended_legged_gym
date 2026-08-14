@@ -170,6 +170,196 @@ EL4090 paper repository rather than `extended_legged_gym`. They should consume
 the equations, coordinate convention, limitations, and recorded benchmark in
 this note without duplicating the executable geometry implementation.
 
+## Isaac Gym comparison demo
+
+`scripts/visualize_kinematic_envelope_gym.py` is an RL-owned simulator demo,
+not a publication graph generator and not part of the training environment. It
+loads three fixed-base EL4090 actors without a policy checkpoint and compares
+compact-mammal, nominal-spider, and wide-low presets. Each actor carries its
+occupied capsule boundary, sampled reachable-foot boundary, and six physical
+hip-centered HAA interval arcs with bound rays and current-angle markers. The
+arc and marker directions are recomputed from URDF forward kinematics: the
+body-XY vector from each physical hip origin to its corresponding FOOT link is
+normalized in the hip-height plane for every sampled or current HAA pose. This
+avoids a fixed sign or assumed hip-frame axis. The actors move through smooth
+deterministic paths inside their own exported 18-joint intervals; the occupied
+boundaries and HAA markers update from those same poses on every rendered frame.
+
+The viewer prints the exact direction vectors, occupied/allowed/reachable
+support values, current 18-joint pose, range diagnostics, and HAA intervals in
+simulator order `LB LF LM RB RF RM`. Controls are printed at launch: number keys
+select a preset; Space cycles; A toggles automatic selection; M pauses or
+resumes joint and envelope motion; X resets the motion phase; O, R, and H
+toggle the three geometry layers; C cycles camera modes; P captures; and Esc
+exits.
+
+From `legged_gym/legged_gym`, validate preset computation without a viewer:
+
+```bash
+LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
+/home/user/miniforge3/envs/isaacgym/bin/python \
+  scripts/visualize_kinematic_envelope_gym.py --compute_only
+```
+
+Run a bounded GPU-0 viewer smoke and write one screenshot plus matching JSON
+outside this repository:
+
+```bash
+LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
+/home/user/miniforge3/envs/isaacgym/bin/python \
+  scripts/visualize_kinematic_envelope_gym.py \
+  --compute_device_id 0 --graphics_device_id 0 \
+  --max_steps 90 --auto_cycle_steps 20 --motion_period_steps 60 \
+  --screenshot_step 89 \
+  --screenshot /tmp/ENV-DESIGN-003-motion/isaac_gym_envelope_motion.png
+```
+
+The paired JSON is compact run evidence: it records visited presets, frame and
+joint-sample counts, exported bounds, observed per-joint extrema, violation
+count, and maximum bound excess. The viewer fails immediately if a rendered
+pose exceeds its active exported interval.
+
+Generated captures and numeric evidence are task-owned artifacts. Keep them in
+the task record or another external results location, never in the
+`extended_legged_gym` Git repository.
+
+## LiDAR-derived point-free envelope demo
+
+`scripts/visualize_lidar_free_envelope_gym.py` demonstrates the complete
+LiDAR-to-motion contract on one real, fixed-base EL4090 model. Before generating
+obstacles, it samples the declared unconstrained joint box $Q_0$ and computes a
+pre-obstacle reachable-foot reference
+
+$$
+h_k^{\mathrm{ref}}=
+\max_{q\in Q_0,\ell\in\mathcal L}u_k^\top f_\ell(q).
+$$
+
+This order avoids defining the reference from already constrained candidates.
+The default deterministic scan contains 20 sparse returns for 48 fixed normals.
+It reserves the three normals nearest each of $+y$ and $-y$ as lateral anchors
+so both middle-leg workspaces are constrained on every seed, then selects the
+remaining unique sectors randomly. Primary returns occupy at most the first
+12% of the feasible radial annulus beyond the collision-safe inner radius;
+lateral anchors use at most 4.2%. `--near_band_fraction` changes the primary
+band while preserving the clearance construction. Separated near-cluster and
+far-gap angles, angular offsets, and radial placement still vary from the seed.
+Pressing `G` therefore changes both the constrained-face set and polygon
+support, not merely point order.
+
+For ray unit vector $v_i$, the feasible radial annulus is resolved from the
+baseline occupied support and every face of the eroded reference polygon:
+
+$$
+r_i^-=
+\max\left\{r_{\min},
+\frac{h_{s(i)}^{\mathrm{occ}}(q_0)+d_{\mathrm{robot}}}
+{u_{s(i)}^\top v_i}\right\},
+$$
+
+$$
+r_i^+=
+\min\left\{r_{\max},
+\min_{k:u_k^\top v_i>0}
+\frac{h_k^{\mathrm{ref}}-d_{\mathrm{ref}}}{u_k^\top v_i}
+\right\}.
+$$
+
+The generator fails with the affected sector indices when $r_i^-\ge r_i^+$.
+Thus every generated return is outside the baseline capsule envelope by the
+declared clearance and inside the pre-obstacle reachable polygon by a numeric
+inward margin.
+
+Let normalized fixed normals be $u_k$, and assign each return $p_i$ to its
+nearest angular sector $s(i)$. The example declares the restricted polygon
+family
+
+$$
+\mathcal P(h)=\{x\in\mathbb R^2\mid u_k^\top x\le h_k,\ k=1,\ldots,K\},
+$$
+
+with the separable safety contract
+
+$$
+u_{s(i)}^\top p_i-h_{s(i)}\ge d_{\mathrm{point}}.
+$$
+
+Let $\mathcal S=\{s(i)\}$ be the point-supported faces. The pre-obstacle
+reachable support caps every face, including sparse unconstrained faces. The
+coordinatewise maximum in this declared capped family is
+
+$$
+h_k^\star=
+\begin{cases}
+\min\left\{h_k^{\mathrm{ref}},
+\min_{i:s(i)=k}u_k^\top p_i-d_{\mathrm{point}}\right\},
+& k\in\mathcal S,\\
+h_k^{\mathrm{ref}},& k\notin\mathcal S.
+\end{cases}
+$$
+
+Increasing a point-supported face violates its active return; increasing an
+unconstrained face violates its declared reference cap. This is the implemented
+and tested coordinatewise maximality claim. It is not a global maximum over
+arbitrary polygon topologies or alternative point-to-face assignments.
+
+The support $h^\star$ is passed to the sampled 18-joint range export. An
+axis-aligned joint box alone is not a collision certificate, so the animation
+proposes a smooth box-bounded pose and backtracks it toward a known feasible
+anchor until both constraints hold:
+
+$$
+q^-\le q(t)\le q^+,
+\qquad
+h_k^{\mathrm{occ}}(q(t))\le h_k^\star\quad\forall k.
+$$
+
+The default build additionally requires at least 5% of unconstrained candidates
+to be rejected and at least one exported joint interval to shrink by 0.03 rad.
+It records the achieved candidate-reduction fraction and all 18 interval
+shrinkages. These are example acceptance thresholds, not global guarantees.
+
+Light cyan means the prescribed LiDAR-derived envelope; dark teal means the
+current occupied capsule envelope. White star targets are returns, cyan spokes mark
+active limiting clearances, amber shows physical HAA ranges, and muted blue is
+the pre-obstacle unconstrained reachable reference. The blue layer is visible
+by default, so the lost blue-to-cyan free space and white returns inside it are
+directly inspectable. Boundaries, targets, spokes, and HAA geometry are each
+drawn twice with the comparison viewer's 0.008 m height offset. Red is reserved
+for a true violation.
+Controls are printed at launch: `G` regenerates with the next seed; `M`
+pauses motion; `X` resets phase; `L`, `P`, `O`, `H`, and `R` toggle
+layers; `C` changes camera; `S` captures; and Esc exits.
+
+Validate without a viewer:
+
+```bash
+LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
+/home/user/miniforge3/envs/isaacgym/bin/python \
+  scripts/visualize_lidar_free_envelope_gym.py \
+  --compute_only --seed 4090 --point_count 20 --directions 48
+```
+
+Run the bounded GPU viewer, keeping generated output outside this repository:
+
+```bash
+mkdir -p /tmp/ENV-DESIGN-003-lidar-sparse
+LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
+/home/user/miniforge3/envs/isaacgym/bin/python \
+  scripts/visualize_lidar_free_envelope_gym.py \
+  --compute_device_id 0 --graphics_device_id 0 \
+  --seed 4090 --point_count 20 --directions 48 \
+  --max_steps 180 --motion_period_steps 120 --screenshot_step 179 \
+  --screenshot /tmp/ENV-DESIGN-003-lidar-sparse/lidar_free_envelope.png
+```
+
+The matching JSON records scan parameters, ray annuli, reference containment,
+active limiting returns, constrained and unconstrained face indices, reference
+and prescribed supports and vertices, candidate rejection, per-joint
+shrinkage, exported ranges for all 18 joints, visible-layer semantics, and
+motion compliance. The viewer aborts if an accepted frame exceeds either its
+joint interval or occupied-envelope support.
+
 ## Limitations
 
 - Capsules are explicit low-cost proxies calibrated from URDF joint spans; they
@@ -182,7 +372,7 @@ this note without duplicating the executable geometry implementation.
 - The legacy 8-D projection discards asymmetry and is bounded to historical
   training ranges. It exists for checkpoint compatibility, not as a new state
   representation recommendation.
-- No simulator rollout, checkpoint evaluation, GPU parity, or hardware safety
-  validation is part of this CPU-only implementation task.
+- The viewer is a fixed-base geometry demonstration, not a policy rollout,
+  checkpoint evaluation, GPU parity result, or hardware safety validation.
 - The module is a proposed utility and has not been integrated into the
   EL4090 environment, observation computation, training loop, or deployment.
