@@ -82,6 +82,22 @@ def baseline_joint_pose():
     return torch.tensor([0.0, 0.60, -0.60] * 6)
 
 
+# The URDF HAA limits are ±3 rad (a full rotation), which is not the
+# physically meaningful range. The EL4090 RL pipeline
+# (envs/el_4090/spider_envelop/el4090_spider_config.py) bounds HAA by
+# morphology_haa_range_mammal_limit = 0.45 rad and
+# morphology_haa_range_relaxed_limit = 1.05 rad, relative to the mammal pose.
+# This demo's resting pose is the spider baseline (HAA = 0), so the effective
+# HAA excursion is bounded between those limits. 0.45 is too tight: the
+# reference reachable foot support can no longer contain the resting capsule
+# at the default MAX border (it pokes out ~2 mm). 0.50 rad is the smallest
+# round value above the mammal limit that keeps the resting pose feasible and
+# bounds the reference reach (~0.70 m lateral) to the same order as the
+# ZhangHT border widths (0.3-0.7 m), so the border binds across the slider
+# range instead of staying flat until the width approaches the body width.
+EFFECTIVE_HAA_HALF_RANGE = 0.50
+
+
 def build_context(kinematics, args):
     directions = support_directions(args.directions)
     capsules = default_el4090_capsules()
@@ -90,7 +106,7 @@ def build_context(kinematics, args):
         kinematics, baseline_q.unsqueeze(0), capsules, directions,
     )[0]
     lower, upper = kinematics.joint_limits(soft_fraction=0.9)
-    half = torch.tensor([0.95, 0.42, 0.48] * 6)
+    half = torch.tensor([EFFECTIVE_HAA_HALF_RANGE, 0.42, 0.48] * 6)
     candidate_lower = torch.maximum(baseline_q - half, lower)
     candidate_upper = torch.minimum(baseline_q + half, upper)
     candidate_q = torch.cat((
@@ -204,6 +220,14 @@ def result_summary(result):
         f"{int(diagnostics.box_envelope_violation_count)}/"
         f"{diagnostics.box_validation_samples}; {motion}"
     )
+
+
+def average_haa_range_deg(export):
+    """Average per-leg HAA span in degrees, or None for an empty export."""
+    haa = haa_ranges_from_joint_export(export)
+    if torch.isnan(haa).any():
+        return None
+    return float((haa[..., 1] - haa[..., 0]).mean() * 180.0 / math.pi)
 
 
 def live_point_source(values, context, args, generation):
@@ -428,10 +452,19 @@ def main():
     history = []
     captured = False
     step = 0
-    # The sweep exercises all three regimes: an accepted border (MAX), a
-    # moderately small border that admits some poses but not the resting one,
-    # and a very small border with no feasible pose. All recompute live now.
-    sweep = (LEGACY_MAXIMUM, (0.55, 0.62, 0.55, 0.85, -0.85), LEGACY_MIDPOINT)
+    # The sweep walks the front width through the slider range and records the
+    # exported per-leg HAA span on every recompute: the MAX border keeps the
+    # resting pose feasible (motion accepted), 0.50 and 0.40 still admit poses
+    # (0.40 freezes the resting pose), 0.30 tightens the HAA range strongly,
+    # and the final very narrow border has no feasible pose. All recompute
+    # live now, and the HAA range tightens instead of staying flat.
+    sweep = (
+        LEGACY_MAXIMUM,
+        (0.50, 0.70, 0.60, 0.88, -0.88),
+        (0.40, 0.70, 0.60, 0.86, -0.86),
+        (0.30, 0.70, 0.60, 0.84, -0.84),
+        (0.30, 0.50, 0.30, 0.70, -0.70),
+    )
     try:
         while panel.running and not gym.query_viewer_has_closed(viewer):
             panel.pump()
@@ -468,15 +501,21 @@ def main():
                     state["motion_step"] = 0
                     stats = new_stats(result.trajectory)
                     panel.update_result(result, elapsed_ms)
+                    haa_span = average_haa_range_deg(result.problem.range_export)
                     history.append({
                         "generation": panel.applied_generation,
                         "parameters": dict(zip(LEGACY_PARAMETER_ORDER, result.parameters)),
                         "feasible_candidate_count": int(
                             result.problem.range_export.diagnostics.candidate_feasible_count
                         ),
+                        "haa_range_deg": haa_span,
                         "elapsed_ms": elapsed_ms,
                     })
-                    print(f"  update {len(history)}: {result_summary(result)}; {elapsed_ms:.1f} ms")
+                    haa_text = (
+                        f" HAA {haa_span:.1f} deg" if haa_span is not None
+                        else " HAA infeasible"
+                    )
+                    print(f"  update {len(history)}: {result_summary(result)};{haa_text}; {elapsed_ms:.1f} ms")
             if result.trajectory is not None:
                 _, pose, naive_excess, accepted = accepted_motion_pose(
                     result.trajectory, state["motion_step"],
