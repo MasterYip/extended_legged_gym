@@ -55,7 +55,8 @@ class SliderResult:
     border_vertices_xy: torch.Tensor
     problem: LidarProblem
     # None when the resting pose cannot satisfy this envelope; the viewer then
-    # freezes at the resting pose and shows the red violation.
+    # freezes at the resting pose (the occupied torso turns red only when the
+    # torso itself exceeds the envelope).
     trajectory: object | None
 
 
@@ -560,16 +561,12 @@ def main():
                     result.trajectory, state["motion_step"],
                 )
                 update_stats(stats, result.problem, pose, naive_excess, accepted)
-                violation = (
-                    float(accepted.envelope_excess_m[0]) > TOLERANCE
-                    or float(accepted.joint_excess_rad[0]) > TOLERANCE
-                )
             else:
                 # Infeasible border: show the resting pose against the fresh
-                # envelope so the red violation is visible, and freeze motion.
+                # envelope and freeze motion. The occupied torso polygon turns
+                # red only when the torso itself exceeds the envelope.
                 pose = result.problem.baseline_q
                 naive_excess = 0.0
-                violation = True
             apply_pose(gym, env, actor, q_indices, pose)
             live_border, live_cloud = live_point_source(
                 panel.snapshot(), context, args, panel.requested_generation,
@@ -580,7 +577,7 @@ def main():
                 scene_state["haa"] = False  # empty ranges are NaN and must not be drawn
             draw_lidar_scene(
                 gym, viewer, env, kinematics, context["directions"],
-                result.problem, pose, scene_state, violation,
+                result.problem, pose, scene_state,
             )
             draw_boundary(
                 gym, viewer, env, live_border.detach().cpu().numpy(), 0.035, WHITE,

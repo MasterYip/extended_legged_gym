@@ -112,6 +112,22 @@ class TestKinematicEnvelope(unittest.TestCase):
         plus_y = int(torch.argmin((directions - torch.tensor([0.0, 1.0])).norm(dim=-1)))
         self.assertLess(float(resting_torso[plus_y]), float(resting_full[plus_y]))
 
+    def test_torso_color_mid_envelope(self):
+        # Regression for the reported case: an envelope larger than the torso
+        # but smaller than the full robot used to paint the torso red (because
+        # the color followed the full-robot violation flag). It must be teal.
+        q = torch.zeros(1, 18)
+        directions = KE.support_directions(32)
+        full = KE.capsule_support(self.kin, q, KE.default_el4090_capsules(), directions)[0]
+        torso = KE.capsule_support(self.kin, q, KE.default_el4090_torso_capsules(), directions)[0]
+        mid = 0.5 * (torso + full) + 0.05  # strictly clears the torso everywhere, still below the legs laterally
+        torso_xs = float((torso - mid).max())
+        full_xs = float((full - mid).max())
+        self.assertLess(torso_xs, 0.0)     # torso fits inside the mid envelope
+        self.assertGreater(full_xs, 0.0)   # the full robot exceeds it
+        color = "RED" if torso_xs > 1e-6 else "teal"
+        self.assertEqual(color, "teal")
+
     def test_margin_and_point_queries(self):
         q = torch.zeros(2, 18)
         directions = KE.support_directions(16)
