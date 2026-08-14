@@ -439,7 +439,7 @@ def print_problem(problem, directions) -> None:
     print(f"  exported candidates: {int(diagnostics.candidate_feasible_count)}/{diagnostics.candidate_samples} feasible")
     print(f"  candidate reduction: {100.0 * problem.candidate_reduction_fraction:.2f}%")
     print(f"  maximum joint-interval shrinkage: {float(problem.joint_shrinkage.max()):.6f} rad")
-    print("  colors: white returns inside blue pre-obstacle reachable reference; light cyan prescribed; dark teal occupied; amber HAA; magenta rejected; red violations only")
+    print("  colors: white returns inside blue pre-obstacle reachable reference; light cyan prescribed; dark teal occupied; amber HAA; magenta rejected; red = torso occupied envelope exceeds the declared envelope")
     if problem.rejection_ranges is not None:
         print_rejection(problem.rejection_ranges)
 
@@ -574,7 +574,7 @@ def draw_haa(gym, viewer, env, kinematics, problem, pose, rejection=None) -> Non
                 )
 
 
-def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, violation) -> None:
+def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state) -> None:
     gym.clear_lines(viewer)
     if state["lidar"]:
         draw_cloud(gym, viewer, env, problem)
@@ -586,14 +586,18 @@ def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, v
         )
     if state["occupied"]:
         # Occupied envelope drawn from the torso shape only, so the red/teal
-        # polygon reflects the body rather than the full leg reach.
+        # polygon reflects the body rather than the full leg reach. The color
+        # follows the torso's OWN envelope excess (not the full-robot flag):
+        # a torso that fits inside the declared envelope stays teal even when
+        # the legs poke out.
         occupied = capsule_support(
             kinematics, pose.unsqueeze(0), default_el4090_torso_capsules(), directions,
         )[0]
+        torso_violation = float((occupied - problem.free_envelope.support_m).max()) > TOLERANCE
         draw_boundary(
             gym, viewer, env,
             support_polygon(directions, occupied),
-            0.112, RED if violation else DARK_TEAL,
+            0.112, RED if torso_violation else DARK_TEAL,
         )
     if state["haa"]:
         rejection = problem.rejection_ranges if state.get("rejection") else None
@@ -857,7 +861,7 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             ),
             "magenta": "rejected sub-intervals of the exported HAA ranges",
             "blue": "pre-obstacle unconstrained reachable-foot reference",
-            "red": "actual constraint violation only",
+            "red": "torso occupied envelope exceeds the declared envelope (full-robot excess tracked separately in stats)",
         },
     }
     json_path = path.with_suffix(".json")
@@ -977,11 +981,7 @@ def main() -> None:
             )
             update_stats(stats, problem, pose, naive_excess, accepted)
             apply_pose(gym, env, actor, q_indices, pose)
-            violation = (
-                float(accepted.envelope_excess_m[0]) > TOLERANCE
-                or float(accepted.joint_excess_rad[0]) > TOLERANCE
-            )
-            draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, violation)
+            draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state)
             gym.simulate(sim)
             gym.fetch_results(sim, True)
             gym.step_graphics(sim)
