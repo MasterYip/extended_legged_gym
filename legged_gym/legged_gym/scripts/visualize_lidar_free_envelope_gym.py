@@ -34,7 +34,8 @@ from kinematic_envelope import (  # noqa: E402
     default_el4090_capsules,
     default_el4090_torso_capsules,
     deterministic_joint_samples,
-    export_envelope_joint_ranges,
+    export_envelope_joint_ranges_at_reference,
+    feasible_reference_q,
     haa_ranges_from_joint_export,
     joint_rejection_ranges,
     load_urdf_joints,
@@ -147,9 +148,6 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         baseline_q.unsqueeze(0),
         deterministic_joint_samples(candidate_lower, candidate_upper, 768, seed=seed + 100),
     ))
-    validation_q = deterministic_joint_samples(
-        candidate_lower, candidate_upper, 257, seed=seed + 200,
-    )
     reference_reachable_support = reachable_foot_support(
         kinematics, candidate_q.unsqueeze(0), directions,
     )[0]
@@ -183,15 +181,25 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
     if float((free_envelope.support_m - reference_reachable_support).max()) > TOLERANCE:
         raise RuntimeError("prescribed envelope exceeds pre-obstacle reachable reference")
 
-    export = export_envelope_joint_ranges(
+    # Same per-axis feasible-reach export as the slider demo: both the exported
+    # box and the rejection bands sweep each joint at a single feasible reference
+    # (baseline -> box center -> nearest feasible candidate sample).
+    reference, _reference_source = feasible_reference_q(
+        kinematics, capsules, directions, free_envelope.support_m,
+        effective_lower, effective_upper, baseline_q,
+        tolerance=TOLERANCE, fallback_candidates=candidate_q,
+    )
+    if reference is None:
+        reference = effective_lower
+    export = export_envelope_joint_ranges_at_reference(
         kinematics,
-        candidate_q,
-        validation_q,
+        capsules,
         directions,
         free_envelope.support_m,
         effective_lower,
         effective_upper,
-        capsules=capsules,
+        reference,
+        tolerance=TOLERANCE,
         box_validation_samples=256,
         box_validation_seed=seed + 300,
     )
@@ -235,7 +243,8 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         required_joint_shrink_rad=args.min_joint_shrink_rad,
         rejection_ranges=joint_rejection_ranges(
             kinematics, capsules, directions, free_envelope.support_m,
-            export.lower, export.upper, baseline_q, tolerance=TOLERANCE,
+            export.lower, export.upper, reference, tolerance=TOLERANCE,
+            fallback_candidates=candidate_q,
         ),
     )
 

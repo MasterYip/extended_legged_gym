@@ -379,6 +379,148 @@ class TestJointRejectionRanges(unittest.TestCase):
         self.assertEqual(result.reference_source, "box_center")
         self.assertTrue(torch.allclose(result.reference_q, torch.zeros(18)))
 
+    def test_feasible_reference_falls_back_to_nearest_candidate(self):
+        # Regression: at borders where neither the resting pose nor the box
+        # center is envelope-feasible, the rejection/export previously returned
+        # an empty marker. The nearest feasible candidate sample must be used so
+        # the per-axis sweep still has a validated reference.
+        lower = torch.full((18,), -3.0)
+        upper = torch.full((18,), 3.0)
+        # Envelope = the occupied support of a tucked pose (margin 0). The
+        # resting pose exceeds it, so both the preferred reference and the box
+        # center (0.0) are infeasible, while tucked candidates still fit.
+        target = torch.tensor([0.0, 1.0, -1.0] * 6)
+        allowed = KE.capsule_support(
+            self.kin, target.unsqueeze(0), self.capsules, self.directions,
+        )[0]
+        preferred = torch.zeros(18)
+        preferred_support = KE.capsule_support(
+            self.kin, preferred.unsqueeze(0), self.capsules, self.directions,
+        )[0]
+        self.assertFalse(torch.all(preferred_support <= allowed + 1e-6))
+        candidates = KE.deterministic_joint_samples(lower, upper, 512, seed=17)
+        support = KE.capsule_support(self.kin, candidates, self.capsules, self.directions)
+        feasible = (support <= allowed.unsqueeze(0) + 1e-6).all(-1)
+        self.assertGreater(int(feasible.sum()), 0)
+        reference, source = KE.feasible_reference_q(
+            self.kin, self.capsules, self.directions, allowed, lower, upper,
+            preferred, tolerance=1e-6, fallback_candidates=candidates,
+        )
+        self.assertEqual(source, "nearest feasible candidate")
+        feasible_q = candidates[feasible]
+        distance = (feasible_q - preferred.unsqueeze(0)).abs().amax(dim=-1)
+        expected = feasible_q[distance.argmin()]
+        self.assertTrue(torch.allclose(reference, expected))
+        reference_support = KE.capsule_support(
+            self.kin, reference.unsqueeze(0), self.capsules, self.directions,
+        )[0]
+        self.assertTrue(torch.all(reference_support <= allowed + 1e-6))
+
+    def test_rejection_robust_fallback_finds_nearest_feasible_candidate(self):
+        lower = torch.full((18,), -3.0)
+        upper = torch.full((18,), 3.0)
+        target = torch.tensor([0.0, 1.0, -1.0] * 6)
+        allowed = KE.capsule_support(
+            self.kin, target.unsqueeze(0), self.capsules, self.directions,
+        )[0]
+        preferred = torch.zeros(18)  # infeasible; box center is the same pose
+        candidates = KE.deterministic_joint_samples(lower, upper, 512, seed=17)
+        result = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions, allowed,
+            lower, upper, preferred, tolerance=1e-6,
+            fallback_candidates=candidates,
+        )
+        self.assertTrue(result.feasible_reference)
+        self.assertEqual(result.reference_source, "nearest feasible candidate")
+        self.assertIsNotNone(result.reference_q)
+
+
+class TestPerAxisExportAtReference(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.kin = KE.BatchedUrdfKinematics(KE.load_urdf_joints(URDF))
+        cls.directions = KE.support_directions(48)
+        cls.capsules = KE.default_el4090_capsules()
+        cls.reference = torch.zeros(18)
+        cls.lower = torch.full((18,), -0.4)
+        cls.upper = torch.full((18,), 0.4)
+        cls.base_support = KE.capsule_support(
+            cls.kin, cls.reference.unsqueeze(0), cls.capsules, cls.directions,
+        )[0]
+
+    def test_wide_envelope_exports_full_span(self):
+        allowed = self.base_support + 1.0
+        export = KE.export_envelope_joint_ranges_at_reference(
+            self.kin, self.capsules, self.directions, allowed,
+            self.lower, self.upper, self.reference,
+        )
+        self.assertTrue(bool(export.valid))
+        self.assertTrue(torch.allclose(export.lower, self.lower))
+        self.assertTrue(torch.allclose(export.upper, self.upper))
+
+    def test_tight_envelope_narrows_per_axis_and_keeps_reference(self):
+        allowed = self.base_support + 0.02
+        export = KE.export_envelope_joint_ranges_at_reference(
+            self.kin, self.capsules, self.directions, allowed,
+            self.lower, self.upper, self.reference,
+        )
+        self.assertTrue(bool(export.valid))
+        # The feasible reference is always inside the exported box.
+        self.assertTrue(torch.all(export.lower <= self.reference))
+        self.assertTrue(torch.all(self.reference <= export.upper))
+        # At least one axis must narrow below the mechanical limits.
+        self.assertLess(
+            float((export.upper - export.lower).min()),
+            float((self.upper - self.lower).min()),
+        )
+
+    def test_no_feasible_reference_returns_nan_marker(self):
+        allowed = self.base_support - 0.001  # the resting reference is infeasible
+        export = KE.export_envelope_joint_ranges_at_reference(
+            self.kin, self.capsules, self.directions, allowed,
+            self.lower, self.upper, self.reference,
+        )
+        self.assertFalse(bool(export.valid))
+        self.assertTrue(torch.isnan(export.lower).all())
+        self.assertTrue(torch.isnan(export.upper).all())
+        self.assertIn("no feasible reference", export.diagnostics.label)
+
+    def test_export_and_rejection_consistent(self):
+        # The per-axis export box is the feasible extent of the same sweep the
+        # rejection intervals report, so the two agree: the box spans exactly the
+        # feasible grid values and the rejected bands never cover the feasible
+        # reference value.
+        allowed = self.base_support + 0.02
+        export = KE.export_envelope_joint_ranges_at_reference(
+            self.kin, self.capsules, self.directions, allowed,
+            self.lower, self.upper, self.reference,
+        )
+        rejection = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions, allowed,
+            self.lower, self.upper, self.reference,
+        )
+        self.assertTrue(rejection.feasible_reference)
+        self.assertGreater(rejection.rejected_joint_count, 0)
+        _, feasible = KE._sweep_feasible_at_reference(
+            self.kin, self.capsules, self.directions, allowed,
+            self.lower, self.upper, self.reference,
+        )
+        step = (self.upper - self.lower) / 100
+        for joint in range(18):
+            grid = self.lower[joint] + torch.arange(101) * step[joint]
+            feasible_values = grid[feasible[joint]]
+            self.assertGreater(feasible_values.numel(), 0)
+            # The box spans the extreme feasible grid values on every axis
+            # (within float32 arithmetic on the two grid formulations).
+            self.assertLessEqual(float(export.lower[joint]), float(feasible_values.min()) + 1e-5)
+            self.assertGreaterEqual(float(export.upper[joint]), float(feasible_values.max()) - 1e-5)
+            # Rejected bands stay inside the mechanical limits and never cover
+            # the feasible reference value.
+            for lo, hi in rejection.rejected_intervals[joint]:
+                self.assertGreaterEqual(lo, float(self.lower[joint]) - 1e-6)
+                self.assertLessEqual(hi, float(self.upper[joint]) + 1e-6)
+                self.assertFalse(lo <= float(self.reference[joint]) <= hi)
+
 
 if __name__ == "__main__":
     unittest.main()

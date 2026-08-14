@@ -481,6 +481,222 @@ def export_envelope_joint_ranges(
     )
 
 
+def _sweep_feasible_at_reference(
+    kinematics: BatchedUrdfKinematics,
+    capsules: Sequence[CapsuleProxy],
+    directions: Tensor,
+    allowed_support: Tensor,
+    lower: Tensor,
+    upper: Tensor,
+    reference_q: Tensor,
+    *,
+    tolerance: float = 1e-6,
+    steps: int = 101,
+) -> Tuple[Tensor, Tensor]:
+    """Sweep each joint linearly over ``[lower, upper]`` with the other joints
+    pinned at ``reference_q`` and return the per-sweep envelope-feasibility mask.
+
+    Returns ``(sweep_values, feasible)`` with shape ``[J, steps]`` where
+    ``sweep_values[j, s]`` is the value of joint ``j`` at sweep step ``s`` and
+    ``feasible[j, s]`` is whether that pose stays inside ``allowed_support``.
+    This is the same 1-D scan ``joint_rejection_ranges`` applies, shared so the
+    per-axis export and the rejection intervals always come from one sweep.
+    """
+    num_joints = kinematics.num_dof
+    lower = lower.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    upper = upper.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    allowed = allowed_support.to(dtype=reference_q.dtype, device=reference_q.device)
+    base = reference_q.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    alpha = torch.linspace(0.0, 1.0, steps, dtype=lower.dtype, device=lower.device)
+    sweep_values = lower.unsqueeze(1) + alpha.unsqueeze(0) * (upper - lower).unsqueeze(1)
+    sweep_q = base.unsqueeze(0).unsqueeze(0).expand(num_joints, steps, num_joints).clone()
+    diagonal = torch.arange(num_joints, device=lower.device)
+    sweep_q[diagonal, :, diagonal] = sweep_values
+    support = capsule_support(kinematics, sweep_q, capsules, directions)
+    feasible = (support <= allowed.unsqueeze(0).unsqueeze(0) + tolerance).all(dim=-1)
+    # The reference pose itself is envelope-feasible (callers validate it), so
+    # the grid point nearest its value on each axis must also count as feasible;
+    # otherwise an off-grid reference could export NaN on an axis or be reported
+    # as "rejected" purely from grid spacing.
+    nearest = (sweep_values - base.unsqueeze(1)).abs().argmin(dim=-1)
+    feasible[torch.arange(num_joints, device=base.device), nearest] = True
+    return sweep_values, feasible
+
+
+def feasible_reference_q(
+    kinematics: BatchedUrdfKinematics,
+    capsules: Sequence[CapsuleProxy],
+    directions: Tensor,
+    allowed_support: Tensor,
+    lower: Tensor,
+    upper: Tensor,
+    preferred: Tensor,
+    *,
+    tolerance: float = 1e-6,
+    fallback_candidates: Optional[Tensor] = None,
+) -> Tuple[Optional[Tensor], str]:
+    """Pick the first envelope-feasible reference for the per-axis sweeps.
+
+    Tries ``preferred`` (the natural visual anchor, e.g. the resting pose), then
+    the exported box center ``0.5 * (lower + upper)``, then the feasible
+    candidate sample nearest to ``preferred`` when ``fallback_candidates`` is
+    given. Returns ``(reference_q, source)`` with ``source`` one of
+    ``"reference_q"``, ``"box_center"``, ``"nearest feasible candidate"``, or
+    ``(None, "none")`` when none is feasible.
+    """
+    num_joints = kinematics.num_dof
+    lower = lower.reshape(-1).to(dtype=preferred.dtype, device=preferred.device)
+    upper = upper.reshape(-1).to(dtype=preferred.dtype, device=preferred.device)
+    allowed = allowed_support.to(dtype=preferred.dtype, device=preferred.device)
+    base = preferred.reshape(-1).to(dtype=preferred.dtype, device=preferred.device)
+    for name, candidate in (("reference_q", base), ("box_center", 0.5 * (lower + upper))):
+        inside = bool((candidate >= lower - 1e-5).all().item()) and bool(
+            (candidate <= upper + 1e-5).all().item()
+        )
+        if not inside:
+            continue
+        support = capsule_support(
+            kinematics, candidate.unsqueeze(0), capsules, directions,
+        )[0]
+        if bool((support <= allowed + tolerance).all().item()):
+            return candidate, name
+    if fallback_candidates is not None:
+        candidates = fallback_candidates.to(dtype=preferred.dtype, device=preferred.device)
+        support = capsule_support(kinematics, candidates, capsules, directions)
+        feasible = (support <= allowed.unsqueeze(0) + tolerance).all(dim=-1)
+        indices = feasible.nonzero().flatten()
+        if indices.numel() > 0:
+            feasible_q = candidates[indices]
+            distance = (feasible_q - base.unsqueeze(0)).abs().amax(dim=-1)
+            return feasible_q[distance.argmin()], "nearest feasible candidate"
+    return None, "none"
+
+
+def export_envelope_joint_ranges_at_reference(
+    kinematics: BatchedUrdfKinematics,
+    capsules: Sequence[CapsuleProxy],
+    directions: Tensor,
+    allowed_support: Tensor,
+    lower: Tensor,
+    upper: Tensor,
+    reference_q: Tensor,
+    *,
+    tolerance: float = 1e-6,
+    steps: int = 101,
+    box_validation_samples: int = 256,
+    box_validation_seed: int = 4090,
+) -> EnvelopeJointRangeExport:
+    """Per-axis feasible joint box at a validated reference pose.
+
+    For every joint ``j`` the other joints are pinned at ``reference_q`` (which
+    must be envelope-feasible; use ``feasible_reference_q``) and ``q[j]`` is
+    swept linearly over ``[lower[j], upper[j]]``. ``lower[j]`` / ``upper[j]``
+    are the extreme feasible sweep values, so the box is the exact per-axis
+    projection of the envelope-feasible set at that reference rather than a
+    coordinatewise min/max over a candidate cloud. This keeps the export
+    meaningful when few candidate samples are envelope-feasible (the slider and
+    LiDAR demos span the full URDF box). Joints with no feasible value on their
+    axis export NaN. A Sobol audit over the returned box reports how many
+    Cartesian combinations inside it are infeasible.
+    """
+    num_joints = kinematics.num_dof
+    lower = lower.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    upper = upper.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    allowed = allowed_support.to(dtype=reference_q.dtype, device=reference_q.device)
+    base = reference_q.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    if lower.numel() != num_joints or upper.numel() != num_joints or allowed.shape != (directions.shape[0],):
+        raise ValueError("lower/upper must have num_dof entries and allowed_support must match the directions")
+    if steps < 2:
+        raise ValueError("steps must be at least two")
+    nan = torch.tensor(torch.nan, dtype=lower.dtype, device=lower.device)
+    empty_lower = nan.expand(num_joints).clone()
+    empty_upper = nan.expand(num_joints).clone()
+
+    reference_support = capsule_support(
+        kinematics, base.unsqueeze(0), capsules, directions,
+    )[0]
+    reference_feasible = bool((reference_support <= allowed + tolerance).all().item())
+    if not reference_feasible:
+        label = "no feasible reference; per-axis sweep not defined"
+        return EnvelopeJointRangeExport(
+            lower=empty_lower,
+            upper=empty_upper,
+            center=0.5 * (empty_lower + empty_upper),
+            half_range=0.5 * (empty_upper - empty_lower),
+            valid=torch.tensor(False),
+            diagnostics=EnvelopeRangeDiagnostics(
+                candidate_samples=steps * num_joints,
+                candidate_feasible_count=torch.tensor(0, dtype=lower.dtype, device=lower.device),
+                validation_samples=box_validation_samples,
+                validation_feasible_count=torch.tensor(0, dtype=lower.dtype, device=lower.device),
+                false_exclusion_count=torch.tensor(0, dtype=lower.dtype, device=lower.device),
+                box_validation_samples=box_validation_samples,
+                box_envelope_violation_count=torch.tensor(0, dtype=lower.dtype, device=lower.device),
+                box_envelope_violation_rate=torch.tensor(0.0, dtype=lower.dtype, device=lower.device),
+                max_box_envelope_violation=nan,
+                label=label,
+            ),
+        )
+
+    sweep_values, feasible = _sweep_feasible_at_reference(
+        kinematics, capsules, directions, allowed, lower, upper, base,
+        tolerance=tolerance, steps=steps,
+    )
+    feasible_count = feasible.sum(dim=-1)
+    box_lower = nan.expand(num_joints).clone()
+    box_upper = nan.expand(num_joints).clone()
+    for joint in range(num_joints):
+        first = feasible[joint].nonzero().flatten()
+        if first.numel() > 0:
+            # The reference pose is feasible, so its own value is always in the
+            # box even when the sweep grid straddles it asymmetrically.
+            box_lower[joint] = min(float(sweep_values[joint, first[0]]), float(base[joint]))
+            box_upper[joint] = max(float(sweep_values[joint, first[-1]]), float(base[joint]))
+        else:
+            box_lower[joint] = float(base[joint])
+            box_upper[joint] = float(base[joint])
+    box_lower = torch.maximum(box_lower, lower)
+    box_upper = torch.minimum(box_upper, upper)
+    valid = torch.tensor(
+        bool(feasible.any().item())
+        and bool(torch.isfinite(box_lower).all().item())
+        and bool(torch.isfinite(box_upper).all().item())
+    )
+
+    engine = torch.quasirandom.SobolEngine(num_joints, scramble=True, seed=box_validation_seed)
+    unit = engine.draw(box_validation_samples).to(dtype=lower.dtype, device=lower.device)
+    box_q = box_lower + unit * (box_upper - box_lower)
+    box_violation = capsule_support(kinematics, box_q, capsules, directions) - allowed.unsqueeze(0)
+    per_box_sample = box_violation.amax(dim=-1)
+    box_bad = (per_box_sample > tolerance) & valid
+    box_bad_count = box_bad.sum()
+    max_box_violation = per_box_sample.amax(dim=-1).clamp_min(0.0) if bool(valid.item()) else nan
+    label = (
+        "approximate (per-axis sweep at reference)"
+        if int(box_bad_count.item()) > 0
+        else "conservative on registered box-validation samples"
+    )
+    return EnvelopeJointRangeExport(
+        lower=box_lower,
+        upper=box_upper,
+        center=0.5 * (box_lower + box_upper),
+        half_range=0.5 * (box_upper - box_lower),
+        valid=valid,
+        diagnostics=EnvelopeRangeDiagnostics(
+            candidate_samples=steps * num_joints,
+            candidate_feasible_count=feasible_count.sum().to(lower.dtype),
+            validation_samples=box_validation_samples,
+            validation_feasible_count=box_bad_count.to(lower.dtype).clone(),
+            false_exclusion_count=torch.tensor(0, dtype=lower.dtype, device=lower.device),
+            box_validation_samples=box_validation_samples,
+            box_envelope_violation_count=box_bad_count,
+            box_envelope_violation_rate=box_bad_count.to(lower.dtype) / box_validation_samples,
+            max_box_envelope_violation=max_box_violation,
+            label=label,
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class JointRejectionRanges:
     """Per-joint rejected sub-intervals of an exported joint box.
@@ -550,6 +766,7 @@ def joint_rejection_ranges(
     *,
     tolerance: float = 1e-6,
     steps: int = 101,
+    fallback_candidates: Optional[Tensor] = None,
 ) -> JointRejectionRanges:
     """Per-joint rejected sub-intervals of an exported admissible joint box.
 
@@ -557,19 +774,20 @@ def joint_rejection_ranges(
     reference and ``q[j]`` is swept linearly over ``[lower[j], upper[j]]``.
     A swept pose is rejected when ``capsule_support(...) > allowed_support +
     tolerance`` for at least one support direction, the same feasibility test
-    ``export_envelope_joint_ranges`` applies to its candidate samples. The
-    returned intervals are the contiguous rejected runs in radians (endpoints
-    are half a sweep step interpolated and clamped to the exported range).
+    the per-axis export applies. The returned intervals are the contiguous
+    rejected runs in radians (endpoints are half a sweep step interpolated and
+    clamped to the exported range).
 
     Reference design: ``reference_q`` is preferred (the natural visual anchor;
-    for these examples it is the resting pose, inside the exported box whenever
-    the export is valid and envelope-feasible whenever the resting pose fits
-    the envelope). The exported box center ``0.5 * (lower + upper)`` is the
-    fallback. Both are validated for box membership and envelope feasibility:
-    the exported box is an axis-aligned over-approximation and its center is
-    not guaranteed feasible. When the export is empty (all-NaN box) or neither
-    candidate is feasible, ``feasible_reference`` is False and no intervals are
-    reported rather than raising.
+    for these examples it is the resting pose). The exported box center
+    ``0.5 * (lower + upper)`` is the first fallback, and when
+    ``fallback_candidates`` is given the feasible candidate sample nearest to
+    ``reference_q`` is the last fallback. All are validated for box membership
+    and envelope feasibility, because the exported box is an axis-aligned
+    over-approximation and neither its center nor an arbitrary reference is
+    guaranteed feasible. When the export is empty (all-NaN box) or no reference
+    is feasible, ``feasible_reference`` is False and no intervals are reported
+    rather than raising.
     """
     if steps < 2:
         raise ValueError("steps must be at least two")
@@ -591,27 +809,14 @@ def joint_rejection_ranges(
             max_rejected_joint_index=-1,
         )
     base = reference_q.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
-    center = 0.5 * (lower + upper)
-
-    chosen: Optional[Tensor] = None
-    source = ""
-    for name, candidate in (("reference_q", base), ("box_center", center)):
-        inside = bool((candidate >= lower - 1e-5).all().item()) and bool(
-            (candidate <= upper + 1e-5).all().item()
-        )
-        if not inside:
-            continue
-        support = capsule_support(
-            kinematics, candidate.unsqueeze(0), capsules, directions,
-        )[0]
-        if bool((support <= allowed + tolerance).all().item()):
-            chosen = candidate
-            source = name
-            break
+    chosen, source = feasible_reference_q(
+        kinematics, capsules, directions, allowed, lower, upper, base,
+        tolerance=tolerance, fallback_candidates=fallback_candidates,
+    )
     if chosen is None:
         return JointRejectionRanges(
             feasible_reference=False,
-            reference_source="no feasible reference among reference_q and box center",
+            reference_source="no feasible reference among reference_q, box center, and candidate samples",
             reference_q=None,
             rejected_intervals=empty,
             rejected_joint_count=0,
@@ -619,13 +824,10 @@ def joint_rejection_ranges(
             max_rejected_joint_index=-1,
         )
 
-    alpha = torch.linspace(0.0, 1.0, steps, dtype=lower.dtype, device=lower.device)
-    sweep_values = lower.unsqueeze(1) + alpha.unsqueeze(0) * (upper - lower).unsqueeze(1)
-    sweep_q = chosen.unsqueeze(0).unsqueeze(0).expand(num_joints, steps, num_joints).clone()
-    diagonal = torch.arange(num_joints, device=lower.device)
-    sweep_q[diagonal, :, diagonal] = sweep_values
-    support = capsule_support(kinematics, sweep_q, capsules, directions)
-    feasible = (support <= allowed.unsqueeze(0).unsqueeze(0) + tolerance).all(dim=-1)
+    sweep_values, feasible = _sweep_feasible_at_reference(
+        kinematics, capsules, directions, allowed, lower, upper, chosen,
+        tolerance=tolerance, steps=steps,
+    )
     rejected = ~feasible
 
     intervals: list[Tuple[Tuple[float, float], ...]] = []
