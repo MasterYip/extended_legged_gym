@@ -63,8 +63,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--box_validation_samples", type=int, default=256)
     parser.add_argument("--point_clearance", type=float, default=0.02)
     parser.add_argument("--reference_containment_margin", type=float, default=0.005)
-    parser.add_argument("--min_candidate_reduction_fraction", type=float, default=0.05)
-    parser.add_argument("--min_joint_shrink_rad", type=float, default=0.03)
     parser.add_argument("--motion_period_steps", type=int, default=120)
     parser.add_argument("--seed", type=int, default=4090)
     parser.add_argument("--max_steps", type=int, default=0, help="0 keeps both windows interactive")
@@ -166,8 +164,8 @@ def compute_result(kinematics, context, values, args, generation):
         candidate_upper=context["candidate_upper"],
         joint_shrinkage=shrinkage,
         candidate_reduction_fraction=reduction,
-        required_candidate_reduction_fraction=args.min_candidate_reduction_fraction,
-        required_joint_shrink_rad=args.min_joint_shrink_rad,
+        required_candidate_reduction_fraction=0.0,
+        required_joint_shrink_rad=0.0,
     )
     trajectory = build_motion_trajectory(
         problem, kinematics, directions, args.motion_period_steps,

@@ -241,8 +241,9 @@ constraint between them.
 
 This example is the existing LiDAR envelope demo with one controlled change:
 random returns are replaced by points derived from ZhangHT's five-parameter
-border. The envelope optimizer, capsule model, joint-range exporter, continuous
-motion generator, validation, and viewer layers remain the same.
+motion generator, geometric validity checks, and viewer layers remain the same.
+The random-cloud demo's optional material-impact gates are not used to reject a
+valid non-binding slider border.
 
 Let the registered outward directions be $u_k$, and let
 $\partial\mathcal B_Z(\theta)$ be the ZhangHT border for slider vector
