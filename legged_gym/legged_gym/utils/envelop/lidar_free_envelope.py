@@ -38,6 +38,9 @@ class PointFreeEnvelope:
     limiting_point_indices: Tensor
     limiting_points_xy: Tensor
     clearance_feet_xy: Tensor
+    constrained_face_indices: Tensor
+    unconstrained_face_indices: Tensor
+    cap_support_m: Tensor
     point_clearance_m: float
     optimality_scope: str
 
@@ -91,10 +94,11 @@ def generate_synthetic_lidar_cloud(
     robot_clearance: float,
     reference_containment_margin: float,
 ) -> SyntheticLidarCloud:
-    """Generate full-coverage returns inside a pre-obstacle reachable polygon.
+    """Generate sparse returns inside a pre-obstacle reachable polygon.
 
-    Every normal sector receives at least one return. Three angular clusters
-    pull returns inward while two gap directions push returns outward. The
+    For counts up to the direction count, returns occupy unique random sectors;
+    remaining faces stay unconstrained by points. Three angular clusters pull
+    returns inward while two gap directions push returns outward. The
     assigned-normal separation from the baseline support polygon is at least
     ``robot_clearance``. Each ray's upper radius is resolved from the
     pre-obstacle reachable polygon, independently of the constrained export.
@@ -106,8 +110,8 @@ def generate_synthetic_lidar_cloud(
         raise ValueError("baseline_support must match the direction count")
     if reference_reachable_support.shape != (sectors,):
         raise ValueError("reference_reachable_support must match the direction count")
-    if count < sectors:
-        raise ValueError("point count must cover every angular sector")
+    if count < 1:
+        raise ValueError("point count must be positive")
     if min_radius < 0.0 or max_radius <= min_radius:
         raise ValueError("radius bounds must satisfy 0 <= min < max")
     if robot_clearance <= 0.0:
@@ -119,21 +123,22 @@ def generate_synthetic_lidar_cloud(
         raise ValueError("reference containment margin erodes through the origin")
 
     generator = torch.Generator(device=directions.device).manual_seed(int(seed))
-    guaranteed_sectors = torch.arange(sectors, device=directions.device)
+    primary_count = min(count, sectors)
+    primary_sectors = torch.randperm(
+        sectors, generator=generator, device=directions.device,
+    )[:primary_count]
     extra_sectors = torch.randint(
-        sectors,
-        (count - sectors,),
-        generator=generator,
+        sectors, (count - primary_count,), generator=generator,
         device=directions.device,
     )
-    sector_indices = torch.cat((guaranteed_sectors, extra_sectors))
-    guaranteed = torch.cat((
-        torch.ones(sectors, dtype=torch.bool, device=directions.device),
-        torch.zeros(count - sectors, dtype=torch.bool, device=directions.device),
+    sector_indices = torch.cat((primary_sectors, extra_sectors))
+    primary = torch.cat((
+        torch.ones(primary_count, dtype=torch.bool, device=directions.device),
+        torch.zeros(count - primary_count, dtype=torch.bool, device=directions.device),
     ))
     permutation = torch.randperm(count, generator=generator, device=directions.device)
     sector_indices = sector_indices[permutation]
-    guaranteed = guaranteed[permutation]
+    primary = primary[permutation]
     sector_angles = torch.atan2(directions[:, 1], directions[:, 0])
     sector_width = 2.0 * torch.pi / sectors
     raw_jitter = torch.rand(
@@ -141,7 +146,7 @@ def generate_synthetic_lidar_cloud(
         device=directions.device,
     ) - 0.5
     jitter_span = torch.where(
-        guaranteed,
+        primary,
         torch.full((count,), 0.36, dtype=directions.dtype, device=directions.device),
         torch.full((count,), 0.90, dtype=directions.dtype, device=directions.device),
     )
@@ -201,7 +206,7 @@ def generate_synthetic_lidar_cloud(
         0.96,
     )
     radial_fraction = torch.where(
-        guaranteed, limiting_fraction, scattered_fraction,
+        primary, limiting_fraction, scattered_fraction,
     )
     infeasible = inner_radius >= outer_radius
     if bool(infeasible.any()):
@@ -246,39 +251,54 @@ def maximum_sector_point_free_envelope(
     directions: Tensor,
     *,
     point_clearance: float,
+    cap_support: Tensor,
 ) -> PointFreeEnvelope:
-    """Return the coordinatewise-maximal fixed-normal sector envelope.
+    """Return the coordinatewise-maximal capped fixed-normal envelope.
 
-    A return constrains only its assigned outward normal. Therefore each safe
-    support is independently maximized by the smallest assigned projection
-    minus ``point_clearance``. Raising any support violates its active return.
+    A return constrains only its assigned outward normal. Point-supported faces
+    use the minimum assigned projection minus ``point_clearance``; faces
+    without returns retain ``cap_support``. Raising any face either violates
+    its active return or the declared pre-obstacle cap.
     """
     if point_clearance <= 0.0:
         raise ValueError("point_clearance must be positive")
     sectors = directions.shape[0]
+    if cap_support.shape != (sectors,):
+        raise ValueError("cap_support must match the direction count")
     if cloud.sector_indices.shape != (cloud.points_xy.shape[0],):
         raise ValueError("cloud sector indices must match its points")
     projections = (cloud.points_xy * directions[cloud.sector_indices]).sum(dim=-1)
     mask = cloud.sector_indices[:, None] == torch.arange(sectors, device=directions.device)[None, :]
     assigned = projections[:, None].expand(-1, sectors).masked_fill(~mask, torch.inf)
     minimum_projection, limiting_indices = assigned.min(dim=0)
-    if not bool(torch.isfinite(minimum_projection).all()):
-        raise ValueError("every normal sector must contain at least one return")
-    support = minimum_projection - point_clearance
+    constrained = torch.isfinite(minimum_projection)
+    point_support = minimum_projection - point_clearance
+    support = torch.where(
+        constrained, torch.minimum(point_support, cap_support), cap_support,
+    )
     if bool((support <= 0.0).any()):
         raise ValueError("point clearance leaves a non-positive support")
+    constrained_faces = torch.nonzero(constrained, as_tuple=False).squeeze(-1)
+    unconstrained_faces = torch.nonzero(~constrained, as_tuple=False).squeeze(-1)
+    limiting_indices = limiting_indices[constrained]
     limiting_points = cloud.points_xy[limiting_indices]
-    face_distance = (limiting_points * directions).sum(dim=-1) - support
-    clearance_feet = limiting_points - face_distance[:, None] * directions
+    face_directions = directions[constrained_faces]
+    face_distance = (
+        limiting_points * face_directions
+    ).sum(dim=-1) - support[constrained_faces]
+    clearance_feet = limiting_points - face_distance[:, None] * face_directions
     return PointFreeEnvelope(
         support_m=support,
         limiting_point_indices=limiting_indices,
         limiting_points_xy=limiting_points,
         clearance_feet_xy=clearance_feet,
+        constrained_face_indices=constrained_faces,
+        unconstrained_face_indices=unconstrained_faces,
+        cap_support_m=cap_support,
         point_clearance_m=float(point_clearance),
         optimality_scope=(
-            "coordinatewise maximum in the declared fixed-normal polygon family "
-            "under nearest-angular-sector point assignment"
+            "coordinatewise maximum in the declared fixed-normal capped polygon "
+            "family under nearest-angular-sector point assignment"
         ),
     )
 

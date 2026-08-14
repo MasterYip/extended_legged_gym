@@ -125,7 +125,8 @@ def haa_arc_geometry(
     """Return physical hip origins, interval arcs, and current HAA markers.
 
     Results have shapes ``[6,3]``, ``[6,A,3]``, and ``[6,3]`` in the body
-    frame. The arc orientation comes from the actual URDF hip transforms.
+    frame. Every direction comes from the current URDF hip-to-foot FK vector,
+    projected into body XY and normalized in the physical hip-height plane.
     """
     if current_q.shape != (kinematics.num_dof,) or haa_ranges.shape != (6, 2):
         raise ValueError("Expected current_q [18] and haa_ranges [6,2]")
@@ -135,19 +136,29 @@ def haa_arc_geometry(
     alpha = torch.linspace(0.0, 1.0, samples, dtype=current_q.dtype, device=current_q.device)
     arc_q = current_q.repeat(samples, 1)
     arc_q[:, haa_indices] = torch.lerp(haa_ranges[:, 0], haa_ranges[:, 1], alpha[:, None])
-    links = [f"{leg}_HIP" for leg in EL4090_LEG_NAMES]
-    joints_by_name = {joint.name: joint for joint in kinematics.joints}
-    hfe_offsets = current_q.new_tensor([
-        joints_by_name[f"{leg}_HFE"].origin_xyz for leg in EL4090_LEG_NAMES
-    ])
-    hfe_offset_norms = hfe_offsets.norm(dim=-1, keepdim=True)
-    if bool((hfe_offset_norms <= torch.finfo(current_q.dtype).eps).any()):
-        raise ValueError("HFE joint origins must define nonzero outward leg directions")
-    origins_local = torch.zeros((6, 1, 3), dtype=current_q.dtype, device=current_q.device)
-    marker_local = radius * hfe_offsets[:, None, :] / hfe_offset_norms[:, None, :]
-    origins = kinematics.points(current_q.unsqueeze(0), links, origins_local)[0, :, 0]
-    arcs = kinematics.points(arc_q, links, marker_local)[:, :, 0].transpose(0, 1)
-    markers = kinematics.points(current_q.unsqueeze(0), links, marker_local)[0, :, 0]
+    hip_links = [f"{leg}_HIP" for leg in EL4090_LEG_NAMES]
+    foot_links = [f"{leg}_FOOT" for leg in EL4090_LEG_NAMES]
+    local_origins = torch.zeros(
+        (6, 1, 3), dtype=current_q.dtype, device=current_q.device,
+    )
+
+    def planar_hip_to_foot(q: Tensor) -> Tuple[Tensor, Tensor]:
+        hips = kinematics.points(q, hip_links, local_origins)[..., 0, :]
+        feet = kinematics.points(q, foot_links, local_origins)[..., 0, :]
+        direction = feet - hips
+        direction[..., 2] = 0.0
+        norms = direction.norm(dim=-1, keepdim=True)
+        if bool((norms <= torch.finfo(current_q.dtype).eps).any()):
+            raise ValueError("hip-to-foot XY directions must be nonzero")
+        return hips, direction / norms
+
+    arc_origins, arc_directions = planar_hip_to_foot(arc_q)
+    arcs = (arc_origins + radius * arc_directions).transpose(0, 1)
+    current_origins, current_directions = planar_hip_to_foot(
+        current_q.unsqueeze(0),
+    )
+    origins = current_origins[0]
+    markers = origins + radius * current_directions[0]
     return origins, arcs, markers
 
 

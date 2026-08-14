@@ -94,16 +94,24 @@ class TestGymEnvelopeGeometry(unittest.TestCase):
         self.assertTrue(torch.allclose((arcs - origins[:, None]).norm(dim=-1), torch.full((6, 17), 0.2, dtype=torch.float64), atol=1e-12))
         self.assertTrue(torch.allclose((markers - origins).norm(dim=-1), torch.full((6,), 0.2, dtype=torch.float64), atol=1e-12))
 
-        hfe_links = [f"{leg}_THIGH" for leg in KE.EL4090_LEG_NAMES]
+        foot_links = [f"{leg}_FOOT" for leg in KE.EL4090_LEG_NAMES]
         local_origins = torch.zeros((6, 1, 3), dtype=torch.float64)
-        hfe_origins = self.kinematics.points(
-            current.unsqueeze(0), hfe_links, local_origins,
+        foot_origins = self.kinematics.points(
+            current.unsqueeze(0), foot_links, local_origins,
         )[0, :, 0]
-        marker_directions = torch.nn.functional.normalize(markers - origins, dim=-1)
-        physical_leg_directions = torch.nn.functional.normalize(hfe_origins - origins, dim=-1)
+        marker_xy = markers[:, :2] - origins[:, :2]
+        physical_xy = foot_origins[:, :2] - origins[:, :2]
+        marker_directions = torch.nn.functional.normalize(marker_xy, dim=-1)
+        physical_leg_directions = torch.nn.functional.normalize(physical_xy, dim=-1)
         alignment = (marker_directions * physical_leg_directions).sum(dim=-1)
         self.assertTrue(torch.allclose(
             alignment, torch.ones(6, dtype=torch.float64), atol=1e-12,
+        ))
+        reversed_alignment = ((-marker_directions) * physical_leg_directions).sum(-1)
+        self.assertTrue(bool((reversed_alignment < 0.0).all()))
+        self.assertTrue(torch.allclose(markers[:, 2], origins[:, 2], atol=1e-12))
+        self.assertTrue(torch.allclose(
+            arcs[:, :, 2], origins[:, None, 2].expand(-1, 17), atol=1e-12,
         ))
 
     def test_demo_preset_is_deterministic_and_has_numeric_haa_ranges(self):

@@ -51,7 +51,7 @@ class TestLidarFreeEnvelope(unittest.TestCase):
     def make_cloud(self, seed=4090):
         return LFE.generate_synthetic_lidar_cloud(
             self.directions, self.anchor_support, self.reference_support,
-            count=192, seed=seed, min_radius=0.0, max_radius=2.10,
+            count=20, seed=seed, min_radius=0.0, max_radius=2.10,
             robot_clearance=0.05, reference_containment_margin=0.005,
         )
 
@@ -73,13 +73,13 @@ class TestLidarFreeEnvelope(unittest.TestCase):
         self.assertFalse(
             torch.equal(first.near_cluster_centers_rad, changed.near_cluster_centers_rad),
         )
-        self.assertEqual(first.points_xy.shape, (192, 2))
+        self.assertEqual(first.points_xy.shape, (20, 2))
         self.assertTrue(bool((first.radii_m >= first.ray_inner_radius_m).all()))
         self.assertTrue(bool((first.radii_m <= first.ray_outer_radius_m).all()))
         self.assertTrue(bool((first.radii_m <= 2.10).all()))
-        self.assertTrue(torch.equal(torch.unique(first.sector_indices), torch.arange(48)))
-        self.assertEqual(int(first.sector_counts.min()), 1)
-        self.assertGreater(int(first.sector_counts.max()), int(first.sector_counts.min()))
+        self.assertEqual(torch.unique(first.sector_indices).numel(), 20)
+        self.assertEqual(int(first.sector_counts.min()), 0)
+        self.assertEqual(int(first.sector_counts.max()), 1)
         projection = (first.points_xy * self.directions[first.sector_indices]).sum(-1)
         clearance = projection - self.anchor_support[first.sector_indices]
         self.assertGreaterEqual(float(clearance.min()), 0.05 - 2e-6)
@@ -103,7 +103,7 @@ class TestLidarFreeEnvelope(unittest.TestCase):
                 float(separation.min()),
                 LFE.MIN_STRUCTURE_CENTER_SEPARATION_RAD - 1e-6,
             )
-            self.assertTrue(torch.equal(torch.unique(cloud.sector_indices), torch.arange(48)))
+            self.assertEqual(torch.unique(cloud.sector_indices).numel(), 20)
             self.assertLessEqual(
                 float(LFE.polygon_support_excess(
                     cloud.points_xy, self.directions, self.reference_support,
@@ -115,28 +115,50 @@ class TestLidarFreeEnvelope(unittest.TestCase):
         cloud = self.make_cloud()
         envelope = LFE.maximum_sector_point_free_envelope(
             cloud, self.directions, point_clearance=0.02,
+            cap_support=self.reference_support,
         )
         clearances = LFE.assigned_point_clearances(
             cloud, self.directions, envelope.support_m,
         )
         self.assertGreaterEqual(float(clearances.min()), 0.02 - 2e-6)
         limiting = clearances[envelope.limiting_point_indices]
-        self.assertTrue(torch.allclose(limiting, torch.full((48,), 0.02), atol=2e-6))
+        self.assertTrue(torch.allclose(limiting, torch.full((20,), 0.02), atol=2e-6))
+        self.assertEqual(envelope.constrained_face_indices.numel(), 20)
+        self.assertEqual(envelope.unconstrained_face_indices.numel(), 28)
+        self.assertTrue(torch.equal(
+            envelope.support_m[envelope.unconstrained_face_indices],
+            self.reference_support[envelope.unconstrained_face_indices],
+        ))
         self.assertLessEqual(
             float((envelope.support_m - self.reference_support).max()), 1e-6,
         )
 
         # Raising any face breaks clearance at that face's active return.
-        raised = envelope.support_m.unsqueeze(0).repeat(48, 1)
-        raised[torch.arange(48), torch.arange(48)] += 1e-4
+        faces = envelope.constrained_face_indices
+        raised = envelope.support_m.unsqueeze(0).repeat(faces.numel(), 1)
+        raised[torch.arange(faces.numel()), faces] += 1e-4
         points = cloud.points_xy[envelope.limiting_point_indices]
-        projection = (points * self.directions).sum(-1)
-        self.assertTrue(bool((projection - raised.diagonal() < 0.02).all()))
+        projection = (points * self.directions[faces]).sum(-1)
+        raised_faces = raised[torch.arange(faces.numel()), faces]
+        self.assertTrue(bool((projection - raised_faces < 0.02).all()))
+
+        changed = LFE.maximum_sector_point_free_envelope(
+            self.make_cloud(seed=4091),
+            self.directions,
+            point_clearance=0.02,
+            cap_support=self.reference_support,
+        )
+        support_distance = (envelope.support_m - changed.support_m).abs().mean()
+        self.assertGreater(float(support_distance), 0.02)
+        self.assertFalse(torch.equal(
+            envelope.constrained_face_indices, changed.constrained_face_indices,
+        ))
 
     def test_obstacles_materially_reduce_candidates_and_joint_ranges(self):
         cloud = self.make_cloud()
         envelope = LFE.maximum_sector_point_free_envelope(
             cloud, self.directions, point_clearance=0.02,
+            cap_support=self.reference_support,
         )
         support = KE.capsule_support(
             self.kinematics, self.candidate_q, self.capsules, self.directions,

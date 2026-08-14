@@ -110,16 +110,18 @@ support discretization.
 | Teal | Current occupied capsule boundary. |
 | Cyan | Preset reachable-foot boundary. |
 | Amber | Exported HAA interval arcs. |
-| Red radial marker | Current HAA direction, oriented from each hip toward its URDF HFE attachment. |
+| Red radial marker | Current HAA direction, derived from the physical hip-to-foot body-XY vector at the current pose. |
 | Red, amber, or cyan robot accents | Compact, nominal, or wide preset identity; these accents are not violation indicators. |
 
 ## LiDAR-Prescribed Free Envelope
 
-The LiDAR example creates seeded returns inside the pre-obstacle reachable
-envelope and outside the baseline occupied robot envelope. It guarantees at
-least one return in every angular sector, while randomizing sector density,
-cluster and gap locations, angular jitter, and radial placement. For direction
-$\mathbf u_k$, the accepted animation maintains
+The LiDAR example creates 20 sparse seeded returns inside the pre-obstacle
+reachable envelope and outside the baseline occupied robot envelope. Returns
+occupy unique random sectors by default; faces without a return retain the blue
+pre-obstacle reference cap. Seed changes randomize the constrained-face set,
+cluster and gap locations, angular jitter, radial placement, and therefore the
+light-cyan polygon shape. For direction $\mathbf u_k$, the accepted animation
+maintains
 
 $$
 h_{\mathrm{occ}}(\mathbf u_k;\mathbf q)
@@ -152,11 +154,11 @@ To check another deterministic cloud:
 
 ```bash
 python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
-  --compute_only --seed 4091 --point_count 256
+  --compute_only --seed 4091 --point_count 20
 ```
 
-`--point_count` must be at least `--directions` because every sector receives a
-return.
+`--point_count` may be smaller than `--directions`; it must be positive.
+The output reports point-constrained and reference-capped face counts.
 
 ### Bounded viewer and evidence capture
 
@@ -208,7 +210,7 @@ python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
 | Blue | Pre-obstacle unconstrained reachable-foot reference. | Outer reference used to bound point generation and the prescribed envelope. |
 | Light cyan | Prescribed point-free envelope and active clearance spokes. | Must not exceed the blue reference. |
 | Dark teal | Current occupied capsule envelope. | Must remain inside the light-cyan envelope. |
-| Amber | Exported HAA intervals and current directions toward the URDF HFE attachments. | Motion must remain inside the exported intervals. |
+| Amber | Exported HAA intervals and current body-XY hip-to-foot directions from URDF FK. | Motion must remain inside the exported intervals. |
 | Red | Actual joint or envelope violation only. | Must never appear in an accepted run. |
 
 The blue and dark-teal boundaries describe different quantities: blue is a
@@ -263,7 +265,7 @@ the screenshot suffix with `.json`.
 
 ### LiDAR argument validation fails
 
-Keep `--directions` at least 8, `--point_count` at least the direction count,
+Keep `--directions` at least 8, `--point_count` positive,
 `--point_clearance` smaller than `--robot_clearance`, and
 `--reference_containment_margin` positive. Start from the defaults when testing a
 new machine, then change one parameter at a time.

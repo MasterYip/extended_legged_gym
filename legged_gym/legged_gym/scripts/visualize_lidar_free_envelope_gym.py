@@ -47,14 +47,14 @@ from lidar_free_envelope import (  # noqa: E402
 )
 
 
-GRAPHITE = (0.125, 0.149, 0.180)
-GROUND = (0.55, 0.57, 0.58)
-WHITE = (0.96, 0.97, 0.98)
-LIGHT_CYAN = (0.32, 0.86, 0.90)
-DARK_TEAL = (0.00, 0.38, 0.40)
-AMBER = (0.90, 0.62, 0.15)
-REACHABLE_BLUE = (0.28, 0.45, 0.72)
-RED = (0.86, 0.16, 0.13)
+GRAPHITE = (0.10, 0.12, 0.14)
+GROUND = (0.34, 0.36, 0.38)
+WHITE = (1.00, 1.00, 1.00)
+LIGHT_CYAN = (0.08, 0.94, 1.00)
+DARK_TEAL = (0.00, 0.72, 0.60)
+AMBER = (1.00, 0.64, 0.06)
+REACHABLE_BLUE = (0.16, 0.42, 1.00)
+RED = (1.00, 0.10, 0.06)
 BASE_HEIGHT = 0.58
 TOLERANCE = 1e-6
 
@@ -82,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compute_device_id", type=int, default=0)
     parser.add_argument("--graphics_device_id", type=int, default=0)
     parser.add_argument("--seed", type=int, default=4090)
-    parser.add_argument("--point_count", type=int, default=192)
+    parser.add_argument("--point_count", type=int, default=20)
     parser.add_argument("--directions", type=int, default=48)
     parser.add_argument("--min_radius", type=float, default=0.0)
     parser.add_argument("--max_radius", type=float, default=2.10)
@@ -141,7 +141,10 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
     if float(reference_excess.max()) > -args.reference_containment_margin + 5e-6:
         raise RuntimeError("LiDAR return escaped the eroded reference reachable envelope")
     free_envelope = maximum_sector_point_free_envelope(
-        cloud, directions, point_clearance=args.point_clearance,
+        cloud,
+        directions,
+        point_clearance=args.point_clearance,
+        cap_support=reference_reachable_support,
     )
     if float((baseline_support - free_envelope.support_m).max()) > TOLERANCE:
         raise RuntimeError("LiDAR envelope does not contain the feasible anchor")
@@ -305,7 +308,12 @@ def print_problem(problem, directions) -> None:
     )
     print("\nLiDAR free-envelope definition")
     print(f"  seed: {problem.seed}")
-    print(f"  returns: {problem.cloud.points_xy.shape[0]} across {directions.shape[0]} angular sectors")
+    print(
+        f"  returns: {problem.cloud.points_xy.shape[0]}; "
+        f"{problem.free_envelope.constrained_face_indices.numel()} constrained "
+        f"and {problem.free_envelope.unconstrained_face_indices.numel()} "
+        f"reference-capped faces"
+    )
     cluster_text = ", ".join(
         f"{float(value):.2f}" for value in problem.cloud.near_cluster_centers_rad
     )
@@ -313,7 +321,7 @@ def print_problem(problem, directions) -> None:
         f"{float(value):.2f}" for value in problem.cloud.far_gap_centers_rad
     )
     print(
-        "  structure: randomized sector density; guaranteed full coverage; "
+        "  structure: sparse random face assignment; "
         f"near clusters at {cluster_text} rad; far gaps at {gap_text} rad"
     )
     print(f"  baseline capsule-envelope clearance: {float(baseline_clearance.min()):.6f} m minimum")
@@ -358,20 +366,33 @@ def add_segments(gym, viewer, env, segments, color) -> None:
 
 def draw_boundary(gym, viewer, env, polygon, height, color) -> None:
     points = np.column_stack((polygon, np.full(len(polygon), height)))
-    add_segments(gym, viewer, env, polyline_segments(points, closed=True), color)
-    raised = points.copy()
-    raised[:, 2] += 0.007
-    add_segments(gym, viewer, env, polyline_segments(raised, closed=True), color)
+    for z_offset in (0.0, 0.008, 0.016):
+        raised = points.copy()
+        raised[:, 2] += z_offset
+        add_segments(
+            gym, viewer, env, polyline_segments(raised, closed=True), color,
+        )
 
 
 def draw_cloud(gym, viewer, env, problem) -> None:
     points = problem.cloud.points_xy.detach().cpu().numpy()
-    size = 0.018
-    z = 0.045
+    size = 0.040
+    z = 0.120
     crosses = []
     for x, y in points:
-        crosses.extend(((x - size, y, z), (x + size, y, z), (x, y - size, z), (x, y + size, z)))
-    add_segments(gym, viewer, env, np.asarray(crosses), WHITE)
+        crosses.extend((
+            (x - size, y, z), (x + size, y, z),
+            (x, y - size, z), (x, y + size, z),
+            (x - 0.72 * size, y - 0.72 * size, z),
+            (x + 0.72 * size, y + 0.72 * size, z),
+            (x - 0.72 * size, y + 0.72 * size, z),
+            (x + 0.72 * size, y - 0.72 * size, z),
+        ))
+    crosses = np.asarray(crosses)
+    add_segments(gym, viewer, env, crosses, WHITE)
+    raised_crosses = crosses.copy()
+    raised_crosses[:, 2] += 0.008
+    add_segments(gym, viewer, env, raised_crosses, WHITE)
     limiting = problem.free_envelope.limiting_points_xy.detach().cpu().numpy()
     feet = problem.free_envelope.clearance_feet_xy.detach().cpu().numpy()
     spokes = np.stack((
@@ -379,6 +400,9 @@ def draw_cloud(gym, viewer, env, problem) -> None:
         np.column_stack((feet, np.full(len(feet), z))),
     ), axis=1).reshape(-1, 3)
     add_segments(gym, viewer, env, spokes, LIGHT_CYAN)
+    raised_spokes = spokes.copy()
+    raised_spokes[:, 2] += 0.008
+    add_segments(gym, viewer, env, raised_spokes, LIGHT_CYAN)
 
 
 def draw_haa(gym, viewer, env, kinematics, problem, pose) -> None:
@@ -391,10 +415,16 @@ def draw_haa(gym, viewer, env, kinematics, problem, pose) -> None:
     markers = markers.detach().cpu().numpy() + translation
     for index in range(6):
         add_segments(gym, viewer, env, polyline_segments(arcs[index]), AMBER)
+        raised_arc = arcs[index].copy()
+        raised_arc[:, 2] += 0.008
+        add_segments(gym, viewer, env, polyline_segments(raised_arc), AMBER)
         bounds = np.stack((origins[index], arcs[index, 0], origins[index], arcs[index, -1]))
-        add_segments(gym, viewer, env, bounds, GRAPHITE)
+        add_segments(gym, viewer, env, bounds, AMBER)
         endpoint = origins[index] + 1.28 * (markers[index] - origins[index])
         add_segments(gym, viewer, env, np.stack((origins[index], endpoint)), AMBER)
+        raised_marker = np.stack((origins[index], endpoint)).copy()
+        raised_marker[:, 2] += 0.008
+        add_segments(gym, viewer, env, raised_marker, AMBER)
 
 
 def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, violation) -> None:
@@ -405,7 +435,7 @@ def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, v
         draw_boundary(
             gym, viewer, env,
             support_polygon(directions, problem.free_envelope.support_m),
-            0.060, LIGHT_CYAN,
+            0.080, LIGHT_CYAN,
         )
     if state["occupied"]:
         occupied = capsule_support(
@@ -414,7 +444,7 @@ def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, v
         draw_boundary(
             gym, viewer, env,
             support_polygon(directions, occupied),
-            0.086, RED if violation else DARK_TEAL,
+            0.112, RED if violation else DARK_TEAL,
         )
     if state["haa"]:
         draw_haa(gym, viewer, env, kinematics, problem, pose)
@@ -422,15 +452,15 @@ def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, v
         draw_boundary(
             gym, viewer, env,
             support_polygon(directions, problem.reference_reachable_support),
-            0.030, REACHABLE_BLUE,
+            0.048, REACHABLE_BLUE,
         )
 
 
 def set_camera(gym, viewer, mode: int) -> None:
     if mode == 0:
-        position, target = (3.45, -3.25, 3.20), (0.0, 0.0, 0.28)
+        position, target = (3.60, -2.80, 3.80), (0.0, 0.0, 0.24)
     else:
-        position, target = (0.05, -0.05, 5.2), (0.0, 0.0, 0.12)
+        position, target = (0.04, -0.04, 3.80), (0.0, 0.0, 0.10)
     gym.viewer_camera_look_at(
         viewer, None, gymapi.Vec3(*position), gymapi.Vec3(*target),
     )
@@ -485,6 +515,12 @@ def create_simulation(args, initial_q):
             env, actor, body_index, gymapi.MESH_VISUAL, gymapi.Vec3(*GRAPHITE),
         )
     gym.prepare_sim(sim)
+    gym.set_light_parameters(
+        sim, 0,
+        gymapi.Vec3(0.92, 0.92, 0.92),
+        gymapi.Vec3(0.36, 0.36, 0.36),
+        gymapi.Vec3(-0.5, -0.4, -1.0),
+    )
 
     camera = gymapi.CameraProperties()
     camera.width = 1600
@@ -547,7 +583,10 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
         "cloud": {
             "seed": problem.seed,
             "count": int(problem.cloud.points_xy.shape[0]),
-            "angular_coverage": "every fixed-normal sector has at least one jittered return",
+            "angular_coverage": (
+                "sparse nearest-sector assignment; faces without returns retain "
+                "the pre-obstacle reachable support cap"
+            ),
             "structure": {
                 "randomization": (
                     "seeded uneven sector density, randomized cluster/gap "
@@ -605,6 +644,18 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             (problem.free_envelope.support_m - problem.reference_reachable_support).max()
         ),
         "limiting_point_indices": problem.free_envelope.limiting_point_indices.detach().cpu().tolist(),
+        "constrained_face_indices": (
+            problem.free_envelope.constrained_face_indices.detach().cpu().tolist()
+        ),
+        "unconstrained_face_indices": (
+            problem.free_envelope.unconstrained_face_indices.detach().cpu().tolist()
+        ),
+        "constrained_face_count": int(
+            problem.free_envelope.constrained_face_indices.numel()
+        ),
+        "unconstrained_face_count": int(
+            problem.free_envelope.unconstrained_face_indices.numel()
+        ),
         "joint_order": list(EL4090_JOINT_NAMES),
         "exported_joint_lower_rad": problem.range_export.lower.detach().cpu().tolist(),
         "exported_joint_upper_rad": problem.range_export.upper.detach().cpu().tolist(),
@@ -630,8 +681,8 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
             "light_cyan": "prescribed point-free envelope and active clearance spokes",
             "dark_teal": "current occupied capsule envelope",
             "amber": (
-                "exported HAA intervals and current markers directed from each "
-                "hip toward its URDF HFE attachment"
+                "exported HAA intervals and current markers directed in body XY "
+                "from each URDF hip origin toward its physical FOOT link"
             ),
             "blue": "pre-obstacle unconstrained reachable-foot reference",
             "red": "actual constraint violation only",
@@ -646,8 +697,8 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
 def validate_args(args) -> None:
     if args.directions < 8:
         raise ValueError("--directions must be at least 8")
-    if args.point_count < args.directions:
-        raise ValueError("--point_count must cover every direction sector")
+    if args.point_count < 1:
+        raise ValueError("--point_count must be positive")
     if args.motion_period_steps <= 0:
         raise ValueError("--motion_period_steps must be positive")
     if args.point_clearance >= args.robot_clearance:

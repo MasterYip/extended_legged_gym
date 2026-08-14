@@ -178,12 +178,12 @@ loads three fixed-base EL4090 actors without a policy checkpoint and compares
 compact-mammal, nominal-spider, and wide-low presets. Each actor carries its
 occupied capsule boundary, sampled reachable-foot boundary, and six physical
 hip-centered HAA interval arcs with bound rays and current-angle markers. The
-arc radial direction follows each leg's hip-to-HFE attachment vector from the
-EL4090 URDF, so the marker points toward the physical leg rather than assuming
-a shared hip-frame axis. The actors move through smooth deterministic paths
-inside their own exported
-18-joint intervals; the occupied boundaries and HAA markers update from those
-same poses on every rendered frame.
+arc and marker directions are recomputed from URDF forward kinematics: the
+body-XY vector from each physical hip origin to its corresponding FOOT link is
+normalized in the hip-height plane for every sampled or current HAA pose. This
+avoids a fixed sign or assumed hip-frame axis. The actors move through smooth
+deterministic paths inside their own exported 18-joint intervals; the occupied
+boundaries and HAA markers update from those same poses on every rendered frame.
 
 The viewer prints the exact direction vectors, occupied/allowed/reachable
 support values, current 18-joint pose, range diagnostics, and HAA intervals in
@@ -236,16 +236,13 @@ h_k^{\mathrm{ref}}=
 $$
 
 This order avoids defining the reference from already constrained candidates.
-A deterministic synthetic scan then guarantees full angular-sector coverage
-while randomizing extra-return sector density, three near-cluster angles, two
-far-gap angles, angular offsets, and radial placement from the seed. All five
-semantic centers have at least 0.60 rad circular separation, preventing a near
-cluster and far gap from cancelling each other. One
-near-biased anchor return per sector preserves the limiting geometry while
-additional returns scatter broadly across the feasible annulus, so pressing
-`G` produces a visibly different cloud. Arguments expose the seed, return
-count, radius bounds, minimum robot clearance, point clearance,
-reference-containment margin, and material-impact thresholds.
+The default deterministic scan contains 20 sparse returns for 48 fixed normals.
+It selects unique random sectors, then randomizes separated near-cluster and
+far-gap angles, angular offsets, and radial placement from the seed. Pressing
+`G` therefore changes both the constrained-face set and polygon support, not
+merely point order. Arguments expose the seed, return count, radius bounds,
+minimum robot clearance, point clearance, reference-containment margin, and
+material-impact thresholds.
 
 For ray unit vector $v_i$, the feasible radial annulus is resolved from the
 baseline occupied support and every face of the eroded reference polygon:
@@ -284,16 +281,24 @@ $$
 u_{s(i)}^\top p_i-h_{s(i)}\ge d_{\mathrm{point}}.
 $$
 
-Its coordinatewise maximum is
+Let $\mathcal S=\{s(i)\}$ be the point-supported faces. The pre-obstacle
+reachable support caps every face, including sparse unconstrained faces. The
+coordinatewise maximum in this declared capped family is
 
 $$
-h_k^\star=\min_{i:s(i)=k}u_k^\top p_i-d_{\mathrm{point}}.
+h_k^\star=
+\begin{cases}
+\min\left\{h_k^{\mathrm{ref}},
+\min_{i:s(i)=k}u_k^\top p_i-d_{\mathrm{point}}\right\},
+& k\in\mathcal S,\\
+h_k^{\mathrm{ref}},& k\notin\mathcal S.
+\end{cases}
 $$
 
-Every sector has an active limiting return. Increasing any one
-$h_k^\star$ violates that return's clearance. This is the implemented and
-tested maximality claim; it is not a claim of a global maximum over arbitrary
-polygon topologies or alternative point-to-face assignments.
+Increasing a point-supported face violates its active return; increasing an
+unconstrained face violates its declared reference cap. This is the implemented
+and tested coordinatewise maximality claim. It is not a global maximum over
+arbitrary polygon topologies or alternative point-to-face assignments.
 
 The support $h^\star$ is passed to the sampled 18-joint range export. An
 axis-aligned joint box alone is not a collision certificate, so the animation
@@ -312,7 +317,7 @@ It records the achieved candidate-reduction fraction and all 18 interval
 shrinkages. These are example acceptance thresholds, not global guarantees.
 
 Light cyan means the prescribed LiDAR-derived envelope; dark teal means the
-current occupied capsule envelope. White crosses are returns, cyan spokes mark
+current occupied capsule envelope. White star targets are returns, cyan spokes mark
 active limiting clearances, amber shows physical HAA ranges, and muted blue is
 the pre-obstacle unconstrained reachable reference. The blue layer is visible
 by default, so the lost blue-to-cyan free space and white returns inside it are
@@ -327,27 +332,28 @@ Validate without a viewer:
 LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
 /home/user/miniforge3/envs/isaacgym/bin/python \
   scripts/visualize_lidar_free_envelope_gym.py \
-  --compute_only --seed 4090 --point_count 192 --directions 48
+  --compute_only --seed 4090 --point_count 20 --directions 48
 ```
 
 Run the bounded GPU viewer, keeping generated output outside this repository:
 
 ```bash
-mkdir -p /tmp/ENV-DESIGN-003-lidar-v2
+mkdir -p /tmp/ENV-DESIGN-003-lidar-sparse
 LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
 /home/user/miniforge3/envs/isaacgym/bin/python \
   scripts/visualize_lidar_free_envelope_gym.py \
   --compute_device_id 0 --graphics_device_id 0 \
-  --seed 4090 --point_count 192 --directions 48 \
+  --seed 4090 --point_count 20 --directions 48 \
   --max_steps 180 --motion_period_steps 120 --screenshot_step 179 \
-  --screenshot /tmp/ENV-DESIGN-003-lidar-v2/lidar_free_envelope.png
+  --screenshot /tmp/ENV-DESIGN-003-lidar-sparse/lidar_free_envelope.png
 ```
 
 The matching JSON records scan parameters, ray annuli, reference containment,
-active limiting returns, reference and prescribed supports and vertices,
-candidate rejection, per-joint shrinkage, exported ranges for all 18 joints,
-visible-layer semantics, and motion compliance. The viewer aborts if an
-accepted frame exceeds either its joint interval or occupied-envelope support.
+active limiting returns, constrained and unconstrained face indices, reference
+and prescribed supports and vertices, candidate rejection, per-joint
+shrinkage, exported ranges for all 18 joints, visible-layer semantics, and
+motion compliance. The viewer aborts if an accepted frame exceeds either its
+joint interval or occupied-envelope support.
 
 ## Limitations
 
