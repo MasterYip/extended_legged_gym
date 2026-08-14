@@ -9,6 +9,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 import tkinter as tk
 
 from isaacgym import gymapi  # Must precede Torch imports for Isaac Gym Preview 4.
@@ -35,7 +36,7 @@ from lidar_free_envelope import (  # noqa: E402
 )
 from visualize_lidar_free_envelope_gym import (  # noqa: E402
     LidarProblem, TOLERANCE, WHITE, accepted_motion_pose, apply_pose,
-    build_motion_trajectory, create_simulation, draw_boundary,
+    build_motion_trajectory, create_simulation, draw_boundary, draw_cloud,
     draw_scene as draw_lidar_scene, new_stats, set_camera, update_stats,
     write_evidence as write_lidar_evidence,
 )
@@ -187,6 +188,26 @@ def result_summary(result):
         f"{diagnostics.box_validation_samples}; fixed motion scale "
         f"{float(result.trajectory.accepted_scale[0]):.4f}"
     )
+
+
+def live_point_source(values, context, args, generation):
+    """Return the current slider border and its border-derived returns.
+
+    The ZhangHT border is the live point source: it must always track the five
+    sliders. The envelope export below may be rejected when the border is too
+    small for the baseline capsule; this pure-geometry computation never is.
+    """
+    directions = context["directions"]
+    parameters = parameter_tensor(
+        values, dtype=directions.dtype, device=directions.device,
+    )
+    border = legacy_border_vertices(parameters)
+    cloud = legacy_border_lidar_cloud(
+        parameters, directions, context["baseline_support"],
+        context["reference_support"], seed=args.seed + generation,
+        reference_containment_margin=args.reference_containment_margin,
+    )
+    return border, cloud
 
 
 class SliderPanel:
@@ -378,7 +399,16 @@ def main():
     history = []
     captured = False
     step = 0
-    sweep = (LEGACY_MAXIMUM, (0.55, 0.62, 0.55, 0.85, -0.85), LEGACY_MIDPOINT)
+    # All sweep targets are accepted by the envelope export so the bounded run
+    # exercises real slider recomputes (the prior midpoint target was rejected
+    # and only exercised the retained-envelope fallback).
+    sweep = (
+        LEGACY_MAXIMUM,
+        (0.50, 0.70, 0.60, 0.90, -0.90),
+        (0.60, 0.70, 0.60, 0.80, -0.90),
+        (0.60, 0.70, 0.45, 0.90, -0.90),
+        LEGACY_MAXIMUM,
+    )
     try:
         while panel.running and not gym.query_viewer_has_closed(viewer):
             panel.pump()
@@ -433,14 +463,26 @@ def main():
                 float(accepted.envelope_excess_m[0]) > TOLERANCE
                 or float(accepted.joint_excess_rad[0]) > TOLERANCE
             )
+            live_border, live_cloud = live_point_source(
+                panel.snapshot(), context, args, panel.requested_generation,
+            )
+            scene_state = dict(state)
+            scene_state["lidar"] = False  # the point source is drawn live below
             draw_lidar_scene(
                 gym, viewer, env, kinematics, context["directions"],
-                result.problem, pose, state, violation,
+                result.problem, pose, scene_state, violation,
             )
             draw_boundary(
-                gym, viewer, env, result.border_vertices_xy.detach().cpu().numpy(),
-                0.035, WHITE,
+                gym, viewer, env, live_border.detach().cpu().numpy(), 0.035, WHITE,
             )
+            if state["lidar"]:
+                draw_cloud(
+                    gym, viewer, env,
+                    SimpleNamespace(
+                        cloud=live_cloud,
+                        free_envelope=result.problem.free_envelope,
+                    ),
+                )
             gym.simulate(sim)
             gym.fetch_results(sim, True)
             gym.step_graphics(sim)
