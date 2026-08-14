@@ -33,7 +33,7 @@ export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 | --- | --- | --- |
 | Kinematic comparison | `legged_gym/scripts/visualize_kinematic_envelope_gym.py` | Compare compact, nominal, and wide EL4090 envelopes while all joints move within their exported intervals. |
 | LiDAR free envelope | `legged_gym/scripts/visualize_lidar_free_envelope_gym.py` | Generate a structured synthetic 2D LiDAR cloud, derive the point-free envelope, export joint intervals, and animate a constraint-compliant pose. |
-| ZhangHT border sliders | `legged_gym/scripts/visualize_legacy_slider_envelope_gym.py` | Control the original five-parameter foot border in Tkinter, recompute its sampled maximal admissible foot workspace, and display exported joint intervals. |
+| ZhangHT border sliders | `legged_gym/scripts/visualize_legacy_slider_envelope_gym.py` | Replace random LiDAR returns with slider-border ray intersections, then run the unchanged maximum-envelope and joint-range pipeline. |
 
 All three scripts support compute-only, bounded, and interactive modes; the slider example additionally opens a Tkinter control panel. The original two viewers support three modes:
 
@@ -239,48 +239,59 @@ constraint between them.
 
 ## ZhangHT Legacy-Border Slider
 
-This example uses the original `feat/el_4090_2` envelope semantics: a symmetric
-piecewise-linear **foot workspace** in base-yaw XY, not a body-collision
-capsule. Tkinter owns the five border controls while the Isaac Gym window shows
-the corresponding EL4090 pose and geometry.
+This example is the existing LiDAR envelope demo with one controlled change:
+random returns are replaced by points derived from ZhangHT's five-parameter
+border. The envelope optimizer, capsule model, joint-range exporter, continuous
+motion generator, validation, and viewer layers remain the same.
 
-For foot coordinate $(x,y)$ and parameters
-$(w_f,w_m,w_b,x_f,x_b)$, the exact permitted half-width is
-
-$$
-w(x)=
-\begin{cases}
-w_b + \dfrac{x-x_b}{-x_b}(w_m-w_b), & x_b\le x\le 0,\\
-w_m + \dfrac{x}{x_f}(w_f-w_m), & 0<x\le x_f.
-\end{cases}
-$$
-
-A foot is accepted only when $x_b\le x\le x_f$ and $|y|\le w(x)$. Because the
-middle width can be smaller than both end widths, the full border can be
-concave. The implementation therefore never replaces it with one convex
-support polygon. For the registered feasible FK foot samples $P^-$ and $P^+$
-in the rear and front halves, the displayed sampled maximum is
+Let the registered outward directions be $u_k$, and let
+$\partial\mathcal B_Z(\theta)$ be the ZhangHT border for slider vector
+$\theta=(w_f,w_m,w_b,x_f,x_b)$. The raw return distance is the first positive
+ray-border intersection
 
 $$
-\mathcal E_{\mathrm{sample}}
-=\operatorname{conv}(P^-)\cup\operatorname{conv}(P^+)
-\subseteq \mathcal E_{\mathrm{ZhangHT}}.
+\rho_k^Z=\min\{\rho>0\mid \rho u_k\in\partial\mathcal B_Z(\theta)\}.
 $$
 
-This is maximal only with respect to the registered samples in each half. Joint
-limits are the coordinatewise extrema of sampled configurations whose six feet
-pass the exact test:
+Returns retain the LiDAR viewer's reachable-reference invariant. For reference
+support values $h_j^{\mathrm{ref}}$ and the existing containment margin
+$\varepsilon=0.005\,\mathrm m$, the radial cap is
 
 $$
-q_j^- = \min_{q\in\mathcal Q_{\mathrm{sample}}} q_j,
+\rho_k^{\mathrm{ref}}
+=\min_{j:\,u_j^\top u_k>0}
+\frac{h_j^{\mathrm{ref}}-\varepsilon}{u_j^\top u_k},
 \qquad
-q_j^+ = \max_{q\in\mathcal Q_{\mathrm{sample}}} q_j.
+p_k=\min(\rho_k^Z,\rho_k^{\mathrm{ref}})u_k.
 $$
 
-The resulting axis-aligned box can combine values from incompatible sampled
-configurations. The panel and JSON therefore report independent box samples
-whose feet violate the border; a nonzero count is a coupling warning, not a
-viewer failure.
+Only $p_k$ changes with the sliders. The original fixed-normal LiDAR optimizer
+is called without modification:
+
+$$
+h_k^\star
+=\min\left(h_k^{\mathrm{ref}},\;u_k^\top p_k-d_{\mathrm{point}}\right),
+\qquad d_{\mathrm{point}}=0.02\,\mathrm m.
+$$
+
+The prescribed point-free envelope remains
+
+$$
+\mathcal E^\star=\{x\in\mathbb R^2\mid u_k^\top x\le h_k^\star,\ \forall k\}.
+$$
+
+It is the same coordinatewise maximum in the declared fixed-normal capped
+polygon family used by `visualize_lidar_free_envelope_gym.py`. Because it is an
+intersection of half-spaces, it is one connected convex polygon. There is no
+rear/front decomposition. The dark-teal current envelope is likewise the
+single existing capsule-support polygon, not a foot hull.
+
+The unchanged exporter tests registered candidate configurations against
+$\mathcal E^\star$, derives all 18 axis-aligned joint intervals, and validates
+sampled combinations from the exported box. The viewer then uses the same
+trajectory-wide feasible motion scale as the LiDAR example. A large slider
+border may be clipped by the reachable reference, so a slider change can be
+valid while leaving some exported intervals unchanged.
 
 ### Launch
 
@@ -297,33 +308,35 @@ python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py \
   --screenshot /tmp/env-design-003/legacy_slider.png
 ```
 
-Drag any slider to enqueue a recomputation. The 80 ms debounce coalesces dense
-drag events, while releasing the mouse applies the latest values immediately.
-`Reset midpoint` selects $(0.45,0.50,0.45,0.75,-0.75)$; `Maximum border`
-selects $(0.60,0.70,0.60,0.90,-0.90)$. `Capture` writes the configured viewer
-PNG and matching JSON. Closing either window ends the shared main-thread event
-loop.
+Drag a slider to enqueue a recomputation. The 80 ms debounce coalesces dense
+drag events, while mouse release applies the latest values immediately.
+`Reset midpoint` selects $(0.45,0.50,0.45,0.75,-0.75)$ and `Maximum border`
+selects $(0.60,0.70,0.60,0.90,-0.90)$. `Capture` writes the configured PNG and
+matching JSON outside this repository. Invalid settings retain the last valid
+result and show the reason in the Tk status line.
 
-| Slider | Range [m] | Meaning |
+| Slider | Range [m] | Border coordinate |
 | --- | ---: | --- |
-| `front_width` | 0.30 to 0.60 | Positive/negative lateral half-width at $x=x_f$. |
+| `front_width` | 0.30 to 0.60 | Lateral half-width at $x=x_f$. |
 | `middle_width` | 0.30 to 0.70 | Lateral half-width at $x=0$. |
 | `back_width` | 0.30 to 0.60 | Lateral half-width at $x=x_b$. |
-| `forward_limit` | 0.60 to 0.90 | Front longitudinal boundary $x_f$. |
-| `backward_limit` | -0.90 to -0.60 | Rear longitudinal boundary $x_b$. |
+| `forward_limit` | 0.60 to 0.90 | Front longitudinal coordinate $x_f$. |
+| `backward_limit` | -0.90 to -0.60 | Rear longitudinal coordinate $x_b$. |
 
 | Color | Meaning |
 | --- | --- |
-| White | Exact ZhangHT hard outer foot-workspace border. |
-| Light cyan | Separate rear/front convex hulls of feasible sampled FK feet. |
-| Dark teal | Current six-foot hull and foot markers. |
+| White | ZhangHT border and its one-return-per-sector LiDAR samples. |
+| Blue | Pre-obstacle reachable reference cap. |
+| Light cyan | Single computed maximum point-free envelope $\mathcal E^\star$. |
+| Dark teal | Single current robot capsule-support envelope. |
 | Amber | Exported HAA intervals and current URDF hip-to-foot directions. |
-| Red | Actual current-foot containment violation only. |
+| Red | Actual accepted joint or capsule-envelope violation only. |
 
 For a deterministic callback smoke, use `--max_steps 120 --auto_sweep_steps 30`.
-This drives maximum, midpoint, compact, and maximum presets through the same
-queued slider path. `--candidate_count`, `--validation_count`, and
-`--box_validation_samples` trade recomputation latency against sampling density.
+`--directions`, `--point_clearance`, `--candidate_count`,
+`--validation_count`, and `--box_validation_samples` have the same meanings as
+in the LiDAR example. `--motion_period_steps` controls the shared smooth cyclic
+trajectory.
 
 ## Evidence Location Policy
 

@@ -8,6 +8,7 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 ENVELOPE_DIR = ROOT / "utils" / "envelop"
+sys.path.insert(0, str(ENVELOPE_DIR))
 
 
 def load_module(name, path):
@@ -20,120 +21,101 @@ def load_module(name, path):
 
 
 KE = load_module("kinematic_envelope", ENVELOPE_DIR / "kinematic_envelope.py")
+LIDAR = load_module("lidar_free_envelope", ENVELOPE_DIR / "lidar_free_envelope.py")
 LEGACY = load_module("legacy_slider_envelope", ENVELOPE_DIR / "legacy_slider_envelope.py")
-URDF = ROOT.parent / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
 
 
-class TestLegacySliderEnvelope(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.kinematics = KE.BatchedUrdfKinematics(KE.load_urdf_joints(URDF))
-        cls.lower, cls.upper = cls.kinematics.joint_limits(soft_fraction=0.9)
-        anchor = torch.tensor([0.0, 0.60, -0.60] * 6)
-        half = torch.tensor([0.80, 0.34, 0.40] * 6)
-        cls.candidate_lower = torch.maximum(anchor - half, cls.lower)
-        cls.candidate_upper = torch.minimum(anchor + half, cls.upper)
-        cls.candidates = torch.cat((
-            anchor.unsqueeze(0),
-            KE.deterministic_joint_samples(
-                cls.candidate_lower, cls.candidate_upper, 1536, seed=4090,
-            ),
-        ))
-        cls.validation = KE.deterministic_joint_samples(
-            cls.candidate_lower, cls.candidate_upper, 257, seed=4190,
-        )
-
-    def compute(self, values):
-        return LEGACY.compute_legacy_admissible_envelope(
-            self.kinematics,
-            LEGACY.parameter_tensor(values),
-            self.candidates,
-            self.validation,
-            self.lower,
-            self.upper,
-            box_validation_samples=128,
-        )
+class TestLegacySliderPointSource(unittest.TestCase):
+    def setUp(self):
+        self.directions = KE.support_directions(48)
+        self.baseline = torch.full((48,), 0.20)
 
     def test_parameter_contract_matches_zhanght_branch(self):
         self.assertEqual(
             LEGACY.LEGACY_PARAMETER_ORDER,
             ("front_width", "middle_width", "back_width", "forward_limit", "backward_limit"),
         )
-        expected = {
+        self.assertEqual(LEGACY.LEGACY_PARAMETER_RANGES, {
             "front_width": (0.3, 0.6), "middle_width": (0.3, 0.7),
             "back_width": (0.3, 0.6), "forward_limit": (0.6, 0.9),
             "backward_limit": (-0.9, -0.6),
-        }
-        self.assertEqual(LEGACY.LEGACY_PARAMETER_RANGES, expected)
+        })
         self.assertEqual(LEGACY.LEGACY_MIDPOINT, (0.45, 0.50, 0.45, 0.75, -0.75))
         self.assertEqual(LEGACY.LEGACY_MAXIMUM, (0.60, 0.70, 0.60, 0.90, -0.90))
 
     def test_exact_symmetric_six_vertex_parameterization(self):
-        values = torch.tensor([0.4, 0.5, 0.45, 0.8, -0.7])
+        parameters = torch.tensor([0.4, 0.5, 0.45, 0.8, -0.7])
         expected = torch.tensor((
             (0.8, 0.4), (0.0, 0.5), (-0.7, 0.45),
             (-0.7, -0.45), (0.0, -0.5), (0.8, -0.4),
         ))
-        self.assertTrue(torch.equal(LEGACY.legacy_border_vertices(values), expected))
+        self.assertTrue(torch.equal(LEGACY.legacy_border_vertices(parameters), expected))
 
-    def test_piecewise_membership_preserves_concave_middle(self):
-        values = LEGACY.parameter_tensor([0.6, 0.3, 0.6, 0.9, -0.9])
-        points = torch.tensor([[
-            [-0.8, 0.5], [0.8, 0.5], [0.0, 0.5], [0.0, 0.25],
-        ]])
-        excess = LEGACY.legacy_foot_excess(points, values)[0]
-        self.assertLessEqual(float(excess[0]), 0.0)
-        self.assertLessEqual(float(excess[1]), 0.0)
-        self.assertGreater(float(excess[2]), 0.19)
-        self.assertLessEqual(float(excess[3]), 0.0)
+    def test_each_raw_return_is_the_nearest_border_intersection(self):
+        parameters = LEGACY.parameter_tensor([0.4, 0.5, 0.45, 0.8, -0.7])
+        directions = KE.support_directions(8)
+        points = LEGACY.sample_border_points(parameters, directions)
+        self.assertTrue(torch.allclose(points[0], torch.tensor([0.8, 0.0]), atol=1e-6))
+        self.assertTrue(torch.allclose(points[2], torch.tensor([0.0, 0.5]), atol=1e-6))
+        self.assertTrue(torch.allclose(points[4], torch.tensor([-0.7, 0.0]), atol=1e-6))
+        self.assertTrue(torch.allclose(points[6], torch.tensor([0.0, -0.5]), atol=1e-6))
+        cross = points[:, 0] * directions[:, 1] - points[:, 1] * directions[:, 0]
+        self.assertLessEqual(float(cross.abs().max()), 1e-6)
+        self.assertTrue(bool(((points * directions).sum(-1) > 0.0).all()))
 
-    def test_maximal_halves_current_feet_and_export_are_contained(self):
-        values = [0.55, 0.65, 0.55, 0.85, -0.85]
-        parameters = LEGACY.parameter_tensor(values)
-        result = self.compute(values)
-        self.assertGreater(int(result.feasible_mask.sum()), 0)
-        self.assertTrue(bool(LEGACY.legacy_feasible(
-            result.current_feet_xy.unsqueeze(0), parameters,
-        )[0]))
-        for hull in (
-            result.maximal_rear_vertices_xy, result.maximal_front_vertices_xy,
-        ):
-            self.assertGreaterEqual(hull.shape[0], 3)
-            self.assertLessEqual(float(
-                LEGACY.legacy_foot_excess(hull.unsqueeze(0), parameters).max()
-            ), 1e-6)
-        self.assertTrue(torch.isfinite(result.range_export.lower).all())
-        self.assertTrue(torch.isfinite(result.range_export.upper).all())
-        self.assertTrue(bool((result.range_export.lower <= result.range_export.upper).all()))
-        self.assertEqual(result.box_validation_samples, 128)
-        self.assertGreaterEqual(result.box_foot_violation_count, 0)
-        self.assertGreaterEqual(result.max_box_foot_violation_m, 0.0)
-
-    def test_expanding_all_legacy_bounds_does_not_remove_feasible_samples(self):
-        compact = self.compute([0.40, 0.42, 0.40, 0.68, -0.68])
-        maximum = self.compute(LEGACY.LEGACY_MAXIMUM)
-        self.assertGreaterEqual(
-            int(maximum.feasible_mask.sum()), int(compact.feasible_mask.sum()),
+    def test_cloud_is_one_return_per_sector_and_inside_reachable_cap(self):
+        reference = torch.full((48,), 0.72)
+        cloud = LEGACY.legacy_border_lidar_cloud(
+            LEGACY.parameter_tensor(LEGACY.LEGACY_MAXIMUM),
+            self.directions, self.baseline, reference, seed=4090,
         )
-        self.assertFalse(bool((compact.feasible_mask & ~maximum.feasible_mask).any()))
+        self.assertTrue(torch.equal(cloud.sector_indices, torch.arange(48)))
+        self.assertTrue(torch.equal(cloud.sector_counts, torch.ones(48, dtype=torch.long)))
+        excess = LIDAR.polygon_support_excess(cloud.points_xy, self.directions, reference)
+        self.assertLessEqual(float(excess.max()), -0.005 + 2e-6)
+        self.assertEqual(cloud.reference_containment_margin_m, 0.005)
 
-    def test_recompute_is_deterministic_and_invalid_parameters_fail(self):
-        first = self.compute(LEGACY.LEGACY_MIDPOINT)
-        second = self.compute(LEGACY.LEGACY_MIDPOINT)
-        self.assertTrue(torch.equal(first.feasible_mask, second.feasible_mask))
-        self.assertTrue(torch.equal(first.range_export.lower, second.range_export.lower))
-        self.assertTrue(torch.equal(
-            first.maximal_front_vertices_xy, second.maximal_front_vertices_xy,
-        ))
+    def test_slider_changes_only_the_cloud_geometry(self):
+        reference = torch.full((48,), 2.0)
+        midpoint = LEGACY.legacy_border_lidar_cloud(
+            LEGACY.parameter_tensor(LEGACY.LEGACY_MIDPOINT),
+            self.directions, self.baseline, reference, seed=1,
+        )
+        maximum = LEGACY.legacy_border_lidar_cloud(
+            LEGACY.parameter_tensor(LEGACY.LEGACY_MAXIMUM),
+            self.directions, self.baseline, reference, seed=2,
+        )
+        self.assertFalse(torch.equal(midpoint.points_xy, maximum.points_xy))
+        self.assertTrue(torch.equal(midpoint.sector_indices, maximum.sector_indices))
+        self.assertEqual(midpoint.points_xy.shape, maximum.points_xy.shape)
+
+    def test_existing_lidar_optimizer_formula_is_unchanged(self):
+        reference = torch.full((48,), 1.4)
+        cloud = LEGACY.legacy_border_lidar_cloud(
+            LEGACY.parameter_tensor(LEGACY.LEGACY_MIDPOINT),
+            self.directions, self.baseline, reference, seed=4090,
+        )
+        result = LIDAR.maximum_sector_point_free_envelope(
+            cloud, self.directions, point_clearance=0.02, cap_support=reference,
+        )
+        expected = torch.minimum(
+            (cloud.points_xy * self.directions).sum(-1) - 0.02,
+            reference,
+        )
+        self.assertTrue(torch.allclose(result.support_m, expected, atol=1e-7))
+        self.assertTrue(torch.equal(result.constrained_face_indices, torch.arange(48)))
+        self.assertEqual(result.unconstrained_face_indices.numel(), 0)
+        self.assertEqual(
+            result.optimality_scope,
+            "coordinatewise maximum in the declared fixed-normal capped polygon "
+            "family under nearest-angular-sector point assignment",
+        )
+
+    def test_invalid_parameters_fail_before_cloud_generation(self):
         with self.assertRaises(ValueError):
             LEGACY.parameter_tensor([0.2, 0.5, 0.5, 0.8, -0.8])
-
-    def test_visual_semantics_keep_three_foot_envelopes_distinct(self):
-        semantics = LEGACY.LEGACY_VISUAL_SEMANTICS
-        self.assertIn("hard outer foot-workspace", semantics["white"])
-        self.assertIn("front/rear foot workspace", semantics["light_cyan"])
-        self.assertIn("rear/front six-foot hulls", semantics["dark_teal"])
-        self.assertEqual(semantics["red"], "legacy foot-workspace violation only")
+        with self.assertRaises(ValueError):
+            LEGACY.parameter_tensor([0.5, 0.5])
 
 
 if __name__ == "__main__":
