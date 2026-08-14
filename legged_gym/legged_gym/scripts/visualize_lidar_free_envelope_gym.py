@@ -32,6 +32,7 @@ from kinematic_envelope import (  # noqa: E402
     BatchedUrdfKinematics,
     capsule_support,
     default_el4090_capsules,
+    default_el4090_torso_capsules,
     deterministic_joint_samples,
     export_envelope_joint_ranges,
     haa_ranges_from_joint_export,
@@ -584,8 +585,10 @@ def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, v
             0.080, LIGHT_CYAN,
         )
     if state["occupied"]:
+        # Occupied envelope drawn from the torso shape only, so the red/teal
+        # polygon reflects the body rather than the full leg reach.
         occupied = capsule_support(
-            kinematics, pose.unsqueeze(0), default_el4090_capsules(), directions,
+            kinematics, pose.unsqueeze(0), default_el4090_torso_capsules(), directions,
         )[0]
         draw_boundary(
             gym, viewer, env,
