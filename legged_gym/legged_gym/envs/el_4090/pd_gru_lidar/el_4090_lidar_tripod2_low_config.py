@@ -72,8 +72,8 @@ class El4090LidarTripod2LowCfg(El4090LidarCfg):
 
 class El4090LidarTripod2LowCfgPPO(El4090LidarCfgPPO):
     class policy(El4090LidarCfgPPO.policy):
-        gradient_checkpointing_proximal = False  
-        gradient_checkpointing_distal = True     
+        gradient_checkpointing_proximal = True
+        gradient_checkpointing_distal = True
 
     class algorithm(El4090LidarCfgPPO.algorithm):
         num_mini_batches = 4
