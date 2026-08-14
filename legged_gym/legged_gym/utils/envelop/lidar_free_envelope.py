@@ -24,6 +24,8 @@ class SyntheticLidarCloud:
     min_radius_m: float
     max_radius_m: float
     robot_clearance_m: float
+    lateral_robot_clearance_m: float
+    required_clearance_m: Tensor
     reference_containment_margin_m: float
     ray_inner_radius_m: Tensor
     ray_outer_radius_m: Tensor
@@ -95,7 +97,9 @@ def generate_synthetic_lidar_cloud(
     max_radius: float,
     robot_clearance: float,
     reference_containment_margin: float,
-    near_band_fraction: float = 0.12,
+    lateral_robot_clearance: float = 0.025,
+    lateral_anchors_per_side: int = 5,
+    near_band_fraction: float = 0.05,
 ) -> SyntheticLidarCloud:
     """Generate sparse returns inside a pre-obstacle reachable polygon.
 
@@ -103,8 +107,9 @@ def generate_synthetic_lidar_cloud(
     remaining faces stay unconstrained by points. Three angular clusters pull
     returns inward while two gap directions push returns outward. The
     assigned-normal separation from the baseline support polygon is at least
-    ``robot_clearance``. Each ray's upper radius is resolved from the
-    pre-obstacle reachable polygon, independently of the constrained export.
+    ``lateral_robot_clearance`` for lateral anchors and ``robot_clearance``
+    elsewhere. Each ray's upper radius is resolved from the pre-obstacle
+    reachable polygon, independently of the constrained export.
     """
     if directions.ndim != 2 or directions.shape[1] != 2:
         raise ValueError("directions must have shape [K,2]")
@@ -119,6 +124,12 @@ def generate_synthetic_lidar_cloud(
         raise ValueError("radius bounds must satisfy 0 <= min < max")
     if robot_clearance <= 0.0:
         raise ValueError("robot_clearance must be positive")
+    if not 0.0 < lateral_robot_clearance <= robot_clearance:
+        raise ValueError(
+            "lateral_robot_clearance must be in (0, robot_clearance]"
+        )
+    if lateral_anchors_per_side < 1:
+        raise ValueError("lateral_anchors_per_side must be positive")
     if reference_containment_margin <= 0.0:
         raise ValueError("reference_containment_margin must be positive")
     if not 0.0 < near_band_fraction <= 1.0:
@@ -129,7 +140,7 @@ def generate_synthetic_lidar_cloud(
 
     generator = torch.Generator(device=directions.device).manual_seed(int(seed))
     primary_count = min(count, sectors)
-    side_count = min(3, primary_count // 2)
+    side_count = min(lateral_anchors_per_side, primary_count // 2)
     if side_count:
         left = torch.topk(directions[:, 1], side_count).indices
         right = torch.topk(-directions[:, 1], side_count).indices
@@ -160,6 +171,17 @@ def generate_synthetic_lidar_cloud(
     lateral_returns = (
         sector_indices[:, None] == lateral_anchor_sectors[None, :]
     ).any(dim=1)
+    required_clearance = torch.where(
+        lateral_returns,
+        torch.full(
+            (count,), lateral_robot_clearance,
+            dtype=directions.dtype, device=directions.device,
+        ),
+        torch.full(
+            (count,), robot_clearance,
+            dtype=directions.dtype, device=directions.device,
+        ),
+    )
     sector_angles = torch.atan2(directions[:, 1], directions[:, 0])
     sector_width = 2.0 * torch.pi / sectors
     raw_jitter = torch.rand(
@@ -194,7 +216,7 @@ def generate_synthetic_lidar_cloud(
         unit = torch.stack((torch.cos(angles), torch.sin(angles)), dim=-1)
         assigned_projection_scale = (unit * directions[sector_indices]).sum(dim=-1)
         required_radius = (
-            baseline_support[sector_indices] + robot_clearance
+            baseline_support[sector_indices] + required_clearance
         ) / assigned_projection_scale
         inner_radius = torch.maximum(
             required_radius, torch.full_like(required_radius, min_radius),
@@ -256,6 +278,8 @@ def generate_synthetic_lidar_cloud(
         min_radius_m=float(min_radius),
         max_radius_m=float(max_radius),
         robot_clearance_m=float(robot_clearance),
+        lateral_robot_clearance_m=float(lateral_robot_clearance),
+        required_clearance_m=required_clearance,
         reference_containment_margin_m=float(reference_containment_margin),
         ray_inner_radius_m=inner_radius,
         ray_outer_radius_m=outer_radius,

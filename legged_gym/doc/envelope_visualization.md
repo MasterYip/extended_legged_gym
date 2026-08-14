@@ -117,11 +117,14 @@ support discretization.
 
 The LiDAR example creates 20 sparse seeded returns inside the pre-obstacle
 reachable envelope and outside the baseline occupied robot envelope. Returns
-occupy unique sectors by default. The three sectors nearest each lateral axis
-are always included so the left and right middle-leg workspaces are affected;
-the remaining sectors vary with the seed. Returns use at most the first 12% of
-their feasible radial annulus, while lateral anchors use at most 4.2%, placing
-them close to the minimum collision-safe radius. Faces without a return retain
+occupy unique sectors by default. The five sectors nearest each lateral axis
+are always included, so 10 of 20 returns directly constrain the left and right
+middle-leg workspaces. The remaining sectors vary with the seed. Returns use at
+most the first 5% of their feasible radial annulus, while lateral anchors use at
+most 1.75%. Lateral anchors require 0.025 m baseline clearance versus 0.05 m
+for other returns. With 0.02 m point clearance, this leaves approximately
+0.005 m between the baseline occupied support and a limiting lateral envelope
+face. Faces without a return retain
 the blue pre-obstacle reference cap. Seed changes randomize the other
 constrained faces, cluster and gap locations, angular jitter, radial placement,
 and therefore the light-cyan polygon shape. For direction $\mathbf u_k$, the
@@ -158,14 +161,18 @@ To check another deterministic cloud:
 
 ```bash
 python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
-  --compute_only --seed 4091 --point_count 20 --near_band_fraction 0.12
+  --compute_only --seed 4091 --point_count 20 \
+  --near_band_fraction 0.05 --lateral_robot_clearance 0.025 \
+  --lateral_anchors_per_side 5
 ```
 
 `--point_count` may be smaller than `--directions`; it must be positive.
 `--near_band_fraction` is the maximum fraction of the feasible radial annulus
 used by primary returns; reduce it toward zero to move points closer to the
-minimum safe radius. The output reports point-constrained and reference-capped
-face counts, the band fraction, and lateral anchor sectors.
+minimum safe radius. `--lateral_robot_clearance` controls the lateral minimum
+distance independently and must be greater than `--point_clearance` and no
+greater than `--robot_clearance`. The output reports point-constrained and
+reference-capped face counts, band fraction, and lateral anchor sectors.
 
 ### Bounded viewer and evidence capture
 
@@ -279,9 +286,10 @@ the screenshot suffix with `.json`.
 Keep `--directions` at least 8, `--point_count` positive,
 `--point_clearance` smaller than `--robot_clearance`, and
 `--reference_containment_margin` positive. Keep `--near_band_fraction` in
-$(0,1]$; smaller values move returns closer to the robot without reducing the
-declared robot clearance. Start from the defaults when testing a new machine,
-then change one parameter at a time.
+$(0,1]$. Require
+$d_{\mathrm{point}}<d_{\mathrm{lateral}}\le d_{\mathrm{robot}}$, and keep
+`--lateral_anchors_per_side` positive. Start from the defaults when testing a
+new machine, then change one parameter at a time.
 
 ### LiDAR materiality or feasibility fails
 

@@ -237,15 +237,16 @@ $$
 
 This order avoids defining the reference from already constrained candidates.
 The default deterministic scan contains 20 sparse returns for 48 fixed normals.
-It reserves the three normals nearest each of $+y$ and $-y$ as lateral anchors
-so both middle-leg workspaces are constrained on every seed, then selects the
-remaining unique sectors randomly. Primary returns occupy at most the first
-12% of the feasible radial annulus beyond the collision-safe inner radius;
-lateral anchors use at most 4.2%. `--near_band_fraction` changes the primary
-band while preserving the clearance construction. Separated near-cluster and
-far-gap angles, angular offsets, and radial placement still vary from the seed.
-Pressing `G` therefore changes both the constrained-face set and polygon
-support, not merely point order.
+It reserves the five normals nearest each of $+y$ and $-y$ as lateral anchors,
+so half the cloud directly constrains the middle-leg workspaces. The remaining
+unique sectors vary with the seed. Primary returns occupy at most the first 5%
+of the feasible radial annulus; lateral anchors use at most 1.75%. General
+returns preserve 0.05 m baseline clearance, while lateral anchors deliberately
+use the more aggressive 0.025 m clearance. Since point clearance remains
+0.02 m, the prescribed lateral faces can approach within approximately 0.005 m
+of the baseline occupied support. All values are exposed through
+`--near_band_fraction`, `--robot_clearance`, `--lateral_robot_clearance`, and
+`--lateral_anchors_per_side`.
 
 For ray unit vector $v_i$, the feasible radial annulus is resolved from the
 baseline occupied support and every face of the eroded reference polygon:
@@ -253,7 +254,7 @@ baseline occupied support and every face of the eroded reference polygon:
 $$
 r_i^-=
 \max\left\{r_{\min},
-\frac{h_{s(i)}^{\mathrm{occ}}(q_0)+d_{\mathrm{robot}}}
+\frac{h_{s(i)}^{\mathrm{occ}}(q_0)+d_i^{\mathrm{robot}}}
 {u_{s(i)}^\top v_i}\right\},
 $$
 
@@ -265,10 +266,11 @@ r_i^+=
 \right\}.
 $$
 
-The generator fails with the affected sector indices when $r_i^-\ge r_i^+$.
-Thus every generated return is outside the baseline capsule envelope by the
-declared clearance and inside the pre-obstacle reachable polygon by a numeric
-inward margin.
+Here $d_i^{\mathrm{robot}}=0.025$ m for a lateral anchor and 0.05 m
+otherwise under the default. The generator fails with the affected sector
+indices when $r_i^-\ge r_i^+$. Thus every generated return is outside the
+baseline capsule envelope by its declared per-return clearance and inside the
+pre-obstacle reachable polygon by a numeric inward margin.
 
 Let normalized fixed normals be $u_k$, and assign each return $p_i$ to its
 nearest angular sector $s(i)$. The example declares the restricted polygon

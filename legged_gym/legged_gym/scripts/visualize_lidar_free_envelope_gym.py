@@ -87,10 +87,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_radius", type=float, default=0.0)
     parser.add_argument("--max_radius", type=float, default=2.10)
     parser.add_argument("--robot_clearance", type=float, default=0.05)
+    parser.add_argument("--lateral_robot_clearance", type=float, default=0.025)
+    parser.add_argument("--lateral_anchors_per_side", type=int, default=5)
     parser.add_argument("--point_clearance", type=float, default=0.02)
     parser.add_argument("--reference_containment_margin", type=float, default=0.005)
     parser.add_argument(
-        "--near_band_fraction", type=float, default=0.12,
+        "--near_band_fraction", type=float, default=0.05,
         help="maximum feasible-annulus fraction for sparse primary returns",
     )
     parser.add_argument("--min_candidate_reduction_fraction", type=float, default=0.05)
@@ -137,6 +139,8 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         min_radius=args.min_radius,
         max_radius=args.max_radius,
         robot_clearance=args.robot_clearance,
+        lateral_robot_clearance=args.lateral_robot_clearance,
+        lateral_anchors_per_side=args.lateral_anchors_per_side,
         reference_containment_margin=args.reference_containment_margin,
         near_band_fraction=args.near_band_fraction,
     )
@@ -334,7 +338,14 @@ def print_problem(problem, directions) -> None:
         f"{100.0 * problem.cloud.near_band_fraction:.1f}% of the feasible radial "
         f"annulus; lateral anchors {problem.cloud.lateral_anchor_sectors.tolist()}"
     )
-    print(f"  baseline capsule-envelope clearance: {float(baseline_clearance.min()):.6f} m minimum")
+    clearance_surplus = baseline_clearance - problem.cloud.required_clearance_m
+    print(
+        "  baseline capsule-envelope clearance: "
+        f"{float(baseline_clearance.min()):.6f} m minimum; requirements "
+        f"{problem.cloud.lateral_robot_clearance_m:.3f} m lateral / "
+        f"{problem.cloud.robot_clearance_m:.3f} m other; "
+        f"{float(clearance_surplus.min()):.6f} m minimum surplus"
+    )
     print(f"  prescribed point clearance: {float(clearance.min()):.6f} m minimum")
     print(
         "  reference reachable containment: "
@@ -615,13 +626,25 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
                     problem.cloud.lateral_anchor_sectors.detach().cpu().tolist()
                 ),
                 "near_band_fraction": problem.cloud.near_band_fraction,
+                "lateral_anchors_per_side": int(
+                    problem.cloud.lateral_anchor_sectors.numel() // 2
+                ),
             },
             "radius_bounds_m": [problem.cloud.min_radius_m, problem.cloud.max_radius_m],
             "observed_radius_bounds_m": [
                 float(problem.cloud.radii_m.min()), float(problem.cloud.radii_m.max()),
             ],
             "required_baseline_clearance_m": problem.cloud.robot_clearance_m,
+            "required_lateral_baseline_clearance_m": (
+                problem.cloud.lateral_robot_clearance_m
+            ),
+            "per_return_required_baseline_clearance_m": (
+                problem.cloud.required_clearance_m.detach().cpu().tolist()
+            ),
             "minimum_baseline_clearance_m": float(baseline_clearances.min()),
+            "minimum_baseline_clearance_surplus_m": float(
+                (baseline_clearances - problem.cloud.required_clearance_m).min()
+            ),
             "minimum_baseline_polygon_outside_excess_m": float(
                 baseline_polygon_excess.min()
             ),
@@ -715,6 +738,13 @@ def validate_args(args) -> None:
         raise ValueError("--motion_period_steps must be positive")
     if args.point_clearance >= args.robot_clearance:
         raise ValueError("--point_clearance must be smaller than --robot_clearance")
+    if not args.point_clearance < args.lateral_robot_clearance <= args.robot_clearance:
+        raise ValueError(
+            "--lateral_robot_clearance must be greater than --point_clearance "
+            "and no greater than --robot_clearance"
+        )
+    if args.lateral_anchors_per_side < 1:
+        raise ValueError("--lateral_anchors_per_side must be positive")
     if args.reference_containment_margin <= 0.0:
         raise ValueError("--reference_containment_margin must be positive")
     if not 0.0 < args.near_band_fraction <= 1.0:
