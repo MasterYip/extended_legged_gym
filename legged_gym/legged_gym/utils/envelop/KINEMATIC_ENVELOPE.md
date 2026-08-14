@@ -177,13 +177,18 @@ not a publication graph generator and not part of the training environment. It
 loads three fixed-base EL4090 actors without a policy checkpoint and compares
 compact-mammal, nominal-spider, and wide-low presets. Each actor carries its
 occupied capsule boundary, sampled reachable-foot boundary, and six physical
-hip-centered HAA interval arcs with bound rays and current-angle markers.
+hip-centered HAA interval arcs with bound rays and current-angle markers. The
+actors move through smooth deterministic paths inside their own exported
+18-joint intervals; the occupied boundaries and HAA markers update from those
+same poses on every rendered frame.
 
 The viewer prints the exact direction vectors, occupied/allowed/reachable
 support values, current 18-joint pose, range diagnostics, and HAA intervals in
 simulator order `LB LF LM RB RF RM`. Controls are printed at launch: number keys
-select a preset; Space cycles; A toggles automatic cycling; O, R, and H toggle
-the three geometry layers; C cycles camera modes; P captures; and Esc exits.
+select a preset; Space cycles; A toggles automatic selection; M pauses or
+resumes joint and envelope motion; X resets the motion phase; O, R, and H
+toggle the three geometry layers; C cycles camera modes; P captures; and Esc
+exits.
 
 From `legged_gym/legged_gym`, validate preset computation without a viewer:
 
@@ -200,9 +205,16 @@ outside this repository:
 LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
 /home/user/miniforge3/envs/isaacgym/bin/python \
   scripts/visualize_kinematic_envelope_gym.py \
-  --compute_device_id 0 --graphics_device_id 0 --max_steps 30 \
-  --screenshot /tmp/isaac_gym_envelope_demo.png
+  --compute_device_id 0 --graphics_device_id 0 \
+  --max_steps 90 --auto_cycle_steps 20 --motion_period_steps 60 \
+  --screenshot_step 89 \
+  --screenshot /tmp/ENV-DESIGN-003-motion/isaac_gym_envelope_motion.png
 ```
+
+The paired JSON is compact run evidence: it records visited presets, frame and
+joint-sample counts, exported bounds, observed per-joint extrema, violation
+count, and maximum bound excess. The viewer fails immediately if a rendered
+pose exceeds its active exported interval.
 
 Generated captures and numeric evidence are task-owned artifacts. Keep them in
 the task record or another external results location, never in the
@@ -220,7 +232,7 @@ the task record or another external results location, never in the
 - The legacy 8-D projection discards asymmetry and is bounded to historical
   training ranges. It exists for checkpoint compatibility, not as a new state
   representation recommendation.
-- No simulator rollout, checkpoint evaluation, GPU parity, or hardware safety
-  validation is part of this CPU-only implementation task.
+- The viewer is a fixed-base geometry demonstration, not a policy rollout,
+  checkpoint evaluation, GPU parity result, or hardware safety validation.
 - The module is a proposed utility and has not been integrated into the
   EL4090 environment, observation computation, training loop, or deployment.

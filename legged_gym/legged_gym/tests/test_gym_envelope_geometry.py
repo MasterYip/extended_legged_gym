@@ -45,6 +45,43 @@ class TestGymEnvelopeGeometry(unittest.TestCase):
         segments = GEOM.polyline_segments(np.column_stack((polygon, np.zeros(len(polygon)))), closed=True)
         self.assertEqual(segments.shape, (2 * len(polygon), 3))
 
+    def test_joint_range_interpolation_is_deterministic_and_compliant(self):
+        lower = torch.linspace(-1.2, -0.3, 18, dtype=torch.float64)
+        upper = lower + torch.linspace(0.2, 1.1, 18, dtype=torch.float64)
+        offsets = torch.linspace(0.0, 0.95, 18, dtype=torch.float64)
+        first = torch.stack([
+            GEOM.interpolate_joint_ranges(lower, upper, phase, phase_offsets=offsets)
+            for phase in torch.linspace(0.0, 2.0, 81, dtype=torch.float64)
+        ])
+        second = torch.stack([
+            GEOM.interpolate_joint_ranges(lower, upper, phase, phase_offsets=offsets)
+            for phase in torch.linspace(0.0, 2.0, 81, dtype=torch.float64)
+        ])
+        self.assertTrue(torch.equal(first, second))
+        self.assertTrue(bool((first >= lower).all()))
+        self.assertTrue(bool((first <= upper).all()))
+        for pose in first:
+            self.assertEqual(
+                GEOM.joint_range_violations(pose, lower, upper), (0, 0.0),
+            )
+
+        self.assertTrue(torch.equal(
+            GEOM.interpolate_joint_ranges(lower, upper, 0.0), lower,
+        ))
+        self.assertTrue(torch.allclose(
+            GEOM.interpolate_joint_ranges(lower, upper, 0.5), upper, atol=1e-15,
+        ))
+
+    def test_joint_range_violation_summary_counts_interval_excess(self):
+        lower = torch.full((18,), -0.5)
+        upper = torch.full((18,), 0.5)
+        pose = torch.zeros(18)
+        pose[2] = -0.6
+        pose[11] = 0.7
+        count, maximum = GEOM.joint_range_violations(pose, lower, upper)
+        self.assertEqual(count, 2)
+        self.assertAlmostEqual(maximum, 0.2, places=6)
+
     def test_haa_arcs_use_actual_urdf_hip_frames(self):
         current = torch.tensor([0.1, 0.6, -0.6] * 6, dtype=torch.float64)
         ranges = torch.tensor([[-0.4, 0.5]] * 6, dtype=torch.float64)

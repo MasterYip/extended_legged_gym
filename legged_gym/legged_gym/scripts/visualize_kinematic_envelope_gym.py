@@ -22,6 +22,8 @@ from gym_envelope_geometry import (  # noqa: E402
     DemoPreset,
     build_demo_preset,
     haa_arc_geometry,
+    interpolate_joint_ranges,
+    joint_range_violations,
     polyline_segments,
     support_polygon,
 )
@@ -29,6 +31,8 @@ from kinematic_envelope import (  # noqa: E402
     EL4090_JOINT_NAMES,
     EL4090_LEG_NAMES,
     BatchedUrdfKinematics,
+    capsule_support,
+    default_el4090_capsules,
     load_urdf_joints,
     support_directions,
 )
@@ -53,6 +57,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_steps", type=int, default=0, help="0 keeps the viewer interactive")
     parser.add_argument("--auto_cycle_steps", type=int, default=180)
     parser.add_argument("--no_auto_cycle", action="store_true")
+    parser.add_argument("--motion_period_steps", type=int, default=240)
+    parser.add_argument("--no_motion", action="store_true")
     parser.add_argument("--compute_only", action="store_true", help="Build and validate presets without creating a simulator")
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--screenshot_step", type=int, default=5)
@@ -111,6 +117,107 @@ def build_presets(kinematics, directions):
     )
 
 
+def motion_phase_offsets(dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+    """Coordinate the six legs while keeping each joint's path deterministic."""
+    leg_offsets = (0.00, 0.50, 0.25, 0.75, 0.50, 0.00)
+    joint_offsets = (0.00, 0.18, 0.68)
+    return torch.tensor(
+        [leg + joint for leg in leg_offsets for joint in joint_offsets],
+        dtype=dtype,
+        device=device,
+    )
+
+
+def animated_joint_poses(presets, motion_step: int, period_steps: int):
+    if period_steps <= 0:
+        raise ValueError("motion_period_steps must be positive")
+    poses = []
+    for index, preset in enumerate(presets):
+        offsets = motion_phase_offsets(preset.current_q.dtype, preset.current_q.device)
+        phase = motion_step / period_steps + index / len(presets)
+        poses.append(interpolate_joint_ranges(
+            preset.range_export.lower,
+            preset.range_export.upper,
+            phase,
+            phase_offsets=offsets,
+        ))
+    return tuple(poses)
+
+
+def new_motion_stats(presets):
+    return {
+        preset.name: {
+            "frames": 0,
+            "observed_min": np.full(len(EL4090_JOINT_NAMES), np.inf, dtype=np.float64),
+            "observed_max": np.full(len(EL4090_JOINT_NAMES), -np.inf, dtype=np.float64),
+            "range_violation_count": 0,
+            "max_bound_violation_rad": 0.0,
+        }
+        for preset in presets
+    }
+
+
+def update_motion_stats(stats, presets, poses) -> None:
+    for preset, pose in zip(presets, poses):
+        violation_count, max_violation = joint_range_violations(
+            pose, preset.range_export.lower, preset.range_export.upper,
+        )
+        entry = stats[preset.name]
+        values = pose.detach().cpu().numpy().astype(np.float64)
+        entry["frames"] += 1
+        entry["observed_min"] = np.minimum(entry["observed_min"], values)
+        entry["observed_max"] = np.maximum(entry["observed_max"], values)
+        entry["range_violation_count"] += violation_count
+        entry["max_bound_violation_rad"] = max(
+            entry["max_bound_violation_rad"], max_violation,
+        )
+        if violation_count:
+            raise RuntimeError(
+                f"Animated pose escaped exported range for {preset.name}: "
+                f"{violation_count} joints, {max_violation:.9g} rad"
+            )
+
+
+def motion_summary(presets, stats, history, state) -> dict:
+    visited = list(dict.fromkeys(event["preset"] for event in history))
+    return {
+        "motion_enabled_at_capture": state["motion"],
+        "motion_step": state["motion_step"],
+        "period_steps": state["motion_period_steps"],
+        "presets_visited": visited,
+        "selection_history": history,
+        "frame_count": max(entry["frames"] for entry in stats.values()),
+        "joint_sample_count": sum(
+            entry["frames"] * len(EL4090_JOINT_NAMES) for entry in stats.values()
+        ),
+        "range_violation_count": sum(
+            entry["range_violation_count"] for entry in stats.values()
+        ),
+        "max_bound_violation_rad": max(
+            entry["max_bound_violation_rad"] for entry in stats.values()
+        ),
+        "joint_order": list(EL4090_JOINT_NAMES),
+        "per_preset": {
+            preset.name: {
+                "frames": stats[preset.name]["frames"],
+                "exported_lower_rad": preset.range_export.lower.detach().cpu().tolist(),
+                "exported_upper_rad": preset.range_export.upper.detach().cpu().tolist(),
+                "observed_min_rad": stats[preset.name]["observed_min"].tolist(),
+                "observed_max_rad": stats[preset.name]["observed_max"].tolist(),
+                "range_violation_count": stats[preset.name]["range_violation_count"],
+                "max_bound_violation_rad": stats[preset.name]["max_bound_violation_rad"],
+            }
+            for preset in presets
+        },
+    }
+
+
+def note_selection(history, step: int, preset_name: str, cause: str) -> None:
+    if history and history[-1]["preset"] == preset_name:
+        return
+    history.append({"step": step, "preset": preset_name, "cause": cause})
+
+
 def preset_record(preset: DemoPreset, directions: torch.Tensor) -> dict:
     diagnostics = preset.range_export.diagnostics
     return {
@@ -128,6 +235,8 @@ def preset_record(preset: DemoPreset, directions: torch.Tensor) -> dict:
             leg: [float(value) for value in preset.haa_ranges[index]]
             for index, leg in enumerate(EL4090_LEG_NAMES)
         },
+        "exported_joint_lower_rad": preset.range_export.lower.detach().cpu().tolist(),
+        "exported_joint_upper_rad": preset.range_export.upper.detach().cpu().tolist(),
         "diagnostics": {
             "candidate_samples": diagnostics.candidate_samples,
             "candidate_feasible_count": int(diagnostics.candidate_feasible_count),
@@ -152,6 +261,8 @@ def print_controls() -> None:
         ("1 / 2 / 3", "select compact / nominal / wide preset"),
         ("Space", "select next preset"),
         ("A", "toggle automatic selection cycle"),
+        ("M", "pause or resume joint and envelope motion"),
+        ("X", "reset motion to its deterministic start"),
         ("O", "toggle occupied capsule boundary"),
         ("R", "toggle reachable-foot boundary"),
         ("H", "toggle six HAA interval arcs and markers"),
@@ -191,9 +302,11 @@ def draw_datum(gym, viewer, env, offset_y, accent, selected) -> None:
     add_segments(gym, viewer, env, points, accent)
 
 
-def draw_haa_intervals(gym, viewer, env, kinematics, preset, offset_y, selected) -> None:
+def draw_haa_intervals(
+    gym, viewer, env, kinematics, preset, current_q, offset_y, selected,
+) -> None:
     origins, arcs, markers = haa_arc_geometry(
-        kinematics, preset.current_q, preset.haa_ranges, radius=0.26, samples=49,
+        kinematics, current_q, preset.haa_ranges, radius=0.26, samples=49,
     )
     translation = np.array((0.0, offset_y, BASE_HEIGHT), dtype=np.float32)
     origins_np = origins.detach().cpu().numpy() + translation
@@ -224,15 +337,20 @@ def draw_haa_intervals(gym, viewer, env, kinematics, preset, offset_y, selected)
         )
 
 
-def draw_scene(gym, viewer, env, kinematics, presets, directions, state) -> None:
+def draw_scene(
+    gym, viewer, env, kinematics, presets, directions, current_poses,
+    occupied_supports, state,
+) -> None:
     gym.clear_lines(viewer)
-    for index, (preset, offset_y) in enumerate(zip(presets, PRESET_OFFSETS_Y)):
+    for index, (preset, current_q, occupied, offset_y) in enumerate(zip(
+        presets, current_poses, occupied_supports, PRESET_OFFSETS_Y,
+    )):
         selected = index == state["active"]
         draw_datum(gym, viewer, env, offset_y, preset.accent_rgb, selected)
         if state["occupied"]:
             draw_boundary(
                 gym, viewer, env,
-                support_polygon(directions, preset.occupied_support),
+                support_polygon(directions, occupied),
                 offset_y, BASE_HEIGHT + 0.25, TEAL,
             )
         if state["reachable"]:
@@ -242,7 +360,9 @@ def draw_scene(gym, viewer, env, kinematics, presets, directions, state) -> None
                 offset_y, 0.075, CYAN,
             )
         if state["haa"]:
-            draw_haa_intervals(gym, viewer, env, kinematics, preset, offset_y, selected)
+            draw_haa_intervals(
+                gym, viewer, env, kinematics, preset, current_q, offset_y, selected,
+            )
 
 
 def set_camera(gym, viewer, state) -> None:
@@ -259,21 +379,36 @@ def set_camera(gym, viewer, state) -> None:
     )
 
 
-def write_evidence(gym, viewer, screenshot: Path, records, state, step) -> None:
+def write_evidence(
+    gym, viewer, screenshot: Path, records, presets, stats, history, state, step,
+) -> None:
     screenshot = screenshot.resolve()
+    try:
+        screenshot.relative_to(PROJECT_ROOT.resolve())
+    except ValueError:
+        pass
+    else:
+        raise ValueError(
+            "Generated screenshots and JSON evidence must be outside extended_legged_gym"
+        )
     screenshot.parent.mkdir(parents=True, exist_ok=True)
     gym.write_viewer_image_to_file(viewer, str(screenshot))
-    try:
-        recorded_path = str(screenshot.relative_to(Path.cwd().resolve()))
-    except ValueError:
-        recorded_path = str(screenshot)
     evidence = {
-        "screenshot": recorded_path,
+        "screenshot": str(screenshot),
         "step": step,
         "active_preset": records[state["active"]]["name"],
         "visibility": {key: state[key] for key in ("occupied", "reachable", "haa")},
         "camera_mode": state["camera"],
-        "presets": records,
+        "preset_definitions": [
+            {
+                "name": record["name"],
+                "support_margin_m": record["support_margin_m"],
+                "haa_ranges_rad_simulator_order": record["haa_ranges_rad_simulator_order"],
+                "diagnostics": record["diagnostics"],
+            }
+            for record in records
+        ],
+        "motion_summary": motion_summary(presets, stats, history, state),
     }
     evidence_path = screenshot.with_suffix(".json")
     evidence_path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -317,6 +452,7 @@ def create_simulation(args, presets):
     if set(asset_dof_names) != set(EL4090_JOINT_NAMES):
         gym.destroy_sim(sim)
         raise RuntimeError(f"Unexpected EL4090 DOF names: {asset_dof_names}")
+    asset_q_indices = tuple(EL4090_JOINT_NAMES.index(name) for name in asset_dof_names)
 
     env = gym.create_env(
         sim, gymapi.Vec3(-4.0, -5.0, 0.0), gymapi.Vec3(4.0, 5.0, 3.0), 1,
@@ -366,6 +502,8 @@ def create_simulation(args, presets):
         (gymapi.KEY_3, "preset_3"),
         (gymapi.KEY_SPACE, "next"),
         (gymapi.KEY_A, "auto"),
+        (gymapi.KEY_M, "motion"),
+        (gymapi.KEY_X, "motion_reset"),
         (gymapi.KEY_O, "occupied"),
         (gymapi.KEY_R, "reachable"),
         (gymapi.KEY_H, "haa"),
@@ -374,11 +512,20 @@ def create_simulation(args, presets):
     )
     for key, action in bindings:
         gym.subscribe_viewer_keyboard_event(viewer, key, action)
-    return gym, sim, viewer, env, actor_handles
+    return gym, sim, viewer, env, actor_handles, asset_q_indices
+
+
+def apply_joint_poses(gym, env, actor_handles, asset_q_indices, poses) -> None:
+    for actor, pose in zip(actor_handles, poses):
+        states = np.zeros(len(asset_q_indices), dtype=gymapi.DofState.dtype)
+        states["pos"] = pose.detach().cpu().numpy()[list(asset_q_indices)]
+        gym.set_actor_dof_states(env, actor, states, gymapi.STATE_ALL)
 
 
 def main() -> None:
     args = parse_args()
+    if args.motion_period_steps <= 0:
+        raise ValueError("--motion_period_steps must be positive")
     urdf = PROJECT_ROOT / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
     kinematics = BatchedUrdfKinematics(load_urdf_joints(urdf))
     directions = support_directions(args.directions)
@@ -390,10 +537,13 @@ def main() -> None:
         return
 
     print_controls()
-    gym, sim, viewer, env, _ = create_simulation(args, presets)
+    gym, sim, viewer, env, actor_handles, asset_q_indices = create_simulation(args, presets)
     state = {
         "active": 0,
         "auto": not args.no_auto_cycle,
+        "motion": not args.no_motion,
+        "motion_step": 0,
+        "motion_period_steps": args.motion_period_steps,
         "occupied": True,
         "reachable": True,
         "haa": True,
@@ -403,6 +553,10 @@ def main() -> None:
     screenshot = args.screenshot
     captured = False
     step = 0
+    stats = new_motion_stats(presets)
+    history = []
+    note_selection(history, step, presets[state["active"]].name, "initial")
+    proxies = default_el4090_capsules()
     try:
         running = True
         while running and not gym.query_viewer_has_closed(viewer):
@@ -413,13 +567,25 @@ def main() -> None:
                     running = False
                 elif event.action.startswith("preset_"):
                     state["active"] = int(event.action[-1]) - 1
+                    note_selection(
+                        history, step, presets[state["active"]].name, "keyboard",
+                    )
                     print(f"Selected preset: {presets[state['active']].name}")
                 elif event.action == "next":
                     state["active"] = (state["active"] + 1) % len(presets)
+                    note_selection(
+                        history, step, presets[state["active"]].name, "keyboard",
+                    )
                     print(f"Selected preset: {presets[state['active']].name}")
                 elif event.action == "auto":
                     state["auto"] = not state["auto"]
                     print(f"Automatic cycle: {state['auto']}")
+                elif event.action == "motion":
+                    state["motion"] = not state["motion"]
+                    print(f"Joint and envelope motion: {state['motion']}")
+                elif event.action == "motion_reset":
+                    state["motion_step"] = 0
+                    print("Joint and envelope motion reset")
                 elif event.action in ("occupied", "reachable", "haa"):
                     state[event.action] = not state[event.action]
                     print(f"{event.action} visible: {state[event.action]}")
@@ -427,28 +593,61 @@ def main() -> None:
                     state["camera"] = (state["camera"] + 1) % 3
                     set_camera(gym, viewer, state)
                 elif event.action == "screenshot" and screenshot is not None:
-                    write_evidence(gym, viewer, screenshot, records, state, step)
+                    write_evidence(
+                        gym, viewer, screenshot, records, presets, stats, history,
+                        state, step,
+                    )
                     captured = True
             if state["auto"] and args.auto_cycle_steps > 0 and step > 0 and step % args.auto_cycle_steps == 0:
                 state["active"] = (state["active"] + 1) % len(presets)
+                note_selection(
+                    history, step, presets[state["active"]].name, "automatic",
+                )
                 print(f"Automatic preset: {presets[state['active']].name}")
-            draw_scene(gym, viewer, env, kinematics, presets, directions, state)
+            poses = animated_joint_poses(
+                presets, state["motion_step"], state["motion_period_steps"],
+            )
+            update_motion_stats(stats, presets, poses)
+            apply_joint_poses(gym, env, actor_handles, asset_q_indices, poses)
+            occupied_supports = tuple(
+                capsule_support(kinematics, pose.unsqueeze(0), proxies, directions)[0]
+                for pose in poses
+            )
+            draw_scene(
+                gym, viewer, env, kinematics, presets, directions, poses,
+                occupied_supports, state,
+            )
             gym.simulate(sim)
             gym.fetch_results(sim, True)
             gym.step_graphics(sim)
             gym.draw_viewer(viewer, sim, False)
             if screenshot is not None and not captured and step >= max(0, args.screenshot_step):
-                write_evidence(gym, viewer, screenshot, records, state, step)
+                write_evidence(
+                    gym, viewer, screenshot, records, presets, stats, history,
+                    state, step,
+                )
                 captured = True
+            if state["motion"]:
+                state["motion_step"] += 1
             step += 1
             if args.max_steps > 0 and step >= args.max_steps:
                 running = False
         if screenshot is not None and not captured:
-            write_evidence(gym, viewer, screenshot, records, state, step)
+            write_evidence(
+                gym, viewer, screenshot, records, presets, stats, history,
+                state, step,
+            )
     finally:
         gym.destroy_viewer(viewer)
         gym.destroy_sim(sim)
     print(f"Viewer exited naturally after {step} steps.")
+    summary = motion_summary(presets, stats, history, state)
+    print(
+        "Motion compliance: "
+        f"{summary['joint_sample_count']} joint samples, "
+        f"{summary['range_violation_count']} violations, "
+        f"max excess {summary['max_bound_violation_rad']:.9g} rad"
+    )
 
 
 if __name__ == "__main__":

@@ -75,6 +75,45 @@ def polyline_segments(points: np.ndarray, *, closed: bool = False) -> np.ndarray
     return np.stack((starts, ends), axis=1).reshape(-1, 3)
 
 
+def interpolate_joint_ranges(
+    lower: Tensor,
+    upper: Tensor,
+    phase: float | Tensor,
+    *,
+    phase_offsets: Tensor | None = None,
+) -> Tensor:
+    """Return a smooth deterministic pose inside exported joint ranges.
+
+    ``phase`` is measured in cycles. Per-joint offsets allow coordinated motion
+    without changing the exported bounds that define the interpolation.
+    """
+    if lower.shape != upper.shape or lower.ndim != 1:
+        raise ValueError("lower and upper must have matching one-dimensional shapes")
+    if not bool(torch.isfinite(lower).all() and torch.isfinite(upper).all()):
+        raise ValueError("joint range bounds must be finite")
+    if bool((lower > upper).any()):
+        raise ValueError("joint range lower bounds must not exceed upper bounds")
+    if phase_offsets is None:
+        phase_offsets = torch.zeros_like(lower)
+    elif phase_offsets.shape != lower.shape:
+        raise ValueError("phase_offsets must match the joint range shape")
+    phase_tensor = torch.as_tensor(phase, dtype=lower.dtype, device=lower.device)
+    blend = 0.5 - 0.5 * torch.cos(2.0 * torch.pi * (phase_tensor + phase_offsets))
+    pose = torch.lerp(lower, upper, blend)
+    return torch.maximum(lower, torch.minimum(upper, pose))
+
+
+def joint_range_violations(
+    current_q: Tensor, lower: Tensor, upper: Tensor, *, tolerance: float = 1e-6,
+) -> Tuple[int, float]:
+    """Return violating joint count and maximum interval excess in radians."""
+    if current_q.shape != lower.shape or lower.shape != upper.shape:
+        raise ValueError("current_q, lower, and upper must have matching shapes")
+    excess = torch.maximum(lower - current_q, current_q - upper)
+    excess = torch.clamp_min(excess, 0.0)
+    return int((excess > tolerance).sum().item()), float(excess.max().item())
+
+
 def haa_arc_geometry(
     kinematics: BatchedUrdfKinematics,
     current_q: Tensor,
