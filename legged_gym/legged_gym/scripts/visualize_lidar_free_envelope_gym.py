@@ -136,8 +136,11 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
     baseline_support = capsule_support(
         kinematics, baseline_q.unsqueeze(0), capsules, directions,
     )[0]
-    effective_lower, effective_upper = kinematics.joint_limits(soft_fraction=0.9)
-    half_width = torch.tensor([0.95, 0.42, 0.48] * 6)
+    # Candidate reach spans the full URDF mechanical range (±3 rad for every
+    # joint) per MasterYip's request that the exported ranges genuinely reach
+    # the URDF limits instead of being capped by the reference reach.
+    effective_lower, effective_upper = kinematics.joint_limits(soft_fraction=1.0)
+    half_width = (effective_upper - effective_lower) / 2
     candidate_lower = torch.maximum(baseline_q - half_width, effective_lower)
     candidate_upper = torch.minimum(baseline_q + half_width, effective_upper)
     candidate_q = torch.cat((
