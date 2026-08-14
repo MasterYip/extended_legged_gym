@@ -33,8 +33,9 @@ export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 | --- | --- | --- |
 | Kinematic comparison | `legged_gym/scripts/visualize_kinematic_envelope_gym.py` | Compare compact, nominal, and wide EL4090 envelopes while all joints move within their exported intervals. |
 | LiDAR free envelope | `legged_gym/scripts/visualize_lidar_free_envelope_gym.py` | Generate a structured synthetic 2D LiDAR cloud, derive the point-free envelope, export joint intervals, and animate a constraint-compliant pose. |
+| ZhangHT border sliders | `legged_gym/scripts/visualize_legacy_slider_envelope_gym.py` | Control the original five-parameter foot border in Tkinter, recompute its sampled maximal admissible foot workspace, and display exported joint intervals. |
 
-Both scripts support three modes:
+All three scripts support compute-only, bounded, and interactive modes; the slider example additionally opens a Tkinter control panel. The original two viewers support three modes:
 
 1. `--compute_only` validates geometry without creating Isaac Gym.
 2. `--max_steps N` runs a bounded viewer and exits naturally after `N` frames.
@@ -150,11 +151,11 @@ candidate reduction, joint-interval shrinkage, and a complete motion sweep. The
 acceptance line must report zero accepted violations:
 
 ```text
-Compute-only motion: 120 frames; ... naive violations; 0 accepted violations; minimum scale ...
+Compute-only motion: 120 frames; ... naive violations; 0 accepted violations; fixed scale ...; maximum cyclic joint step ...
 ```
 
 Naive violations are diagnostic: they show where direct interpolation inside the
-joint box would exceed the prescribed envelope. The accepted pose is backtracked
+joint box would exceed the prescribed envelope. The complete cyclic trajectory is backtracked once with a single fixed scale
 toward the feasible anchor, so accepted violations must remain zero.
 
 To check another deterministic cloud:
@@ -236,10 +237,98 @@ pre-obstacle reachable-foot reference, while dark teal is the robot's current
 occupied capsule support. The light-cyan boundary is the active collision-free
 constraint between them.
 
+## ZhangHT Legacy-Border Slider
+
+This example uses the original `feat/el_4090_2` envelope semantics: a symmetric
+piecewise-linear **foot workspace** in base-yaw XY, not a body-collision
+capsule. Tkinter owns the five border controls while the Isaac Gym window shows
+the corresponding EL4090 pose and geometry.
+
+For foot coordinate $(x,y)$ and parameters
+$(w_f,w_m,w_b,x_f,x_b)$, the exact permitted half-width is
+
+$$
+w(x)=
+\begin{cases}
+w_b + \dfrac{x-x_b}{-x_b}(w_m-w_b), & x_b\le x\le 0,\\
+w_m + \dfrac{x}{x_f}(w_f-w_m), & 0<x\le x_f.
+\end{cases}
+$$
+
+A foot is accepted only when $x_b\le x\le x_f$ and $|y|\le w(x)$. Because the
+middle width can be smaller than both end widths, the full border can be
+concave. The implementation therefore never replaces it with one convex
+support polygon. For the registered feasible FK foot samples $P^-$ and $P^+$
+in the rear and front halves, the displayed sampled maximum is
+
+$$
+\mathcal E_{\mathrm{sample}}
+=\operatorname{conv}(P^-)\cup\operatorname{conv}(P^+)
+\subseteq \mathcal E_{\mathrm{ZhangHT}}.
+$$
+
+This is maximal only with respect to the registered samples in each half. Joint
+limits are the coordinatewise extrema of sampled configurations whose six feet
+pass the exact test:
+
+$$
+q_j^- = \min_{q\in\mathcal Q_{\mathrm{sample}}} q_j,
+\qquad
+q_j^+ = \max_{q\in\mathcal Q_{\mathrm{sample}}} q_j.
+$$
+
+The resulting axis-aligned box can combine values from incompatible sampled
+configurations. The panel and JSON therefore report independent box samples
+whose feet violate the border; a nonzero count is a coupling warning, not a
+viewer failure.
+
+### Launch
+
+Compute without opening either window:
+
+```bash
+python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py --compute_only
+```
+
+Start the interactive Tkinter panel and Isaac Gym viewer:
+
+```bash
+python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py \
+  --screenshot /tmp/env-design-003/legacy_slider.png
+```
+
+Drag any slider to enqueue a recomputation. The 80 ms debounce coalesces dense
+drag events, while releasing the mouse applies the latest values immediately.
+`Reset midpoint` selects $(0.45,0.50,0.45,0.75,-0.75)$; `Maximum border`
+selects $(0.60,0.70,0.60,0.90,-0.90)$. `Capture` writes the configured viewer
+PNG and matching JSON. Closing either window ends the shared main-thread event
+loop.
+
+| Slider | Range [m] | Meaning |
+| --- | ---: | --- |
+| `front_width` | 0.30 to 0.60 | Positive/negative lateral half-width at $x=x_f$. |
+| `middle_width` | 0.30 to 0.70 | Lateral half-width at $x=0$. |
+| `back_width` | 0.30 to 0.60 | Lateral half-width at $x=x_b$. |
+| `forward_limit` | 0.60 to 0.90 | Front longitudinal boundary $x_f$. |
+| `backward_limit` | -0.90 to -0.60 | Rear longitudinal boundary $x_b$. |
+
+| Color | Meaning |
+| --- | --- |
+| White | Exact ZhangHT hard outer foot-workspace border. |
+| Light cyan | Separate rear/front convex hulls of feasible sampled FK feet. |
+| Dark teal | Current six-foot hull and foot markers. |
+| Amber | Exported HAA intervals and current URDF hip-to-foot directions. |
+| Red | Actual current-foot containment violation only. |
+
+For a deterministic callback smoke, use `--max_steps 120 --auto_sweep_steps 30`.
+This drives maximum, midpoint, compact, and maximum presets through the same
+queued slider path. `--candidate_count`, `--validation_count`, and
+`--box_validation_samples` trade recomputation latency against sampling density.
+
 ## Evidence Location Policy
 
 Generated PNG and JSON files must be stored outside the
-`extended_legged_gym` Git repository. Both scripts reject screenshot paths inside
+`extended_legged_gym` Git repository. All three scripts reject screenshot paths inside
 the repository. Use `/tmp/env-design-003/` for temporary inspection or copy a
 selected, reviewed result to the canonical task evidence directory managed by the
 agent-team workflow. Do not place generated evidence in `legged_gym/doc/imgs`,
@@ -312,4 +401,5 @@ Use the scripts' built-in help as the authoritative option list:
 ```bash
 python legged_gym/scripts/visualize_kinematic_envelope_gym.py --help
 python legged_gym/scripts/visualize_lidar_free_envelope_gym.py --help
+python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py --help
 ```

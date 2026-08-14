@@ -88,3 +88,24 @@ The viewer uses two vertically offset strokes for every envelope, LiDAR, and
 HAA line primitive. See the complete [envelope visualization guide](legged_gym/doc/envelope_visualization.md)
 for bounded runs, evidence capture, controls, color semantics, and
 troubleshooting.
+
+### ZhangHT legacy-border slider example
+
+This interactive example preserves ZhangHT's original five-parameter foot-workspace
+border. A Tkinter panel controls the border, recomputes the sampled maximal
+front/rear foot envelope, and displays all 18 exported joint intervals after
+each slider update. The Isaac Gym window shows the white legacy border, cyan
+sampled maximum, teal current rear/front six-foot hulls, and amber HAA intervals.
+
+```bash
+cd legged_gym
+conda activate isaacgym
+python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py
+```
+
+The sliders use the original training ranges: `front_width` 0.3-0.6 m,
+`middle_width` 0.3-0.7 m, `back_width` 0.3-0.6 m, `forward_limit` 0.6-0.9 m,
+and `backward_limit` -0.9 to -0.6 m. `Reset midpoint` restores ZhangHT's
+midpoint initialization; `Maximum border` restores the playback maximum.
+The exported axis-aligned intervals are approximate: the panel reports sampled
+joint-box combinations whose coupled feet leave the legacy workspace.
