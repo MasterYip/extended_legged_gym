@@ -220,6 +220,85 @@ Generated captures and numeric evidence are task-owned artifacts. Keep them in
 the task record or another external results location, never in the
 `extended_legged_gym` Git repository.
 
+## LiDAR-derived point-free envelope demo
+
+`scripts/visualize_lidar_free_envelope_gym.py` demonstrates the complete
+LiDAR-to-motion contract on one real, fixed-base EL4090 model. A deterministic
+synthetic scan provides full angular-sector coverage, three near-return
+clusters, and two farther gaps. Arguments expose the seed, return count, radius
+bounds, minimum robot clearance, and prescribed point clearance.
+
+Let normalized fixed normals be $u_k$, and assign each return $p_i$ to its
+nearest angular sector $s(i)$. The example declares the restricted polygon
+family
+
+$$
+\mathcal P(h)=\{x\in\mathbb R^2\mid u_k^\top x\le h_k,\ k=1,\ldots,K\},
+$$
+
+with the separable safety contract
+
+$$
+u_{s(i)}^\top p_i-h_{s(i)}\ge d_{\mathrm{point}}.
+$$
+
+Its coordinatewise maximum is
+
+$$
+h_k^\star=\min_{i:s(i)=k}u_k^\top p_i-d_{\mathrm{point}}.
+$$
+
+Every sector has an active limiting return. Increasing any one
+$h_k^\star$ violates that return's clearance. This is the implemented and
+tested maximality claim; it is not a claim of a global maximum over arbitrary
+polygon topologies or alternative point-to-face assignments.
+
+The support $h^\star$ is passed to the sampled 18-joint range export. An
+axis-aligned joint box alone is not a collision certificate, so the animation
+proposes a smooth box-bounded pose and backtracks it toward a known feasible
+anchor until both constraints hold:
+
+$$
+q^-\le q(t)\le q^+,
+\qquad
+h_k^{\mathrm{occ}}(q(t))\le h_k^\star\quad\forall k.
+$$
+
+Light cyan means the prescribed LiDAR-derived envelope; dark teal means the
+current occupied capsule envelope. White crosses are returns, cyan spokes mark
+active limiting clearances, amber shows physical HAA ranges, and muted blue is
+the optional reachable-foot layer. Red is reserved for a true violation.
+Controls are printed at launch: `G` regenerates with the next seed; `M`
+pauses motion; `X` resets phase; `L`, `P`, `O`, `H`, and `R` toggle
+layers; `C` changes camera; `S` captures; and Esc exits.
+
+Validate without a viewer:
+
+```bash
+LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
+/home/user/miniforge3/envs/isaacgym/bin/python \
+  scripts/visualize_lidar_free_envelope_gym.py \
+  --compute_only --seed 4090 --point_count 192 --directions 48
+```
+
+Run the bounded GPU viewer, keeping generated output outside this repository:
+
+```bash
+mkdir -p /tmp/ENV-DESIGN-003-lidar
+LD_LIBRARY_PATH=/home/user/miniforge3/envs/isaacgym/lib:$LD_LIBRARY_PATH \
+/home/user/miniforge3/envs/isaacgym/bin/python \
+  scripts/visualize_lidar_free_envelope_gym.py \
+  --compute_device_id 0 --graphics_device_id 0 \
+  --seed 4090 --point_count 192 --directions 48 \
+  --max_steps 180 --motion_period_steps 120 --screenshot_step 179 \
+  --screenshot /tmp/ENV-DESIGN-003-lidar/lidar_free_envelope.png
+```
+
+The matching JSON records scan parameters, active limiting returns, prescribed
+support and vertices, exported ranges for all 18 joints, visible-layer
+semantics, and motion compliance. The viewer aborts if an accepted frame
+exceeds either its joint interval or occupied-envelope support.
+
 ## Limitations
 
 - Capsules are explicit low-cost proxies calibrated from URDF joint spans; they
