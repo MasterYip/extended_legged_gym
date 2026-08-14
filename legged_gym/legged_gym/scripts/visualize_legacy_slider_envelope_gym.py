@@ -24,9 +24,9 @@ sys.path.insert(0, str(ENVELOPE_DIR))
 from kinematic_envelope import (  # noqa: E402
     EL4090_JOINT_NAMES, EL4090_LEG_NAMES, BatchedUrdfKinematics,
     capsule_support, default_el4090_capsules, deterministic_joint_samples,
-    export_envelope_joint_ranges, haa_ranges_from_joint_export,
-    joint_rejection_ranges, load_urdf_joints, reachable_foot_support,
-    support_directions,
+    export_envelope_joint_ranges_at_reference, feasible_reference_q,
+    haa_ranges_from_joint_export, joint_rejection_ranges, load_urdf_joints,
+    reachable_foot_support, support_directions,
 )
 from legacy_slider_envelope import (  # noqa: E402
     LEGACY_MAXIMUM, LEGACY_MIDPOINT, LEGACY_PARAMETER_ORDER,
@@ -152,10 +152,25 @@ def compute_result(kinematics, context, values, args, generation):
     # The envelope is computed from the live border unconditionally. A border
     # that cannot contain the resting pose is a real, visualized condition
     # (red capsule, frozen motion), not a reason to retain the previous result.
-    export = export_envelope_joint_ranges(
-        kinematics, context["candidate_q"], context["validation_q"], directions,
-        free_envelope.support_m, context["lower"], context["upper"],
-        capsules=context["capsules"],
+    #
+    # The exported box and the rejection bands both sweep each joint at a single
+    # feasible reference (resting pose -> box center -> nearest feasible
+    # candidate sample), so the displayed ranges are the exact per-axis feasible
+    # reach and stay meaningful even when few candidate samples are
+    # envelope-feasible under the full-URDF reach window.
+    reference, _reference_source = feasible_reference_q(
+        kinematics, context["capsules"], directions, free_envelope.support_m,
+        context["lower"], context["upper"], context["baseline_q"],
+        tolerance=TOLERANCE, fallback_candidates=context["candidate_q"],
+    )
+    if reference is None:
+        # No feasible candidate at all: keep a NaN export box (the rejection and
+        # the panel both render it as "infeasible") rather than crashing.
+        reference = context["lower"]
+    export = export_envelope_joint_ranges_at_reference(
+        kinematics, context["capsules"], directions, free_envelope.support_m,
+        context["lower"], context["upper"], reference,
+        tolerance=TOLERANCE,
         box_validation_samples=args.box_validation_samples,
         box_validation_seed=args.seed + 300,
     )
@@ -187,7 +202,8 @@ def compute_result(kinematics, context, values, args, generation):
         rejection_ranges=joint_rejection_ranges(
             kinematics, context["capsules"], directions,
             free_envelope.support_m, export.lower, export.upper,
-            context["baseline_q"], tolerance=TOLERANCE,
+            reference, tolerance=TOLERANCE,
+            fallback_candidates=context["candidate_q"],
         ),
     )
     resting_inside = float(
