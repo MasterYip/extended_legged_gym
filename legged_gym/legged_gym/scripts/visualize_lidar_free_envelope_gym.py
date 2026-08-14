@@ -89,6 +89,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--robot_clearance", type=float, default=0.05)
     parser.add_argument("--point_clearance", type=float, default=0.02)
     parser.add_argument("--reference_containment_margin", type=float, default=0.005)
+    parser.add_argument(
+        "--near_band_fraction", type=float, default=0.12,
+        help="maximum feasible-annulus fraction for sparse primary returns",
+    )
     parser.add_argument("--min_candidate_reduction_fraction", type=float, default=0.05)
     parser.add_argument("--min_joint_shrink_rad", type=float, default=0.03)
     parser.add_argument("--motion_period_steps", type=int, default=120)
@@ -134,6 +138,7 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         max_radius=args.max_radius,
         robot_clearance=args.robot_clearance,
         reference_containment_margin=args.reference_containment_margin,
+        near_band_fraction=args.near_band_fraction,
     )
     reference_excess = polygon_support_excess(
         cloud.points_xy, directions, reference_reachable_support,
@@ -324,6 +329,11 @@ def print_problem(problem, directions) -> None:
         "  structure: sparse random face assignment; "
         f"near clusters at {cluster_text} rad; far gaps at {gap_text} rad"
     )
+    print(
+        "  proximity: returns use at most "
+        f"{100.0 * problem.cloud.near_band_fraction:.1f}% of the feasible radial "
+        f"annulus; lateral anchors {problem.cloud.lateral_anchor_sectors.tolist()}"
+    )
     print(f"  baseline capsule-envelope clearance: {float(baseline_clearance.min()):.6f} m minimum")
     print(f"  prescribed point clearance: {float(clearance.min()):.6f} m minimum")
     print(
@@ -364,14 +374,20 @@ def add_segments(gym, viewer, env, segments, color) -> None:
     gym.add_lines(viewer, env, count, vertices, colors)
 
 
+def add_bold_segments(gym, viewer, env, segments, color, *, z_offset=0.008) -> None:
+    """Match the comparison viewer's two vertically offset line strokes."""
+    vertices = np.asarray(segments, dtype=np.float32).reshape(-1, 3)
+    add_segments(gym, viewer, env, vertices, color)
+    raised = vertices.copy()
+    raised[:, 2] += z_offset
+    add_segments(gym, viewer, env, raised, color)
+
+
 def draw_boundary(gym, viewer, env, polygon, height, color) -> None:
     points = np.column_stack((polygon, np.full(len(polygon), height)))
-    for z_offset in (0.0, 0.008, 0.016):
-        raised = points.copy()
-        raised[:, 2] += z_offset
-        add_segments(
-            gym, viewer, env, polyline_segments(raised, closed=True), color,
-        )
+    add_bold_segments(
+        gym, viewer, env, polyline_segments(points, closed=True), color,
+    )
 
 
 def draw_cloud(gym, viewer, env, problem) -> None:
@@ -389,20 +405,14 @@ def draw_cloud(gym, viewer, env, problem) -> None:
             (x + 0.72 * size, y - 0.72 * size, z),
         ))
     crosses = np.asarray(crosses)
-    add_segments(gym, viewer, env, crosses, WHITE)
-    raised_crosses = crosses.copy()
-    raised_crosses[:, 2] += 0.008
-    add_segments(gym, viewer, env, raised_crosses, WHITE)
+    add_bold_segments(gym, viewer, env, crosses, WHITE)
     limiting = problem.free_envelope.limiting_points_xy.detach().cpu().numpy()
     feet = problem.free_envelope.clearance_feet_xy.detach().cpu().numpy()
     spokes = np.stack((
         np.column_stack((limiting, np.full(len(limiting), z))),
         np.column_stack((feet, np.full(len(feet), z))),
     ), axis=1).reshape(-1, 3)
-    add_segments(gym, viewer, env, spokes, LIGHT_CYAN)
-    raised_spokes = spokes.copy()
-    raised_spokes[:, 2] += 0.008
-    add_segments(gym, viewer, env, raised_spokes, LIGHT_CYAN)
+    add_bold_segments(gym, viewer, env, spokes, LIGHT_CYAN)
 
 
 def draw_haa(gym, viewer, env, kinematics, problem, pose) -> None:
@@ -414,17 +424,15 @@ def draw_haa(gym, viewer, env, kinematics, problem, pose) -> None:
     arcs = arcs.detach().cpu().numpy() + translation
     markers = markers.detach().cpu().numpy() + translation
     for index in range(6):
-        add_segments(gym, viewer, env, polyline_segments(arcs[index]), AMBER)
-        raised_arc = arcs[index].copy()
-        raised_arc[:, 2] += 0.008
-        add_segments(gym, viewer, env, polyline_segments(raised_arc), AMBER)
+        add_bold_segments(
+            gym, viewer, env, polyline_segments(arcs[index]), AMBER,
+        )
         bounds = np.stack((origins[index], arcs[index, 0], origins[index], arcs[index, -1]))
-        add_segments(gym, viewer, env, bounds, AMBER)
+        add_bold_segments(gym, viewer, env, bounds, AMBER)
         endpoint = origins[index] + 1.28 * (markers[index] - origins[index])
-        add_segments(gym, viewer, env, np.stack((origins[index], endpoint)), AMBER)
-        raised_marker = np.stack((origins[index], endpoint)).copy()
-        raised_marker[:, 2] += 0.008
-        add_segments(gym, viewer, env, raised_marker, AMBER)
+        add_bold_segments(
+            gym, viewer, env, np.stack((origins[index], endpoint)), AMBER,
+        )
 
 
 def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state, violation) -> None:
@@ -591,7 +599,7 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
                 "randomization": (
                     "seeded uneven sector density, randomized cluster/gap "
                     "centers with 0.60 rad circular separation, wide angular "
-                    "jitter, and broad radial scatter"
+                    "jitter, and a configurable near-inner radial band"
                 ),
                 "near_cluster_centers_rad": (
                     problem.cloud.near_cluster_centers_rad.detach().cpu().tolist()
@@ -603,6 +611,10 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
                     int(problem.cloud.sector_counts.min()),
                     int(problem.cloud.sector_counts.max()),
                 ],
+                "lateral_anchor_sectors": (
+                    problem.cloud.lateral_anchor_sectors.detach().cpu().tolist()
+                ),
+                "near_band_fraction": problem.cloud.near_band_fraction,
             },
             "radius_bounds_m": [problem.cloud.min_radius_m, problem.cloud.max_radius_m],
             "observed_radius_bounds_m": [
@@ -705,6 +717,8 @@ def validate_args(args) -> None:
         raise ValueError("--point_clearance must be smaller than --robot_clearance")
     if args.reference_containment_margin <= 0.0:
         raise ValueError("--reference_containment_margin must be positive")
+    if not 0.0 < args.near_band_fraction <= 1.0:
+        raise ValueError("--near_band_fraction must be in (0,1]")
     if not 0.0 < args.min_candidate_reduction_fraction < 1.0:
         raise ValueError("--min_candidate_reduction_fraction must be in (0,1)")
     if args.min_joint_shrink_rad <= 0.0:

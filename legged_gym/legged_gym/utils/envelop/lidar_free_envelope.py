@@ -30,6 +30,8 @@ class SyntheticLidarCloud:
     near_cluster_centers_rad: Tensor
     far_gap_centers_rad: Tensor
     sector_counts: Tensor
+    lateral_anchor_sectors: Tensor
+    near_band_fraction: float
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,7 @@ def generate_synthetic_lidar_cloud(
     max_radius: float,
     robot_clearance: float,
     reference_containment_margin: float,
+    near_band_fraction: float = 0.12,
 ) -> SyntheticLidarCloud:
     """Generate sparse returns inside a pre-obstacle reachable polygon.
 
@@ -118,15 +121,30 @@ def generate_synthetic_lidar_cloud(
         raise ValueError("robot_clearance must be positive")
     if reference_containment_margin <= 0.0:
         raise ValueError("reference_containment_margin must be positive")
+    if not 0.0 < near_band_fraction <= 1.0:
+        raise ValueError("near_band_fraction must be in (0,1]")
     eroded_reference = reference_reachable_support - reference_containment_margin
     if bool((eroded_reference <= 0.0).any()):
         raise ValueError("reference containment margin erodes through the origin")
 
     generator = torch.Generator(device=directions.device).manual_seed(int(seed))
     primary_count = min(count, sectors)
-    primary_sectors = torch.randperm(
-        sectors, generator=generator, device=directions.device,
-    )[:primary_count]
+    side_count = min(3, primary_count // 2)
+    if side_count:
+        left = torch.topk(directions[:, 1], side_count).indices
+        right = torch.topk(-directions[:, 1], side_count).indices
+        lateral_anchor_sectors = torch.cat((left, right))
+    else:
+        lateral_anchor_sectors = torch.empty(
+            0, dtype=torch.long, device=directions.device,
+        )
+    available = torch.ones(sectors, dtype=torch.bool, device=directions.device)
+    available[lateral_anchor_sectors] = False
+    random_pool = torch.arange(sectors, device=directions.device)[available]
+    random_primary = random_pool[torch.randperm(
+        random_pool.numel(), generator=generator, device=directions.device,
+    )[:primary_count - lateral_anchor_sectors.numel()]]
+    primary_sectors = torch.cat((lateral_anchor_sectors, random_primary))
     extra_sectors = torch.randint(
         sectors, (count - primary_count,), generator=generator,
         device=directions.device,
@@ -139,6 +157,9 @@ def generate_synthetic_lidar_cloud(
     permutation = torch.randperm(count, generator=generator, device=directions.device)
     sector_indices = sector_indices[permutation]
     primary = primary[permutation]
+    lateral_returns = (
+        sector_indices[:, None] == lateral_anchor_sectors[None, :]
+    ).any(dim=1)
     sector_angles = torch.atan2(directions[:, 1], directions[:, 0])
     sector_width = 2.0 * torch.pi / sectors
     raw_jitter = torch.rand(
@@ -196,9 +217,17 @@ def generate_synthetic_lidar_cloud(
     cluster_strength = torch.exp(-0.5 * (_wrapped_angle_delta(angles, cluster_centers) / 0.34) ** 2).amax(dim=1)
     gap_strength = torch.exp(-0.5 * (_wrapped_angle_delta(angles, gap_centers) / 0.28) ** 2).amax(dim=1)
     limiting_fraction = torch.clamp(
-        0.04 + 0.28 * noise - 0.05 * cluster_strength + 0.10 * gap_strength,
-        0.02,
-        0.42,
+        0.01 + near_band_fraction * (
+            0.12 + 0.68 * noise - 0.08 * cluster_strength
+            + 0.12 * gap_strength
+        ),
+        0.005,
+        near_band_fraction,
+    )
+    lateral_fraction = torch.clamp(
+        0.005 + 0.25 * near_band_fraction * noise,
+        0.005,
+        0.35 * near_band_fraction,
     )
     scattered_fraction = torch.clamp(
         0.06 + 0.88 * noise - 0.12 * cluster_strength + 0.10 * gap_strength,
@@ -208,6 +237,7 @@ def generate_synthetic_lidar_cloud(
     radial_fraction = torch.where(
         primary, limiting_fraction, scattered_fraction,
     )
+    radial_fraction = torch.where(lateral_returns, lateral_fraction, radial_fraction)
     infeasible = inner_radius >= outer_radius
     if bool(infeasible.any()):
         failed = torch.unique(sector_indices[infeasible]).detach().cpu().tolist()
@@ -232,6 +262,8 @@ def generate_synthetic_lidar_cloud(
         near_cluster_centers_rad=cluster_centers,
         far_gap_centers_rad=gap_centers,
         sector_counts=torch.bincount(sector_indices, minlength=sectors),
+        lateral_anchor_sectors=torch.sort(lateral_anchor_sectors).values,
+        near_band_fraction=float(near_band_fraction),
     )
 
 

@@ -237,12 +237,15 @@ $$
 
 This order avoids defining the reference from already constrained candidates.
 The default deterministic scan contains 20 sparse returns for 48 fixed normals.
-It selects unique random sectors, then randomizes separated near-cluster and
-far-gap angles, angular offsets, and radial placement from the seed. Pressing
-`G` therefore changes both the constrained-face set and polygon support, not
-merely point order. Arguments expose the seed, return count, radius bounds,
-minimum robot clearance, point clearance, reference-containment margin, and
-material-impact thresholds.
+It reserves the three normals nearest each of $+y$ and $-y$ as lateral anchors
+so both middle-leg workspaces are constrained on every seed, then selects the
+remaining unique sectors randomly. Primary returns occupy at most the first
+12% of the feasible radial annulus beyond the collision-safe inner radius;
+lateral anchors use at most 4.2%. `--near_band_fraction` changes the primary
+band while preserving the clearance construction. Separated near-cluster and
+far-gap angles, angular offsets, and radial placement still vary from the seed.
+Pressing `G` therefore changes both the constrained-face set and polygon
+support, not merely point order.
 
 For ray unit vector $v_i$, the feasible radial annulus is resolved from the
 baseline occupied support and every face of the eroded reference polygon:
@@ -321,7 +324,9 @@ current occupied capsule envelope. White star targets are returns, cyan spokes m
 active limiting clearances, amber shows physical HAA ranges, and muted blue is
 the pre-obstacle unconstrained reachable reference. The blue layer is visible
 by default, so the lost blue-to-cyan free space and white returns inside it are
-directly inspectable. Red is reserved for a true violation.
+directly inspectable. Boundaries, targets, spokes, and HAA geometry are each
+drawn twice with the comparison viewer's 0.008 m height offset. Red is reserved
+for a true violation.
 Controls are printed at launch: `G` regenerates with the next seed; `M`
 pauses motion; `X` resets phase; `L`, `P`, `O`, `H`, and `R` toggle
 layers; `C` changes camera; `S` captures; and Esc exits.

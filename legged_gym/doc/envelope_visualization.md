@@ -117,11 +117,15 @@ support discretization.
 
 The LiDAR example creates 20 sparse seeded returns inside the pre-obstacle
 reachable envelope and outside the baseline occupied robot envelope. Returns
-occupy unique random sectors by default; faces without a return retain the blue
-pre-obstacle reference cap. Seed changes randomize the constrained-face set,
-cluster and gap locations, angular jitter, radial placement, and therefore the
-light-cyan polygon shape. For direction $\mathbf u_k$, the accepted animation
-maintains
+occupy unique sectors by default. The three sectors nearest each lateral axis
+are always included so the left and right middle-leg workspaces are affected;
+the remaining sectors vary with the seed. Returns use at most the first 12% of
+their feasible radial annulus, while lateral anchors use at most 4.2%, placing
+them close to the minimum collision-safe radius. Faces without a return retain
+the blue pre-obstacle reference cap. Seed changes randomize the other
+constrained faces, cluster and gap locations, angular jitter, radial placement,
+and therefore the light-cyan polygon shape. For direction $\mathbf u_k$, the
+accepted animation maintains
 
 $$
 h_{\mathrm{occ}}(\mathbf u_k;\mathbf q)
@@ -154,11 +158,14 @@ To check another deterministic cloud:
 
 ```bash
 python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
-  --compute_only --seed 4091 --point_count 20
+  --compute_only --seed 4091 --point_count 20 --near_band_fraction 0.12
 ```
 
 `--point_count` may be smaller than `--directions`; it must be positive.
-The output reports point-constrained and reference-capped face counts.
+`--near_band_fraction` is the maximum fraction of the feasible radial annulus
+used by primary returns; reduce it toward zero to move points closer to the
+minimum safe radius. The output reports point-constrained and reference-capped
+face counts, the band fraction, and lateral anchor sectors.
 
 ### Bounded viewer and evidence capture
 
@@ -212,6 +219,10 @@ python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
 | Dark teal | Current occupied capsule envelope. | Must remain inside the light-cyan envelope. |
 | Amber | Exported HAA intervals and current body-XY hip-to-foot directions from URDF FK. | Motion must remain inside the exported intervals. |
 | Red | Actual joint or envelope violation only. | Must never appear in an accepted run. |
+
+Every displayed line uses two vertically offset strokes, matching
+`visualize_kinematic_envelope_gym.py`. This applies consistently to envelope
+boundaries, LiDAR targets, clearance spokes, HAA arcs, bounds, and markers.
 
 The blue and dark-teal boundaries describe different quantities: blue is a
 pre-obstacle reachable-foot reference, while dark teal is the robot's current
@@ -267,8 +278,10 @@ the screenshot suffix with `.json`.
 
 Keep `--directions` at least 8, `--point_count` positive,
 `--point_clearance` smaller than `--robot_clearance`, and
-`--reference_containment_margin` positive. Start from the defaults when testing a
-new machine, then change one parameter at a time.
+`--reference_containment_margin` positive. Keep `--near_band_fraction` in
+$(0,1]$; smaller values move returns closer to the robot without reducing the
+declared robot clearance. Start from the defaults when testing a new machine,
+then change one parameter at a time.
 
 ### LiDAR materiality or feasibility fails
 

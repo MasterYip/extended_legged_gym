@@ -80,6 +80,22 @@ class TestLidarFreeEnvelope(unittest.TestCase):
         self.assertEqual(torch.unique(first.sector_indices).numel(), 20)
         self.assertEqual(int(first.sector_counts.min()), 0)
         self.assertEqual(int(first.sector_counts.max()), 1)
+        expected_lateral = torch.cat((
+            torch.topk(self.directions[:, 1], 3).indices,
+            torch.topk(-self.directions[:, 1], 3).indices,
+        ))
+        self.assertTrue(torch.equal(
+            first.lateral_anchor_sectors, torch.sort(expected_lateral).values,
+        ))
+        radial_fraction = (first.radii_m - first.ray_inner_radius_m) / (
+            first.ray_outer_radius_m - first.ray_inner_radius_m
+        )
+        self.assertLessEqual(float(radial_fraction.max()), 0.12 + 1e-6)
+        lateral_returns = (
+            first.sector_indices[:, None]
+            == first.lateral_anchor_sectors[None, :]
+        ).any(dim=1)
+        self.assertLessEqual(float(radial_fraction[lateral_returns].max()), 0.042 + 1e-6)
         projection = (first.points_xy * self.directions[first.sector_indices]).sum(-1)
         clearance = projection - self.anchor_support[first.sector_indices]
         self.assertGreaterEqual(float(clearance.min()), 0.05 - 2e-6)
@@ -188,6 +204,9 @@ class TestLidarFreeEnvelope(unittest.TestCase):
         )
         self.assertTrue(bool(export.valid))
         self.assertGreaterEqual(float(shrinkage.max()), 0.03)
+        for leg in ("LM", "RM"):
+            haa_index = KE.EL4090_JOINT_NAMES.index(f"{leg}_HAA")
+            self.assertGreater(float(shrinkage[haa_index]), 0.02)
 
     def test_backtracking_rejects_naive_box_pose_and_returns_compliant_pose(self):
         lower, upper = self.kinematics.joint_limits(soft_fraction=0.9)
