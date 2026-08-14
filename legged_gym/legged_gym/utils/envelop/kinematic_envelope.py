@@ -473,6 +473,187 @@ def export_envelope_joint_ranges(
     )
 
 
+@dataclass(frozen=True)
+class JointRejectionRanges:
+    """Per-joint rejected sub-intervals of an exported joint box.
+
+    ``feasible_reference`` is False when no validated feasible reference pose
+    could be found (an empty NaN box, or an envelope so tight that neither
+    ``reference_q`` nor the exported box center is envelope-feasible). In that
+    case ``rejected_intervals`` is a tuple of empty tuples and the summary
+    fields are zeroed, so callers can render a clean "not applicable".
+    """
+
+    feasible_reference: bool
+    reference_source: str
+    reference_q: Optional[Tensor]
+    rejected_intervals: Tuple[Tuple[Tuple[float, float], ...], ...]
+    rejected_joint_count: int
+    max_rejected_span_rad: float
+    max_rejected_joint_index: int
+
+    def to_evidence_dict(self, joint_names: Sequence[str] = EL4090_JOINT_NAMES) -> dict:
+        """Return a JSON-serializable evidence record for the viewer examples."""
+        return {
+            "feasible_reference": self.feasible_reference,
+            "reference_source": self.reference_source,
+            "reference_q_rad": (
+                self.reference_q.detach().cpu().tolist()
+                if self.reference_q is not None else None
+            ),
+            "per_joint_intervals_rad": [
+                [list(interval) for interval in joint]
+                for joint in self.rejected_intervals
+            ],
+            "rejected_joint_count": self.rejected_joint_count,
+            "max_rejected_span_rad": self.max_rejected_span_rad,
+            "max_rejected_joint_index": self.max_rejected_joint_index,
+            "max_rejected_joint_name": (
+                joint_names[self.max_rejected_joint_index]
+                if self.max_rejected_joint_index >= 0 else None
+            ),
+        }
+
+
+def _contiguous_true_runs(mask: Tensor) -> Tuple[Tuple[int, int], ...]:
+    """Return inclusive index runs of True values in a one-dimensional mask."""
+    if mask.ndim != 1:
+        raise ValueError("mask must be one-dimensional")
+    if not bool(mask.any().item()):
+        return ()
+    diff = torch.diff(
+        mask.to(torch.int64),
+        prepend=torch.zeros(1, dtype=torch.int64, device=mask.device),
+        append=torch.zeros(1, dtype=torch.int64, device=mask.device),
+    )
+    starts = torch.nonzero(diff == 1).flatten()
+    ends = torch.nonzero(diff == -1).flatten()
+    return tuple((int(start), int(end) - 1) for start, end in zip(starts, ends))
+
+
+def joint_rejection_ranges(
+    kinematics: BatchedUrdfKinematics,
+    capsules: Sequence[CapsuleProxy],
+    directions: Tensor,
+    allowed_support: Tensor,
+    lower: Tensor,
+    upper: Tensor,
+    reference_q: Tensor,
+    *,
+    tolerance: float = 1e-6,
+    steps: int = 101,
+) -> JointRejectionRanges:
+    """Per-joint rejected sub-intervals of an exported admissible joint box.
+
+    For every joint ``j`` the other joints are pinned at a validated feasible
+    reference and ``q[j]`` is swept linearly over ``[lower[j], upper[j]]``.
+    A swept pose is rejected when ``capsule_support(...) > allowed_support +
+    tolerance`` for at least one support direction, the same feasibility test
+    ``export_envelope_joint_ranges`` applies to its candidate samples. The
+    returned intervals are the contiguous rejected runs in radians (endpoints
+    are half a sweep step interpolated and clamped to the exported range).
+
+    Reference design: ``reference_q`` is preferred (the natural visual anchor;
+    for these examples it is the resting pose, inside the exported box whenever
+    the export is valid and envelope-feasible whenever the resting pose fits
+    the envelope). The exported box center ``0.5 * (lower + upper)`` is the
+    fallback. Both are validated for box membership and envelope feasibility:
+    the exported box is an axis-aligned over-approximation and its center is
+    not guaranteed feasible. When the export is empty (all-NaN box) or neither
+    candidate is feasible, ``feasible_reference`` is False and no intervals are
+    reported rather than raising.
+    """
+    if steps < 2:
+        raise ValueError("steps must be at least two")
+    num_joints = kinematics.num_dof
+    lower = lower.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    upper = upper.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    allowed = allowed_support.to(dtype=reference_q.dtype, device=reference_q.device)
+    if lower.numel() != num_joints or upper.numel() != num_joints or allowed.shape != (directions.shape[0],):
+        raise ValueError("lower/upper must have num_dof entries and allowed_support must match the directions")
+    empty = tuple(() for _ in range(num_joints))
+    if not bool(torch.isfinite(lower).all().item()) or not bool(torch.isfinite(upper).all().item()):
+        return JointRejectionRanges(
+            feasible_reference=False,
+            reference_source="none: exported box is empty (NaN)",
+            reference_q=None,
+            rejected_intervals=empty,
+            rejected_joint_count=0,
+            max_rejected_span_rad=0.0,
+            max_rejected_joint_index=-1,
+        )
+    base = reference_q.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    center = 0.5 * (lower + upper)
+
+    chosen: Optional[Tensor] = None
+    source = ""
+    for name, candidate in (("reference_q", base), ("box_center", center)):
+        inside = bool((candidate >= lower - 1e-5).all().item()) and bool(
+            (candidate <= upper + 1e-5).all().item()
+        )
+        if not inside:
+            continue
+        support = capsule_support(
+            kinematics, candidate.unsqueeze(0), capsules, directions,
+        )[0]
+        if bool((support <= allowed + tolerance).all().item()):
+            chosen = candidate
+            source = name
+            break
+    if chosen is None:
+        return JointRejectionRanges(
+            feasible_reference=False,
+            reference_source="no feasible reference among reference_q and box center",
+            reference_q=None,
+            rejected_intervals=empty,
+            rejected_joint_count=0,
+            max_rejected_span_rad=0.0,
+            max_rejected_joint_index=-1,
+        )
+
+    alpha = torch.linspace(0.0, 1.0, steps, dtype=lower.dtype, device=lower.device)
+    sweep_values = lower.unsqueeze(1) + alpha.unsqueeze(0) * (upper - lower).unsqueeze(1)
+    sweep_q = chosen.unsqueeze(0).unsqueeze(0).expand(num_joints, steps, num_joints).clone()
+    diagonal = torch.arange(num_joints, device=lower.device)
+    sweep_q[diagonal, :, diagonal] = sweep_values
+    support = capsule_support(kinematics, sweep_q, capsules, directions)
+    feasible = (support <= allowed.unsqueeze(0).unsqueeze(0) + tolerance).all(dim=-1)
+    rejected = ~feasible
+
+    intervals: list[Tuple[Tuple[float, float], ...]] = []
+    for joint in range(num_joints):
+        joint_intervals: list[Tuple[float, float]] = []
+        step_size = (float(upper[joint]) - float(lower[joint])) / (steps - 1)
+        for start, end in _contiguous_true_runs(rejected[joint]):
+            low = float(sweep_values[joint, start]) - 0.5 * step_size
+            high = float(sweep_values[joint, end]) + 0.5 * step_size
+            low = max(float(lower[joint]), low)
+            high = min(float(upper[joint]), high)
+            joint_intervals.append((low, high))
+        intervals.append(tuple(joint_intervals))
+    all_intervals = tuple(intervals)
+
+    rejected_joint_count = sum(1 for joint in all_intervals if joint)
+    spans = [
+        (high - low, joint)
+        for joint, joint_intervals in enumerate(all_intervals)
+        for low, high in joint_intervals
+    ]
+    if spans:
+        max_span, max_joint = max(spans)
+    else:
+        max_span, max_joint = 0.0, -1
+    return JointRejectionRanges(
+        feasible_reference=True,
+        reference_source=source,
+        reference_q=chosen,
+        rejected_intervals=all_intervals,
+        rejected_joint_count=rejected_joint_count,
+        max_rejected_span_rad=max_span,
+        max_rejected_joint_index=max_joint,
+    )
+
+
 def deterministic_joint_samples(
     lower: Tensor,
     upper: Tensor,

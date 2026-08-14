@@ -25,7 +25,8 @@ from kinematic_envelope import (  # noqa: E402
     EL4090_JOINT_NAMES, EL4090_LEG_NAMES, BatchedUrdfKinematics,
     capsule_support, default_el4090_capsules, deterministic_joint_samples,
     export_envelope_joint_ranges, haa_ranges_from_joint_export,
-    load_urdf_joints, reachable_foot_support, support_directions,
+    joint_rejection_ranges, load_urdf_joints, reachable_foot_support,
+    support_directions,
 )
 from legacy_slider_envelope import (  # noqa: E402
     LEGACY_MAXIMUM, LEGACY_MIDPOINT, LEGACY_PARAMETER_ORDER,
@@ -38,7 +39,8 @@ from lidar_free_envelope import (  # noqa: E402
 from visualize_lidar_free_envelope_gym import (  # noqa: E402
     LidarProblem, TOLERANCE, WHITE, accepted_motion_pose, apply_pose,
     build_motion_trajectory, create_simulation, draw_boundary, draw_cloud,
-    draw_scene as draw_lidar_scene, new_stats, set_camera, update_stats,
+    draw_scene as draw_lidar_scene, new_stats, print_exported_box,
+    print_rejection, set_camera, update_stats,
     write_evidence as write_lidar_evidence,
 )
 
@@ -71,6 +73,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=4090)
     parser.add_argument("--max_steps", type=int, default=0, help="0 keeps both windows interactive")
     parser.add_argument("--auto_sweep_steps", type=int, default=0)
+    parser.add_argument(
+        "--show_rejection", action="store_true",
+        help="show rejected sub-intervals of the exported joint ranges",
+    )
     parser.add_argument("--compute_only", action="store_true")
     parser.add_argument("--no_motion", action="store_true")
     parser.add_argument("--screenshot", type=Path)
@@ -185,6 +191,11 @@ def compute_result(kinematics, context, values, args, generation):
         candidate_reduction_fraction=reduction,
         required_candidate_reduction_fraction=0.0,
         required_joint_shrink_rad=0.0,
+        rejection_ranges=joint_rejection_ranges(
+            kinematics, context["capsules"], directions,
+            free_envelope.support_m, export.lower, export.upper,
+            context["baseline_q"], tolerance=TOLERANCE,
+        ),
     )
     resting_inside = float(
         (context["baseline_support"] - free_envelope.support_m).max()
@@ -251,7 +262,7 @@ def live_point_source(values, context, args, generation):
 
 
 class SliderPanel:
-    def __init__(self):
+    def __init__(self, show_rejection=False):
         self.root = tk.Tk()
         self.root.title("EL4090 | ZhangHT Border Point Source")
         self.root.geometry("610x720+32+32")
@@ -262,6 +273,9 @@ class SliderPanel:
         self.applied_generation = -1
         self.deadline = time.monotonic()
         self.suspend = False
+        self.show_rejection = bool(show_rejection)
+        self._last_result = None
+        self._last_elapsed = 0.0
         self.variables = {}
         self.range_labels = {}
         tk.Label(
@@ -355,18 +369,9 @@ class SliderPanel:
         return self.requested_generation != self.applied_generation and time.monotonic() >= self.deadline
 
     def update_result(self, result, elapsed_ms):
-        lower = result.problem.range_export.lower
-        upper = result.problem.range_export.upper
-        for leg in EL4090_LEG_NAMES:
-            indices = [EL4090_JOINT_NAMES.index(f"{leg}_{joint}") for joint in ("HAA", "HFE", "KFE")]
-            pieces = []
-            for joint, index in zip(("HAA", "HFE", "KFE"), indices):
-                lo, hi = float(lower[index]), float(upper[index])
-                if math.isnan(lo) or math.isnan(hi):
-                    pieces.append(f"{joint} infeasible")
-                else:
-                    pieces.append(f"{joint} [{lo:+.3f}, {hi:+.3f}]")
-            self.range_labels[leg].set(f"{leg}  " + "   ".join(pieces))
+        self._last_result = result
+        self._last_elapsed = elapsed_ms
+        self._render_range_labels(result)
         motion = (
             "motion frozen: resting pose outside envelope"
             if result.trajectory is None else ""
@@ -376,6 +381,33 @@ class SliderPanel:
             f"{result_summary(result)}; recompute {elapsed_ms:.1f} ms{suffix}",
         )
         self.applied_generation = self.requested_generation
+
+    def _render_range_labels(self, result):
+        lower = result.problem.range_export.lower
+        upper = result.problem.range_export.upper
+        rejection = result.problem.rejection_ranges
+        for leg in EL4090_LEG_NAMES:
+            indices = [EL4090_JOINT_NAMES.index(f"{leg}_{joint}") for joint in ("HAA", "HFE", "KFE")]
+            pieces = []
+            for joint, index in zip(("HAA", "HFE", "KFE"), indices):
+                lo, hi = float(lower[index]), float(upper[index])
+                if math.isnan(lo) or math.isnan(hi):
+                    pieces.append(f"{joint} infeasible")
+                else:
+                    text = f"{joint} [{lo:+.3f}, {hi:+.3f}]"
+                    if self.show_rejection and rejection is not None and rejection.feasible_reference:
+                        intervals = rejection.rejected_intervals[index]
+                        if intervals:
+                            marks = ";".join(f"{a:+.3f}-{b:+.3f}" for a, b in intervals)
+                            text = f"{joint} [{lo:+.3f}, ({marks}), {hi:+.3f}]"
+                    pieces.append(text)
+            self.range_labels[leg].set(f"{leg}  " + "   ".join(pieces))
+
+    def refresh_labels(self):
+        # Re-render the range rows only; never touch generation state so a
+        # pending slider recompute is not accidentally marked applied.
+        if self._last_result is not None:
+            self._render_range_labels(self._last_result)
 
     def update_error(self, message):
         self.status.set(f"Last valid envelope retained: {message}")
@@ -432,6 +464,8 @@ def main():
     print("ZhangHT border point source -> unchanged LiDAR envelope model")
     print(f"  {result_summary(result)}")
     if args.compute_only:
+        print_exported_box(result.problem)
+        print_rejection(result.problem.rejection_ranges)
         if result.trajectory is not None:
             cyclic = torch.cat((result.trajectory.joint_positions, result.trajectory.joint_positions[:1]))
             print(f"  maximum cyclic joint step {float(torch.diff(cyclic, dim=0).abs().max()):.6f} rad")
@@ -439,12 +473,13 @@ def main():
             print("  motion frozen: resting pose outside the envelope")
         return
 
-    panel = SliderPanel()
+    panel = SliderPanel(show_rejection=args.show_rejection)
     gym, sim, viewer, env, actor, q_indices = create_simulation(args, result.problem.baseline_q)
     state = {
         "motion": not args.no_motion, "motion_step": 0,
         "lidar": True, "prescribed": True, "occupied": True,
-        "haa": True, "reachable": True, "camera": 0,
+        "haa": True, "rejection": args.show_rejection,
+        "reachable": True, "camera": 0,
         "directions": context["directions"],
     }
     set_camera(gym, viewer, 0)
@@ -482,6 +517,10 @@ def main():
                 elif event.action == "camera":
                     state["camera"] = (state["camera"] + 1) % 2
                     set_camera(gym, viewer, state["camera"])
+                elif event.action == "rejection":
+                    state["rejection"] = not state["rejection"]
+                    panel.show_rejection = state["rejection"]
+                    panel.refresh_labels()
                 elif event.action == "capture":
                     panel.capture_requested = True
             if args.auto_sweep_steps > 0 and step > 0 and step % args.auto_sweep_steps == 0:

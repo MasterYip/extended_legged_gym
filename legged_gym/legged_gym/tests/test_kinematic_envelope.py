@@ -245,5 +245,95 @@ class TestKinematicEnvelope(unittest.TestCase):
         self.assertEqual(KE.haa_ranges_from_joint_export(batched).shape, (batch, 6, 2))
 
 
+class TestJointRejectionRanges(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.kin = KE.BatchedUrdfKinematics(KE.load_urdf_joints(URDF))
+        cls.directions = KE.support_directions(48)
+        cls.capsules = KE.default_el4090_capsules()
+        cls.reference = torch.zeros(18)
+        cls.lower = torch.full((18,), -0.4)
+        cls.upper = torch.full((18,), 0.4)
+        cls.base_support = KE.capsule_support(
+            cls.kin, cls.reference.unsqueeze(0), cls.capsules, cls.directions,
+        )[0]
+
+    def test_loose_envelope_rejects_nothing(self):
+        result = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            self.base_support + 1.0, self.lower, self.upper, self.reference,
+        )
+        self.assertTrue(result.feasible_reference)
+        self.assertEqual(result.reference_source, "reference_q")
+        self.assertEqual(result.rejected_joint_count, 0)
+        self.assertEqual(result.max_rejected_joint_index, -1)
+        self.assertEqual(result.max_rejected_span_rad, 0.0)
+        self.assertEqual(result.rejected_intervals, tuple(() for _ in range(18)))
+
+    def test_tight_envelope_reports_in_range_intervals_deterministically(self):
+        allowed = self.base_support + 0.02
+        first = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            allowed, self.lower, self.upper, self.reference,
+        )
+        second = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            allowed, self.lower, self.upper, self.reference,
+        )
+        self.assertTrue(first.feasible_reference)
+        self.assertGreater(first.rejected_joint_count, 0)
+        self.assertEqual(first.rejected_intervals, second.rejected_intervals)
+        self.assertEqual(first.max_rejected_span_rad, second.max_rejected_span_rad)
+        self.assertGreater(first.max_rejected_span_rad, 0.0)
+        self.assertIn(first.max_rejected_joint_index, range(18))
+        for joint, intervals in enumerate(first.rejected_intervals):
+            for lo, hi in intervals:
+                self.assertGreaterEqual(lo, float(self.lower[joint]) - 1e-6)
+                self.assertLessEqual(hi, float(self.upper[joint]) + 1e-6)
+                self.assertLessEqual(lo, hi)
+        summary = first.to_evidence_dict()
+        self.assertEqual(summary["rejected_joint_count"], first.rejected_joint_count)
+        self.assertEqual(len(summary["per_joint_intervals_rad"]), 18)
+        self.assertEqual(summary["max_rejected_joint_name"], KE.EL4090_JOINT_NAMES[first.max_rejected_joint_index])
+
+    def test_empty_export_returns_marker(self):
+        lower = torch.full((18,), float("nan"))
+        upper = torch.full((18,), float("nan"))
+        result = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            self.base_support, lower, upper, self.reference,
+        )
+        self.assertFalse(result.feasible_reference)
+        self.assertIsNone(result.reference_q)
+        self.assertEqual(result.rejected_joint_count, 0)
+        self.assertIn("empty", result.reference_source)
+
+    def test_no_feasible_reference_returns_marker_not_crash(self):
+        allowed = self.base_support - 0.001  # reference and box center both infeasible
+        result = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            allowed, self.lower, self.upper, self.reference,
+        )
+        self.assertFalse(result.feasible_reference)
+        self.assertIsNone(result.reference_q)
+        self.assertEqual(result.rejected_joint_count, 0)
+        self.assertIn("no feasible reference", result.reference_source)
+
+    def test_box_center_fallback_is_used_when_reference_infeasible(self):
+        # A reference that is infeasible but whose exported box center is feasible:
+        # pinning the reference outside the envelope would otherwise corrupt the sweep.
+        reference = torch.full((18,), 0.45)
+        lower = torch.full((18,), -0.4)
+        upper = torch.full((18,), 0.4)
+        # box center (0.0) is feasible, reference (0.45) is outside the box
+        result = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            self.base_support + 1.0, lower, upper, reference,
+        )
+        self.assertTrue(result.feasible_reference)
+        self.assertEqual(result.reference_source, "box_center")
+        self.assertTrue(torch.allclose(result.reference_q, torch.zeros(18)))
+
+
 if __name__ == "__main__":
     unittest.main()

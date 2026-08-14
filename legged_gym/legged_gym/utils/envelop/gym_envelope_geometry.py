@@ -162,6 +162,47 @@ def haa_arc_geometry(
     return origins, arcs, markers
 
 
+def haa_arc_geometry_interval(
+    kinematics: BatchedUrdfKinematics,
+    current_q: Tensor,
+    haa_ranges: Tensor,
+    leg_index: int,
+    interval_lo: float,
+    interval_hi: float,
+    *,
+    radius: float = 0.22,
+    samples: int = 17,
+) -> Tensor:
+    """Return one leg's body-frame arc polyline ``[samples,3]`` over an HAA sub-interval.
+
+    Only the named leg's HAA is swept over ``[interval_lo, interval_hi]``; every
+    other joint (including the other legs' HAA) is pinned at ``current_q``.
+    Because each leg is an independent serial chain from the base, this matches
+    the same leg's arc from ``haa_arc_geometry`` exactly when the interval is
+    the full exported range. Used to overdraw rejected sub-intervals in a
+    distinct color without changing ``haa_arc_geometry``.
+    """
+    if current_q.shape != (kinematics.num_dof,) or haa_ranges.shape != (6, 2):
+        raise ValueError("Expected current_q [18] and haa_ranges [6,2]")
+    if not 0 <= leg_index < 6:
+        raise ValueError("leg_index must be in [0, 6)")
+    if interval_hi < interval_lo:
+        raise ValueError("interval_lo must not exceed interval_hi")
+    if samples < 3 or radius <= 0.0:
+        raise ValueError("samples must be >= 3 and radius must be positive")
+    haa_indices = [EL4090_JOINT_NAMES.index(f"{leg}_HAA") for leg in EL4090_LEG_NAMES]
+    leg_ranges = haa_ranges.clone()
+    for index in range(6):
+        if index != leg_index:
+            value = current_q[haa_indices[index]]
+            leg_ranges[index] = torch.stack((value, value))
+    leg_ranges[leg_index] = current_q.new_tensor((interval_lo, interval_hi))
+    _, arcs, _ = haa_arc_geometry(
+        kinematics, current_q, leg_ranges, radius=radius, samples=samples,
+    )
+    return arcs[leg_index]
+
+
 def build_demo_preset(
     name: str,
     kinematics: BatchedUrdfKinematics,
