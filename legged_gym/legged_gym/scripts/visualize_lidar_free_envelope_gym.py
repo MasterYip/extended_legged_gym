@@ -77,6 +77,16 @@ class LidarProblem:
     required_joint_shrink_rad: float
 
 
+@dataclass(frozen=True)
+class MotionTrajectory:
+    proposed_q: torch.Tensor
+    joint_positions: torch.Tensor
+    naive_excess_m: torch.Tensor
+    envelope_excess_m: torch.Tensor
+    joint_excess_rad: torch.Tensor
+    accepted_scale: torch.Tensor
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compute_device_id", type=int, default=0)
@@ -87,10 +97,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_radius", type=float, default=0.0)
     parser.add_argument("--max_radius", type=float, default=2.10)
     parser.add_argument("--robot_clearance", type=float, default=0.05)
+    parser.add_argument("--lateral_robot_clearance", type=float, default=0.025)
+    parser.add_argument("--lateral_anchors_per_side", type=int, default=5)
     parser.add_argument("--point_clearance", type=float, default=0.02)
     parser.add_argument("--reference_containment_margin", type=float, default=0.005)
     parser.add_argument(
-        "--near_band_fraction", type=float, default=0.12,
+        "--near_band_fraction", type=float, default=0.05,
         help="maximum feasible-annulus fraction for sparse primary returns",
     )
     parser.add_argument("--min_candidate_reduction_fraction", type=float, default=0.05)
@@ -137,6 +149,8 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         min_radius=args.min_radius,
         max_radius=args.max_radius,
         robot_clearance=args.robot_clearance,
+        lateral_robot_clearance=args.lateral_robot_clearance,
+        lateral_anchors_per_side=args.lateral_anchors_per_side,
         reference_containment_margin=args.reference_containment_margin,
         near_band_fraction=args.near_band_fraction,
     )
@@ -219,22 +233,27 @@ def motion_offsets(reference: torch.Tensor) -> torch.Tensor:
     )
 
 
-def accepted_motion_pose(problem, kinematics, directions, motion_step, period_steps):
-    phase = motion_step / period_steps
-    proposed = interpolate_joint_ranges(
-        problem.range_export.lower,
-        problem.range_export.upper,
-        phase,
-        phase_offsets=motion_offsets(problem.baseline_q),
-    ).unsqueeze(0)
+def build_motion_trajectory(problem, kinematics, directions, period_steps):
+    """Build one smooth closed motion using a trajectory-wide feasible scale."""
+    if period_steps < 2:
+        raise ValueError("period_steps must be at least 2")
+    proposed = torch.stack([
+        interpolate_joint_ranges(
+            problem.range_export.lower,
+            problem.range_export.upper,
+            step / period_steps,
+            phase_offsets=motion_offsets(problem.baseline_q),
+        )
+        for step in range(period_steps)
+    ])
     naive_excess = envelope_excess(
         kinematics,
         proposed,
         default_el4090_capsules(),
         directions,
         problem.free_envelope.support_m,
-    )[0]
-    accepted = backtrack_to_feasible_anchor(
+    )
+    individually_accepted = backtrack_to_feasible_anchor(
         kinematics,
         proposed,
         problem.baseline_q,
@@ -245,11 +264,57 @@ def accepted_motion_pose(problem, kinematics, directions, motion_step, period_st
         problem.free_envelope.support_m,
         tolerance=TOLERANCE,
     )
-    return proposed[0], accepted.joint_positions[0], naive_excess, accepted
+    global_scale = individually_accepted.accepted_scale.min()
+    anchors = problem.baseline_q.unsqueeze(0)
+    for _ in range(24):
+        accepted_q = anchors + global_scale * (proposed - anchors)
+        accepted_excess = envelope_excess(
+            kinematics,
+            accepted_q,
+            default_el4090_capsules(),
+            directions,
+            problem.free_envelope.support_m,
+        )
+        joint_excess = torch.maximum(
+            problem.range_export.lower.unsqueeze(0) - accepted_q,
+            accepted_q - problem.range_export.upper.unsqueeze(0),
+        ).clamp_min(0.0).amax(dim=-1)
+        if bool((accepted_excess <= TOLERANCE).all()) and bool(
+            (joint_excess <= TOLERANCE).all()
+        ):
+            break
+        global_scale = global_scale * 0.5
+    else:
+        raise RuntimeError("failed to construct a continuous feasible trajectory")
+    scale = global_scale.expand(period_steps).clone()
+    return MotionTrajectory(
+        proposed_q=proposed,
+        joint_positions=accepted_q,
+        naive_excess_m=naive_excess,
+        envelope_excess_m=accepted_excess,
+        joint_excess_rad=joint_excess,
+        accepted_scale=scale,
+    )
 
 
-def new_stats() -> dict:
-    return {
+def accepted_motion_pose(trajectory, motion_step):
+    index = motion_step % trajectory.joint_positions.shape[0]
+    frame = MotionTrajectory(
+        proposed_q=trajectory.proposed_q[index:index + 1],
+        joint_positions=trajectory.joint_positions[index:index + 1],
+        naive_excess_m=trajectory.naive_excess_m[index:index + 1],
+        envelope_excess_m=trajectory.envelope_excess_m[index:index + 1],
+        joint_excess_rad=trajectory.joint_excess_rad[index:index + 1],
+        accepted_scale=trajectory.accepted_scale[index:index + 1],
+    )
+    return (
+        frame.proposed_q[0], frame.joint_positions[0],
+        frame.naive_excess_m[0], frame,
+    )
+
+
+def new_stats(trajectory=None) -> dict:
+    stats = {
         "frame_count": 0,
         "joint_sample_count": 0,
         "joint_range_violation_count": 0,
@@ -263,6 +328,15 @@ def new_stats() -> dict:
         "observed_min_rad": np.full(18, np.inf, dtype=np.float64),
         "observed_max_rad": np.full(18, -np.inf, dtype=np.float64),
     }
+    if trajectory is not None:
+        cyclic_q = torch.cat((
+            trajectory.joint_positions, trajectory.joint_positions[:1],
+        ))
+        stats["trajectory_fixed_scale"] = float(trajectory.accepted_scale[0])
+        stats["maximum_cyclic_joint_step_rad"] = float(
+            torch.diff(cyclic_q, dim=0).abs().max()
+        )
+    return stats
 
 
 def update_stats(stats, problem, pose, naive_excess, accepted) -> None:
@@ -334,7 +408,14 @@ def print_problem(problem, directions) -> None:
         f"{100.0 * problem.cloud.near_band_fraction:.1f}% of the feasible radial "
         f"annulus; lateral anchors {problem.cloud.lateral_anchor_sectors.tolist()}"
     )
-    print(f"  baseline capsule-envelope clearance: {float(baseline_clearance.min()):.6f} m minimum")
+    clearance_surplus = baseline_clearance - problem.cloud.required_clearance_m
+    print(
+        "  baseline capsule-envelope clearance: "
+        f"{float(baseline_clearance.min()):.6f} m minimum; requirements "
+        f"{problem.cloud.lateral_robot_clearance_m:.3f} m lateral / "
+        f"{problem.cloud.robot_clearance_m:.3f} m other; "
+        f"{float(clearance_surplus.min()):.6f} m minimum surplus"
+    )
     print(f"  prescribed point clearance: {float(clearance.min()):.6f} m minimum")
     print(
         "  reference reachable containment: "
@@ -615,13 +696,25 @@ def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -
                     problem.cloud.lateral_anchor_sectors.detach().cpu().tolist()
                 ),
                 "near_band_fraction": problem.cloud.near_band_fraction,
+                "lateral_anchors_per_side": int(
+                    problem.cloud.lateral_anchor_sectors.numel() // 2
+                ),
             },
             "radius_bounds_m": [problem.cloud.min_radius_m, problem.cloud.max_radius_m],
             "observed_radius_bounds_m": [
                 float(problem.cloud.radii_m.min()), float(problem.cloud.radii_m.max()),
             ],
             "required_baseline_clearance_m": problem.cloud.robot_clearance_m,
+            "required_lateral_baseline_clearance_m": (
+                problem.cloud.lateral_robot_clearance_m
+            ),
+            "per_return_required_baseline_clearance_m": (
+                problem.cloud.required_clearance_m.detach().cpu().tolist()
+            ),
             "minimum_baseline_clearance_m": float(baseline_clearances.min()),
+            "minimum_baseline_clearance_surplus_m": float(
+                (baseline_clearances - problem.cloud.required_clearance_m).min()
+            ),
             "minimum_baseline_polygon_outside_excess_m": float(
                 baseline_polygon_excess.min()
             ),
@@ -711,10 +804,17 @@ def validate_args(args) -> None:
         raise ValueError("--directions must be at least 8")
     if args.point_count < 1:
         raise ValueError("--point_count must be positive")
-    if args.motion_period_steps <= 0:
-        raise ValueError("--motion_period_steps must be positive")
+    if args.motion_period_steps < 2:
+        raise ValueError("--motion_period_steps must be at least 2")
     if args.point_clearance >= args.robot_clearance:
         raise ValueError("--point_clearance must be smaller than --robot_clearance")
+    if not args.point_clearance < args.lateral_robot_clearance <= args.robot_clearance:
+        raise ValueError(
+            "--lateral_robot_clearance must be greater than --point_clearance "
+            "and no greater than --robot_clearance"
+        )
+    if args.lateral_anchors_per_side < 1:
+        raise ValueError("--lateral_anchors_per_side must be positive")
     if args.reference_containment_margin <= 0.0:
         raise ValueError("--reference_containment_margin must be positive")
     if not 0.0 < args.near_band_fraction <= 1.0:
@@ -734,31 +834,24 @@ def main() -> None:
     problem = build_problem(args, kinematics, directions, args.seed)
     print_problem(problem, directions)
 
+    trajectory = build_motion_trajectory(
+        problem, kinematics, directions, args.motion_period_steps,
+    )
+    cyclic_q = torch.cat((trajectory.joint_positions, trajectory.joint_positions[:1]))
+    maximum_step = float(torch.diff(cyclic_q, dim=0).abs().max())
+    print(
+        "  continuous motion: fixed feasibility scale "
+        f"{float(trajectory.accepted_scale[0]):.6f}; "
+        f"maximum cyclic joint step {maximum_step:.6f} rad"
+    )
+
     if args.compute_only:
-        proposed = []
-        for step in range(args.motion_period_steps):
-            proposed.append(interpolate_joint_ranges(
-                problem.range_export.lower,
-                problem.range_export.upper,
-                step / args.motion_period_steps,
-                phase_offsets=motion_offsets(problem.baseline_q),
-            ))
-        proposed = torch.stack(proposed)
-        accepted = backtrack_to_feasible_anchor(
-            kinematics, proposed, problem.baseline_q,
-            problem.range_export.lower, problem.range_export.upper,
-            default_el4090_capsules(), directions, problem.free_envelope.support_m,
-            tolerance=TOLERANCE,
-        )
-        naive = envelope_excess(
-            kinematics, proposed, default_el4090_capsules(), directions,
-            problem.free_envelope.support_m,
-        )
         print(
-            f"Compute-only motion: {proposed.shape[0]} frames; "
-            f"{int((naive > TOLERANCE).sum())} naive violations; "
-            f"{int((accepted.envelope_excess_m > TOLERANCE).sum())} accepted violations; "
-            f"minimum scale {float(accepted.accepted_scale.min()):.6f}"
+            f"Compute-only motion: {trajectory.proposed_q.shape[0]} frames; "
+            f"{int((trajectory.naive_excess_m > TOLERANCE).sum())} naive violations; "
+            f"{int((trajectory.envelope_excess_m > TOLERANCE).sum())} accepted violations; "
+            f"fixed scale {float(trajectory.accepted_scale[0]):.6f}; "
+            f"maximum cyclic joint step {maximum_step:.6f} rad"
         )
         return
 
@@ -775,7 +868,7 @@ def main() -> None:
         "camera": 0,
     }
     set_camera(gym, viewer, state["camera"])
-    stats = new_stats()
+    stats = new_stats(trajectory)
     step = 0
     captured = False
     running = True
@@ -788,8 +881,11 @@ def main() -> None:
                     running = False
                 elif event.action == "regenerate":
                     problem = build_problem(args, kinematics, directions, problem.seed + 1)
+                    trajectory = build_motion_trajectory(
+                        problem, kinematics, directions, args.motion_period_steps,
+                    )
                     state["motion_step"] = 0
-                    stats = new_stats()
+                    stats = new_stats(trajectory)
                     print_problem(problem, directions)
                 elif event.action == "motion":
                     state["motion"] = not state["motion"]
@@ -808,7 +904,7 @@ def main() -> None:
                     captured = True
 
             _, pose, naive_excess, accepted = accepted_motion_pose(
-                problem, kinematics, directions, state["motion_step"], args.motion_period_steps,
+                trajectory, state["motion_step"],
             )
             update_stats(stats, problem, pose, naive_excess, accepted)
             apply_pose(gym, env, actor, q_indices, pose)

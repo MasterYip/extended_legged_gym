@@ -49,7 +49,9 @@ python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
   --seed 4090 \
   --point_count 20 \
   --directions 48 \
-  --near_band_fraction 0.12
+  --near_band_fraction 0.05 \
+  --lateral_robot_clearance 0.025 \
+  --lateral_anchors_per_side 5
 ```
 
 ### LiDAR example parameters
@@ -57,11 +59,13 @@ python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
 | Parameter | Default | Meaning |
 | --- | ---: | --- |
 | `--seed` | `4090` | Deterministic cloud seed. Pressing `G` increments it and regenerates the cloud and envelope. |
-| `--point_count` | `20` | Number of synthetic returns. Counts up to the direction count use unique sectors; six sectors near the lateral axes are reserved to constrain the middle-leg workspaces. |
+| `--point_count` | `20` | Number of synthetic returns. Counts up to the direction count use unique sectors. |
 | `--directions` | `48` | Number of fixed polygon support normals. Must be at least 8. Faces without a return retain the pre-obstacle reachable-support cap. |
-| `--near_band_fraction` | `0.12` | Maximum fraction of the feasible radial annulus used by primary returns. In $r=r^-+\alpha(r^+-r^-)$, this bounds $\alpha$. Reduce it to move points closer to the robot; lateral anchors use at most 35% of this value. Valid range: $(0,1]$. |
-| `--robot_clearance` | `0.05` m | Minimum assigned-normal clearance between each return and the baseline occupied envelope. This is the hard lower-distance control; reducing it permits physically closer points. |
-| `--point_clearance` | `0.02` m | Required separation between a return and its active prescribed-envelope face. It must remain smaller than `--robot_clearance`. |
+| `--lateral_anchors_per_side` | `5` | Number of sectors nearest each of $+y$ and $-y$ reserved for lateral returns. The default dedicates 10 of 20 points to the middle-leg workspaces. |
+| `--near_band_fraction` | `0.05` | Maximum fraction of the feasible radial annulus used by primary returns. In $r=r^-+\alpha(r^+-r^-)$, this bounds $\alpha$. Lateral anchors use at most 35% of this value, or 1.75% by default. Valid range: $(0,1]$. |
+| `--robot_clearance` | `0.05` m | Minimum assigned-normal clearance for non-lateral returns. |
+| `--lateral_robot_clearance` | `0.025` m | Aggressive minimum clearance for lateral anchors. Must be greater than `--point_clearance` and no greater than `--robot_clearance`. |
+| `--point_clearance` | `0.02` m | Required separation between a return and its active prescribed-envelope face. The default lateral envelope therefore has approximately 0.005 m baseline slack. |
 | `--reference_containment_margin` | `0.005` m | Inward margin applied to the pre-obstacle reachable reference when generating returns. Must be positive. |
 | `--min_radius` / `--max_radius` | `0.0` / `2.10` m | Global radial bounds. The robot-clearance and reachable-reference constraints can tighten these bounds per ray. |
 | `--min_candidate_reduction_fraction` | `0.05` | Minimum fraction of unconstrained joint candidates that the generated envelope must reject. |
@@ -74,11 +78,40 @@ python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
 | `--screenshot_step` | `5` | Frame used for automatic capture when `--screenshot` is configured. Set it below `--max_steps` for bounded runs. |
 | `--compute_device_id` / `--graphics_device_id` | `0` / `0` | Isaac Gym compute and rendering device indices. |
 
-To move points closer without changing the declared 0.05 m robot clearance,
-reduce only `--near_band_fraction`, for example to `0.06`. Reducing
-`--robot_clearance` changes the safety contract itself.
+For stronger middle-leg constraints, increase `--lateral_anchors_per_side`,
+reduce `--near_band_fraction`, or reduce `--lateral_robot_clearance` while
+keeping it greater than `--point_clearance`. The last option changes the
+lateral safety contract; the first two only change sampling density and radial
+placement within that contract.
 
 The viewer uses two vertically offset strokes for every envelope, LiDAR, and
 HAA line primitive. See the complete [envelope visualization guide](legged_gym/doc/envelope_visualization.md)
 for bounded runs, evidence capture, controls, color semantics, and
 troubleshooting.
+
+### ZhangHT legacy-border slider example
+
+This interactive example uses ZhangHT's original five-parameter border only to
+generate structured LiDAR returns. It does not replace or modify the envelope
+math model. Each registered ray intersects the slider border, the return is
+capped by the pre-obstacle reachable envelope, and the existing LiDAR pipeline
+recomputes the fixed-normal maximum point-free envelope and all 18 joint ranges.
+
+```bash
+cd legged_gym
+conda activate isaacgym
+python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py
+```
+
+The sliders use the original ranges: `front_width` 0.3-0.6 m,
+`middle_width` 0.3-0.7 m, `back_width` 0.3-0.6 m, `forward_limit` 0.6-0.9 m,
+and `backward_limit` -0.9 to -0.6 m. `Reset midpoint` selects
+$(0.45,0.50,0.45,0.75,-0.75)$; `Maximum border` selects
+$(0.60,0.70,0.60,0.90,-0.90)$.
+
+The Isaac Gym viewer keeps the LiDAR example's visual semantics: white marks the
+border-derived returns, light cyan is the single computed point-free envelope,
+dark teal is the single current occupied capsule envelope, blue is the
+pre-obstacle reachable cap, and amber shows the exported HAA intervals. Slider
+settings that do not bind the reachable cap can legitimately leave some joint
+ranges unchanged.

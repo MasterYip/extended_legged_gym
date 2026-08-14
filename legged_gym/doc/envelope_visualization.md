@@ -33,8 +33,9 @@ export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 | --- | --- | --- |
 | Kinematic comparison | `legged_gym/scripts/visualize_kinematic_envelope_gym.py` | Compare compact, nominal, and wide EL4090 envelopes while all joints move within their exported intervals. |
 | LiDAR free envelope | `legged_gym/scripts/visualize_lidar_free_envelope_gym.py` | Generate a structured synthetic 2D LiDAR cloud, derive the point-free envelope, export joint intervals, and animate a constraint-compliant pose. |
+| ZhangHT border sliders | `legged_gym/scripts/visualize_legacy_slider_envelope_gym.py` | Replace random LiDAR returns with slider-border ray intersections, then run the unchanged maximum-envelope and joint-range pipeline. |
 
-Both scripts support three modes:
+All three scripts support compute-only, bounded, and interactive modes; the slider example additionally opens a Tkinter control panel. The original two viewers support three modes:
 
 1. `--compute_only` validates geometry without creating Isaac Gym.
 2. `--max_steps N` runs a bounded viewer and exits naturally after `N` frames.
@@ -117,11 +118,14 @@ support discretization.
 
 The LiDAR example creates 20 sparse seeded returns inside the pre-obstacle
 reachable envelope and outside the baseline occupied robot envelope. Returns
-occupy unique sectors by default. The three sectors nearest each lateral axis
-are always included so the left and right middle-leg workspaces are affected;
-the remaining sectors vary with the seed. Returns use at most the first 12% of
-their feasible radial annulus, while lateral anchors use at most 4.2%, placing
-them close to the minimum collision-safe radius. Faces without a return retain
+occupy unique sectors by default. The five sectors nearest each lateral axis
+are always included, so 10 of 20 returns directly constrain the left and right
+middle-leg workspaces. The remaining sectors vary with the seed. Returns use at
+most the first 5% of their feasible radial annulus, while lateral anchors use at
+most 1.75%. Lateral anchors require 0.025 m baseline clearance versus 0.05 m
+for other returns. With 0.02 m point clearance, this leaves approximately
+0.005 m between the baseline occupied support and a limiting lateral envelope
+face. Faces without a return retain
 the blue pre-obstacle reference cap. Seed changes randomize the other
 constrained faces, cluster and gap locations, angular jitter, radial placement,
 and therefore the light-cyan polygon shape. For direction $\mathbf u_k$, the
@@ -147,25 +151,29 @@ candidate reduction, joint-interval shrinkage, and a complete motion sweep. The
 acceptance line must report zero accepted violations:
 
 ```text
-Compute-only motion: 120 frames; ... naive violations; 0 accepted violations; minimum scale ...
+Compute-only motion: 120 frames; ... naive violations; 0 accepted violations; fixed scale ...; maximum cyclic joint step ...
 ```
 
 Naive violations are diagnostic: they show where direct interpolation inside the
-joint box would exceed the prescribed envelope. The accepted pose is backtracked
+joint box would exceed the prescribed envelope. The complete cyclic trajectory is backtracked once with a single fixed scale
 toward the feasible anchor, so accepted violations must remain zero.
 
 To check another deterministic cloud:
 
 ```bash
 python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
-  --compute_only --seed 4091 --point_count 20 --near_band_fraction 0.12
+  --compute_only --seed 4091 --point_count 20 \
+  --near_band_fraction 0.05 --lateral_robot_clearance 0.025 \
+  --lateral_anchors_per_side 5
 ```
 
 `--point_count` may be smaller than `--directions`; it must be positive.
 `--near_band_fraction` is the maximum fraction of the feasible radial annulus
 used by primary returns; reduce it toward zero to move points closer to the
-minimum safe radius. The output reports point-constrained and reference-capped
-face counts, the band fraction, and lateral anchor sectors.
+minimum safe radius. `--lateral_robot_clearance` controls the lateral minimum
+distance independently and must be greater than `--point_clearance` and no
+greater than `--robot_clearance`. The output reports point-constrained and
+reference-capped face counts, band fraction, and lateral anchor sectors.
 
 ### Bounded viewer and evidence capture
 
@@ -229,10 +237,112 @@ pre-obstacle reachable-foot reference, while dark teal is the robot's current
 occupied capsule support. The light-cyan boundary is the active collision-free
 constraint between them.
 
+## ZhangHT Legacy-Border Slider
+
+This example is the existing LiDAR envelope demo with one controlled change:
+random returns are replaced by points derived from ZhangHT's five-parameter
+motion generator, geometric validity checks, and viewer layers remain the same.
+The random-cloud demo's optional material-impact gates are not used to reject a
+valid non-binding slider border.
+
+Let the registered outward directions be $u_k$, and let
+$\partial\mathcal B_Z(\theta)$ be the ZhangHT border for slider vector
+$\theta=(w_f,w_m,w_b,x_f,x_b)$. The raw return distance is the first positive
+ray-border intersection
+
+$$
+\rho_k^Z=\min\{\rho>0\mid \rho u_k\in\partial\mathcal B_Z(\theta)\}.
+$$
+
+Returns retain the LiDAR viewer's reachable-reference invariant. For reference
+support values $h_j^{\mathrm{ref}}$ and the existing containment margin
+$\varepsilon=0.005\,\mathrm m$, the radial cap is
+
+$$
+\rho_k^{\mathrm{ref}}
+=\min_{j:\,u_j^\top u_k>0}
+\frac{h_j^{\mathrm{ref}}-\varepsilon}{u_j^\top u_k},
+\qquad
+p_k=\min(\rho_k^Z,\rho_k^{\mathrm{ref}})u_k.
+$$
+
+Only $p_k$ changes with the sliders. The original fixed-normal LiDAR optimizer
+is called without modification:
+
+$$
+h_k^\star
+=\min\left(h_k^{\mathrm{ref}},\;u_k^\top p_k-d_{\mathrm{point}}\right),
+\qquad d_{\mathrm{point}}=0.02\,\mathrm m.
+$$
+
+The prescribed point-free envelope remains
+
+$$
+\mathcal E^\star=\{x\in\mathbb R^2\mid u_k^\top x\le h_k^\star,\ \forall k\}.
+$$
+
+It is the same coordinatewise maximum in the declared fixed-normal capped
+polygon family used by `visualize_lidar_free_envelope_gym.py`. Because it is an
+intersection of half-spaces, it is one connected convex polygon. There is no
+rear/front decomposition. The dark-teal current envelope is likewise the
+single existing capsule-support polygon, not a foot hull.
+
+The unchanged exporter tests registered candidate configurations against
+$\mathcal E^\star$, derives all 18 axis-aligned joint intervals, and validates
+sampled combinations from the exported box. The viewer then uses the same
+trajectory-wide feasible motion scale as the LiDAR example. A large slider
+border may be clipped by the reachable reference, so a slider change can be
+valid while leaving some exported intervals unchanged.
+
+### Launch
+
+Compute without opening either window:
+
+```bash
+python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py --compute_only
+```
+
+Start the interactive Tkinter panel and Isaac Gym viewer:
+
+```bash
+python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py \
+  --screenshot /tmp/env-design-003/legacy_slider.png
+```
+
+Drag a slider to enqueue a recomputation. The 80 ms debounce coalesces dense
+drag events, while mouse release applies the latest values immediately.
+`Reset midpoint` selects $(0.45,0.50,0.45,0.75,-0.75)$ and `Maximum border`
+selects $(0.60,0.70,0.60,0.90,-0.90)$. `Capture` writes the configured PNG and
+matching JSON outside this repository. Invalid settings retain the last valid
+result and show the reason in the Tk status line.
+
+| Slider | Range [m] | Border coordinate |
+| --- | ---: | --- |
+| `front_width` | 0.30 to 0.60 | Lateral half-width at $x=x_f$. |
+| `middle_width` | 0.30 to 0.70 | Lateral half-width at $x=0$. |
+| `back_width` | 0.30 to 0.60 | Lateral half-width at $x=x_b$. |
+| `forward_limit` | 0.60 to 0.90 | Front longitudinal coordinate $x_f$. |
+| `backward_limit` | -0.90 to -0.60 | Rear longitudinal coordinate $x_b$. |
+
+| Color | Meaning |
+| --- | --- |
+| White | ZhangHT border and its one-return-per-sector LiDAR samples. |
+| Blue | Pre-obstacle reachable reference cap. |
+| Light cyan | Single computed maximum point-free envelope $\mathcal E^\star$. |
+| Dark teal | Single current robot capsule-support envelope. |
+| Amber | Exported HAA intervals and current URDF hip-to-foot directions. |
+| Red | Actual accepted joint or capsule-envelope violation only. |
+
+For a deterministic callback smoke, use `--max_steps 120 --auto_sweep_steps 30`.
+`--directions`, `--point_clearance`, `--candidate_count`,
+`--validation_count`, and `--box_validation_samples` have the same meanings as
+in the LiDAR example. `--motion_period_steps` controls the shared smooth cyclic
+trajectory.
+
 ## Evidence Location Policy
 
 Generated PNG and JSON files must be stored outside the
-`extended_legged_gym` Git repository. Both scripts reject screenshot paths inside
+`extended_legged_gym` Git repository. All three scripts reject screenshot paths inside
 the repository. Use `/tmp/env-design-003/` for temporary inspection or copy a
 selected, reviewed result to the canonical task evidence directory managed by the
 agent-team workflow. Do not place generated evidence in `legged_gym/doc/imgs`,
@@ -279,9 +389,10 @@ the screenshot suffix with `.json`.
 Keep `--directions` at least 8, `--point_count` positive,
 `--point_clearance` smaller than `--robot_clearance`, and
 `--reference_containment_margin` positive. Keep `--near_band_fraction` in
-$(0,1]$; smaller values move returns closer to the robot without reducing the
-declared robot clearance. Start from the defaults when testing a new machine,
-then change one parameter at a time.
+$(0,1]$. Require
+$d_{\mathrm{point}}<d_{\mathrm{lateral}}\le d_{\mathrm{robot}}$, and keep
+`--lateral_anchors_per_side` positive. Start from the defaults when testing a
+new machine, then change one parameter at a time.
 
 ### LiDAR materiality or feasibility fails
 
@@ -304,4 +415,5 @@ Use the scripts' built-in help as the authoritative option list:
 ```bash
 python legged_gym/scripts/visualize_kinematic_envelope_gym.py --help
 python legged_gym/scripts/visualize_lidar_free_envelope_gym.py --help
+python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py --help
 ```
