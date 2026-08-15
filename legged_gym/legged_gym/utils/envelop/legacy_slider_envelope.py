@@ -41,48 +41,58 @@ def parameter_tensor(
 
 
 def legacy_border_vertices(parameters: Tensor) -> Tensor:
-    """Return ZhangHT's exact six-point symmetric border in body XY."""
+    """Return the four-corner rectangle border in body XY.
+
+    ENV-RECT-CONTROL-012: MasterYip asked that the legacy slider border behave
+    like its rectangle instead of the old six-point barrel (fusiform). The five
+    parameters describe a rectangle whose x extent is
+    ``[backward_limit, forward_limit]`` and whose width is the *maximum* of the
+    three width samples (the bounding box of the old hexagon), so the envelope
+    inflates as much as possible toward that rectangle. Vertices are returned
+    counter-clockwise starting at the front-right corner.
+    """
     if parameters.shape != (5,):
         raise ValueError("parameters must have shape [5]")
     front, middle, back, forward, backward = parameters.unbind()
-    zero = torch.zeros((), dtype=parameters.dtype, device=parameters.device)
+    width = torch.maximum(torch.maximum(front, middle), back)
     return torch.stack((
-        torch.stack((forward, front)),
-        torch.stack((zero, middle)),
-        torch.stack((backward, back)),
-        torch.stack((backward, -back)),
-        torch.stack((zero, -middle)),
-        torch.stack((forward, -front)),
+        torch.stack((forward, width)),
+        torch.stack((backward, width)),
+        torch.stack((backward, -width)),
+        torch.stack((forward, -width)),
     ))
 
 
-def _cross_2d(a: Tensor, b: Tensor) -> Tensor:
-    return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+def legacy_border_support(parameters: Tensor, directions: Tensor) -> Tensor:
+    """Support function of the rectangle border along every registered normal.
 
-
-def sample_border_points(parameters: Tensor, directions: Tensor) -> Tensor:
-    """Intersect every registered LiDAR ray with the ZhangHT border."""
+    ``support[j]`` is the maximum border projection onto ``directions[j]``, i.e.
+    the radius of the *maximal convex support polygon* that still contains the
+    whole border. The envelope built from this support reconstructs the border's
+    true rectangle instead of the corner-rounded inscribed polygon that ray
+    intersections produce.
+    """
     if directions.ndim != 2 or directions.shape[1] != 2:
         raise ValueError("directions must have shape [K,2]")
     vertices = legacy_border_vertices(parameters)
-    starts = vertices
-    edges = torch.roll(vertices, shifts=-1, dims=0) - vertices
-    ray = directions[:, None, :]
-    edge = edges[None, :, :]
-    start = starts[None, :, :]
-    denominator = _cross_2d(ray, edge)
-    safe = denominator.abs() > 1e-9
-    t = _cross_2d(start, edge) / torch.where(
-        safe, denominator, torch.ones_like(denominator),
-    )
-    u = _cross_2d(start, ray) / torch.where(
-        safe, denominator, torch.ones_like(denominator),
-    )
-    valid = safe & (t >= 0.0) & (u >= -1e-6) & (u <= 1.0 + 1e-6)
-    distance = t.masked_fill(~valid, torch.inf).amin(dim=1)
-    if not bool(torch.isfinite(distance).all()):
-        raise RuntimeError("a LiDAR ray did not intersect the ZhangHT border")
-    return distance[:, None] * directions
+    return (vertices @ directions.T).amax(dim=0)
+
+
+def sample_border_points(parameters: Tensor, directions: Tensor) -> Tensor:
+    """Return the ZhangHT border support point for every registered LiDAR ray.
+
+    For each ray the return is the border vertex that maximizes the projection
+    onto that ray's direction (the extreme point of the rectangle). Placing the
+    LiDAR return at the extreme point makes the support-polygon envelope equal
+    to the border's own support polygon, which is what lets the rectangle border
+    produce a rectangle envelope.
+    """
+    if directions.ndim != 2 or directions.shape[1] != 2:
+        raise ValueError("directions must have shape [K,2]")
+    vertices = legacy_border_vertices(parameters)
+    projections = vertices @ directions.T
+    indices = projections.argmax(dim=0)
+    return vertices[indices]
 
 
 def legacy_border_lidar_cloud(
@@ -94,7 +104,18 @@ def legacy_border_lidar_cloud(
     seed: int,
     reference_containment_margin: float = 0.005,
 ) -> SyntheticLidarCloud:
-    """Build a one-return-per-sector cloud without changing LiDAR math."""
+    """Build a one-return-per-sector cloud without changing LiDAR math.
+
+    Each return is the border's *support point* (the rectangle vertex farthest
+    along the sector's normal), so the capped support-polygon envelope
+    reconstructs the rectangle instead of a fusiform. ENV-RECT-CONTROL-012:
+    ``reference_support`` is the cap the returns must lie inside; the caller may
+    pass an inflated cap (``max(reference_support, border_support + margin)``)
+    so the reference never shrinks the free envelope below the border. When a
+    cap tighter than the border is passed, the return for the affected sector
+    falls back to the ray-capped point so the cloud containment invariant holds
+    for every caller.
+    """
     parameters = parameters.to(directions)
     border_points = sample_border_points(parameters, directions)
     border_radii = border_points.norm(dim=-1)
@@ -106,7 +127,12 @@ def legacy_border_lidar_cloud(
         torch.full_like(projections, torch.inf),
     ).amin(dim=-1)
     radii = torch.minimum(border_radii, radial_caps)
-    points = radii[:, None] * directions
+    ray_points = radii[:, None] * directions
+    inside = (
+        border_points @ directions.T <= eroded_reference.unsqueeze(0) + 1e-6
+    ).all(dim=-1)
+    points = torch.where(inside[:, None], border_points, ray_points)
+    radii = points.norm(dim=-1)
     sectors = directions.shape[0]
     indices = torch.arange(sectors, device=directions.device)
     zeros = directions.new_empty((0,))

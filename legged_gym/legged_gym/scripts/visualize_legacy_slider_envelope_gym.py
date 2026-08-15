@@ -31,7 +31,7 @@ from kinematic_envelope import (  # noqa: E402
 from legacy_slider_envelope import (  # noqa: E402
     LEGACY_MAXIMUM, LEGACY_MIDPOINT, LEGACY_PARAMETER_ORDER,
     LEGACY_PARAMETER_RANGES, legacy_border_lidar_cloud,
-    legacy_border_vertices, parameter_tensor,
+    legacy_border_support, legacy_border_vertices, parameter_tensor,
 )
 from lidar_free_envelope import (  # noqa: E402
     maximum_sector_point_free_envelope, polygon_support_excess,
@@ -137,22 +137,40 @@ def build_context(kinematics, args):
     }
 
 
+def inflated_envelope_cap(parameters, directions, reference_support, margin):
+    """ENV-RECT-CONTROL-012: the reference cap relaxed where it is tighter than
+    the rectangle border.
+
+    The pre-obstacle reachable (foot) reference is a foot-reach bound; it must
+    not shrink the free envelope below the declared border. The cap is therefore
+    ``max(reference_support, border_support + margin)`` so every border support
+    point stays at least ``margin`` inside the cap and the envelope can reach
+    the border's full rectangle.
+    """
+    border_support = legacy_border_support(parameters, directions)
+    return torch.maximum(reference_support, border_support + margin)
+
+
 def compute_result(kinematics, context, values, args, generation):
     directions = context["directions"]
     parameters = parameter_tensor(values, dtype=directions.dtype, device=directions.device)
+    envelope_cap = inflated_envelope_cap(
+        parameters, directions, context["reference_support"],
+        args.reference_containment_margin,
+    )
     cloud = legacy_border_lidar_cloud(
-        parameters, directions, context["baseline_support"],
-        context["reference_support"], seed=args.seed + generation,
+        parameters, directions, context["baseline_support"], envelope_cap,
+        seed=args.seed + generation,
         reference_containment_margin=args.reference_containment_margin,
     )
     reference_excess = polygon_support_excess(
-        cloud.points_xy, directions, context["reference_support"],
+        cloud.points_xy, directions, envelope_cap,
     )
     if float(reference_excess.max()) > -args.reference_containment_margin + 5e-6:
-        raise ValueError("ZhangHT border points exceed the pre-obstacle reachable reference")
+        raise ValueError("ZhangHT border points exceed the (inflated) reachable cap")
     free_envelope = maximum_sector_point_free_envelope(
         cloud, directions, point_clearance=args.point_clearance,
-        cap_support=context["reference_support"],
+        cap_support=envelope_cap,
     )
     # The envelope is computed from the live border unconditionally. A border
     # that cannot contain the resting pose is a real, visualized condition
@@ -267,9 +285,13 @@ def live_point_source(values, context, args, generation):
         values, dtype=directions.dtype, device=directions.device,
     )
     border = legacy_border_vertices(parameters)
+    envelope_cap = inflated_envelope_cap(
+        parameters, directions, context["reference_support"],
+        args.reference_containment_margin,
+    )
     cloud = legacy_border_lidar_cloud(
-        parameters, directions, context["baseline_support"],
-        context["reference_support"], seed=args.seed + generation,
+        parameters, directions, context["baseline_support"], envelope_cap,
+        seed=args.seed + generation,
         reference_containment_margin=args.reference_containment_margin,
     )
     return border, cloud
