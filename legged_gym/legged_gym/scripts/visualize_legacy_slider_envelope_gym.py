@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 import sys
@@ -34,7 +34,12 @@ from legacy_slider_envelope import (  # noqa: E402
     legacy_border_support, legacy_border_vertices, parameter_tensor,
 )
 from lidar_free_envelope import (  # noqa: E402
-    maximum_sector_point_free_envelope, polygon_support_excess,
+    envelope_excess, maximum_sector_point_free_envelope,
+    polygon_support_excess,
+)
+from pd_control import (  # noqa: E402
+    ema_reference_update, nearest_outside_rejection, pd_integrate,
+    pd_settled,
 )
 from visualize_lidar_free_envelope_gym import (  # noqa: E402
     LidarProblem, TOLERANCE, WHITE, accepted_motion_pose, apply_pose,
@@ -86,6 +91,30 @@ def parse_args() -> argparse.Namespace:
         "--border_preset", choices=("max", "fwd_060", "bwd_060", "tight_030", "narrow"),
         default=None,
         help="override the auto-sweep with a single border for evidence capture",
+    )
+    parser.add_argument(
+        "--qe", type=str, default=None,
+        help="comma-separated initial q_e slider values (18; default all 0)",
+    )
+    # ENV-RECT-CONTROL-012: PD joint control and live rejection reference.
+    parser.add_argument(
+        "--legacy_motion", action="store_true",
+        help="keep the old trajectory motion instead of the default PD joint control",
+    )
+    parser.add_argument("--pd_kp", type=float, default=64.0)
+    parser.add_argument("--pd_kd", type=float, default=16.0)
+    parser.add_argument("--pd_max_rate", type=float, default=3.0)
+    parser.add_argument("--pd_dt", type=float, default=1.0 / 60.0)
+    parser.add_argument("--pd_alpha", type=float, default=0.5)
+    parser.add_argument("--pd_settle_rad", type=float, default=2e-3)
+    parser.add_argument(
+        "--rejection_recompute_rad", type=float, default=0.03,
+        help="recompute rejection with the live reference after the EMA joint "
+             "moves by this much (throttled)",
+    )
+    parser.add_argument(
+        "--rejection_min_interval_steps", type=int, default=20,
+        help="minimum steps between throttled rejection recomputes",
     )
     return parser.parse_args()
 
@@ -151,7 +180,10 @@ def inflated_envelope_cap(parameters, directions, reference_support, margin):
     return torch.maximum(reference_support, border_support + margin)
 
 
-def compute_result(kinematics, context, values, args, generation):
+def compute_result(
+    kinematics, context, values, args, generation, reference_q=None,
+    build_trajectory=True,
+):
     directions = context["directions"]
     parameters = parameter_tensor(values, dtype=directions.dtype, device=directions.device)
     envelope_cap = inflated_envelope_cap(
@@ -177,13 +209,17 @@ def compute_result(kinematics, context, values, args, generation):
     # (red capsule, frozen motion), not a reason to retain the previous result.
     #
     # The exported box and the rejection bands both sweep each joint at a single
-    # feasible reference (resting pose -> box center -> nearest feasible
-    # candidate sample), so the displayed ranges are the exact per-axis feasible
-    # reach and stay meaningful even when few candidate samples are
-    # envelope-feasible under the full-URDF reach window.
+    # feasible reference. ENV-RECT-CONTROL-012: the preferred reference is the
+    # live EMA joint when the caller provides one (``reference_q``), otherwise
+    # the resting pose. ``feasible_reference_q`` validates it (resting -> box
+    # center -> nearest feasible candidate sample), so the displayed ranges stay
+    # the exact per-axis feasible reach even when the live joint drifts outside
+    # the envelope.
+    if reference_q is None:
+        reference_q = context["baseline_q"]
     reference, _reference_source = feasible_reference_q(
         kinematics, context["capsules"], directions, free_envelope.support_m,
-        context["lower"], context["upper"], context["baseline_q"],
+        context["lower"], context["upper"], reference_q,
         tolerance=TOLERANCE, fallback_candidates=context["candidate_q"],
     )
     if reference is None:
@@ -232,7 +268,8 @@ def compute_result(kinematics, context, values, args, generation):
     resting_inside = float(
         (context["baseline_support"] - free_envelope.support_m).max()
     ) <= TOLERANCE
-    if bool(export.valid) and resting_inside:
+    trajectory = None
+    if build_trajectory and bool(export.valid) and resting_inside:
         try:
             trajectory = build_motion_trajectory(
                 problem, kinematics, directions, args.motion_period_steps,
@@ -241,8 +278,6 @@ def compute_result(kinematics, context, values, args, generation):
             # Exported ranges are still shown even when no smooth motion fits;
             # the viewer then freezes at the resting pose.
             trajectory = None
-    else:
-        trajectory = None
     return SliderResult(
         parameters=tuple(float(value) for value in parameters),
         border_vertices_xy=legacy_border_vertices(parameters),
@@ -255,7 +290,7 @@ def result_summary(result):
     diagnostics = result.problem.range_export.diagnostics
     motion = (
         f"fixed motion scale {float(result.trajectory.accepted_scale[0]):.4f}"
-        if result.trajectory is not None else "motion frozen"
+        if result.trajectory is not None else "PD joint control"
     )
     return (
         f"feasible {int(diagnostics.candidate_feasible_count)}/"
@@ -297,11 +332,200 @@ def live_point_source(values, context, args, generation):
     return border, cloud
 
 
+# ---------------------------------------------------------------------------
+# ENV-RECT-CONTROL-012: PD joint control + live (EMA) rejection reference.
+# ---------------------------------------------------------------------------
+#
+# MasterYip: "joint control: use pd to let the joint reach calculated position
+# q_c, the expect position is human-set through slider q_e, q_c is the nearest
+# position to q_e but outside the rejection range. Default q_e is all 0. For
+# rejection range computation: use the current joint (or ema to smooth) as ref
+# r, use this r to calculate the rejection range."
+#
+# The pure PD helpers live in ``pd_control`` (no Isaac Gym dependency, unit
+# tested). The rejection reference r is an EMA of the actual joint and is
+# re-validated by feasible_reference_q (resting -> box center -> nearest
+# feasible candidate) so the demo never crashes when the live joint drifts
+# outside the envelope.
+
+
+def envelope_feasible_q_c(
+    q_e, q_c, rejected_intervals, kinematics, capsules, directions, allowed,
+    lower, upper,
+):
+    """Snap q_c joints clamped off a rejected interval to an envelope-feasible value.
+
+    ``nearest_outside_rejection`` moves a joint exactly onto the rejected
+    interval endpoint, but those endpoints are half-sweep-step interpolations:
+    the true feasibility boundary is up to half a grid step inside the interval,
+    so the exact endpoint can sit a few millimeters outside the envelope. This
+    nudges every moved joint one sweep step further away from its interval until
+    the full pose is envelope-feasible (the first feasible grid value). Joints
+    that were not clamped (q_c == q_e) are never touched, and when the endpoint
+    pose is already feasible the value is returned unchanged.
+    """
+    moved = (q_c != q_e)
+    if not bool(moved.any()):
+        return q_c
+    step = (upper - lower) / 100.0
+    current = q_c.clone()
+    best = current.clone()
+    best_excess = float(envelope_excess(
+        kinematics, current.unsqueeze(0), capsules, directions, allowed,
+    )[0])
+    if best_excess <= TOLERANCE:
+        return current
+    # The true boundary is within one sweep step of the interpolated endpoint,
+    # so only a few nudges should be needed. Track the minimum-excess pose so a
+    # reference mismatch (fallback) can never push the joint to a URDF limit.
+    for _ in range(6):
+        nudged = current.clone()
+        for joint in moved.nonzero().flatten().tolist():
+            lo = hi = None
+            for a, b in rejected_intervals[joint]:
+                if a <= float(q_e[joint]) <= b:
+                    lo, hi = a, b
+                    break
+            if lo is None:
+                continue
+            # ``nearest_outside_rejection`` moved the joint to the nearer
+            # endpoint; nudge one sweep step further AWAY from the interval.
+            # The direction is derived from q_e (not from comparing the float32
+            # tensor value to the float64 endpoint, which drifts by ~3e-8).
+            if (float(q_e[joint]) - lo) <= (hi - float(q_e[joint])):
+                nudged[joint] = current[joint] - float(step[joint])
+            else:
+                nudged[joint] = current[joint] + float(step[joint])
+        nudged = torch.maximum(lower, torch.minimum(upper, nudged))
+        excess = float(envelope_excess(
+            kinematics, nudged.unsqueeze(0), capsules, directions, allowed,
+        )[0])
+        if excess <= TOLERANCE:
+            return nudged
+        if excess < best_excess:
+            best, best_excess = nudged, excess
+        current = nudged
+    return best
+
+
+def recompute_ranges_at_reference(
+    result, kinematics, context, reference, args, generation,
+):
+    """Recompute a slider result's export and rejection with the live reference.
+
+    The envelope (cloud + free support polygon) does not depend on the joint
+    reference, so only the range export, HAA ranges, and rejection intervals are
+    refreshed. ``reference`` is the preferred live (EMA) joint; it is validated
+    by ``joint_rejection_ranges`` / ``feasible_reference_q`` and falls back to
+    the box center or nearest feasible candidate when the live joint drifts
+    outside the envelope, so the demo stays robust.
+    """
+    problem = result.problem
+    directions = context["directions"]
+    allowed = problem.free_envelope.support_m
+    # ENV-RECT-CONTROL-012: validate the live EMA reference. When it drifts
+    # outside the envelope, ``feasible_reference_q`` would fall back to the box
+    # center, whose rejection bands can be inconsistent with the pose actually
+    # being controlled. Prefer the previous live reference (still near the
+    # actual pose) when it remains envelope-feasible.
+    validated, source = feasible_reference_q(
+        kinematics, context["capsules"], directions, allowed,
+        context["lower"], context["upper"], reference,
+        tolerance=TOLERANCE, fallback_candidates=context["candidate_q"],
+    )
+    previous = (
+        problem.rejection_ranges.reference_q
+        if problem.rejection_ranges is not None
+        and problem.rejection_ranges.feasible_reference
+        and problem.rejection_ranges.reference_q is not None
+        else None
+    )
+    if (
+        validated is None and previous is not None
+        and bool((capsule_support(
+            kinematics, previous.unsqueeze(0), context["capsules"], directions,
+        )[0] <= allowed + TOLERANCE).all())
+    ):
+        validated, source = previous, "reference_q (previous live EMA pose)"
+    if validated is None:
+        reference = context["lower"]
+    else:
+        reference = validated
+    rejection = joint_rejection_ranges(
+        kinematics, context["capsules"], directions, allowed,
+        context["lower"], context["upper"], reference,
+        tolerance=TOLERANCE, fallback_candidates=context["candidate_q"],
+    )
+    if rejection.feasible_reference and rejection.reference_q is not None:
+        export_reference = rejection.reference_q
+    else:
+        export_reference = context["lower"]
+    export = export_envelope_joint_ranges_at_reference(
+        kinematics, context["capsules"], directions, allowed,
+        context["lower"], context["upper"], export_reference,
+        tolerance=TOLERANCE,
+        box_validation_samples=args.box_validation_samples,
+        box_validation_seed=args.seed + 300,
+    )
+    new_problem = replace(
+        problem,
+        range_export=export,
+        haa_ranges=haa_ranges_from_joint_export(export),
+        rejection_ranges=rejection,
+    )
+    return replace(result, problem=new_problem)
+
+
+def new_pd_stats() -> dict:
+    return {
+        "frame_count": 0,
+        "settled_frames": 0,
+        "max_envelope_excess_m": 0.0,
+        "max_joint_limit_excess_rad": 0.0,
+        "settled_max_envelope_excess_m": 0.0,
+    }
+
+
+def update_pd_stats(
+    pd_stats, kinematics, capsules, directions, problem, q, settled,
+) -> None:
+    """Record PD-frame occupancy without raising on transient violations.
+
+    The settled pose is checked separately: a settled pose that still exceeds
+    the envelope would indicate that the rejection reference and the actual
+    pose disagree, which the EMA lag can cause briefly; it is reported, never
+    fatal.
+    """
+    pd_stats["frame_count"] += 1
+    pd_stats["settled_frames"] += int(settled)
+    excess = float(envelope_excess(
+        kinematics, q.unsqueeze(0), capsules, directions,
+        problem.free_envelope.support_m,
+    )[0])
+    joint_excess = float(torch.maximum(
+        problem.range_export.lower - q,
+        q - problem.range_export.upper,
+    ).clamp_min(0.0).max())
+    pd_stats["max_envelope_excess_m"] = max(
+        pd_stats["max_envelope_excess_m"], max(0.0, excess),
+    )
+    pd_stats["max_joint_limit_excess_rad"] = max(
+        pd_stats["max_joint_limit_excess_rad"], joint_excess,
+    )
+    if settled:
+        pd_stats["settled_max_envelope_excess_m"] = max(
+            pd_stats["settled_max_envelope_excess_m"], max(0.0, excess),
+        )
+
+
 class SliderPanel:
-    def __init__(self, show_rejection=False):
+    def __init__(
+        self, show_rejection=False, joint_lower=None, joint_upper=None,
+        initial_qe=None,
+    ):
         self.root = tk.Tk()
         self.root.title("EL4090 | ZhangHT Border Point Source")
-        self.root.geometry("610x720+32+32")
+        self.root.geometry("1240x1080+32+32")
         self.root.configure(bg=GRAPHITE)
         self.running = True
         self.capture_requested = False
@@ -314,6 +538,9 @@ class SliderPanel:
         self._last_elapsed = 0.0
         self.variables = {}
         self.range_labels = {}
+        self.qe_variables = {}
+        self._joint_lower = joint_lower
+        self._joint_upper = joint_upper
         tk.Label(
             self.root, text="ZHANGHT BORDER POINT SOURCE", bg=GRAPHITE,
             fg=PANEL_TEXT, font=("TkDefaultFont", 15, "bold"), anchor="w",
@@ -351,6 +578,48 @@ class SliderPanel:
         self._button(controls, "Capture", self._capture).pack(side="left")
         tk.Frame(self.root, height=1, bg="#46525b").pack(fill="x", padx=18, pady=6)
         tk.Label(
+            self.root,
+            text="JOINT TARGETS q_e [rad]  (PD drives the actual joint q to q_c = "
+                 "the nearest value to q_e outside the rejected intervals)",
+            bg=GRAPHITE, fg=PANEL_TEXT, font=("TkDefaultFont", 11, "bold"),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(3, 4))
+        joint_columns = tk.Frame(self.root, bg=GRAPHITE)
+        joint_columns.pack(fill="x", padx=18)
+        for column in range(2):
+            col = tk.Frame(joint_columns, bg=GRAPHITE)
+            col.pack(side="left", fill="x", expand=True, padx=(0, 10))
+            for row in range(9):
+                joint = EL4090_JOINT_NAMES[column * 9 + row]
+                jrow = tk.Frame(col, bg=GRAPHITE)
+                jrow.pack(fill="x", pady=1)
+                tk.Label(
+                    jrow, text=joint, width=7, anchor="w", bg=GRAPHITE,
+                    fg=PANEL_TEXT, font=("TkFixedFont", 8),
+                ).pack(side="left")
+                initial = (
+                    float(initial_qe[column * 9 + row])
+                    if initial_qe is not None else 0.0
+                )
+                variable = tk.DoubleVar(value=initial)
+                self.qe_variables[joint] = variable
+                qe_scale = tk.Scale(
+                    jrow, variable=variable, from_=-3.0, to=3.0, resolution=0.01,
+                    orient="horizontal", length=160, showvalue=True, digits=3,
+                    command=self._qe_slider_changed, bg=GRAPHITE, fg=PANEL_TEXT,
+                    troughcolor="#46525b", activebackground="#52dbe6",
+                    highlightthickness=0, bd=0, font=("TkFixedFont", 8),
+                )
+                qe_scale.pack(side="left", fill="x", expand=True)
+        tk.Frame(self.root, height=1, bg="#46525b").pack(fill="x", padx=18, pady=6)
+        self.pd_readout = tk.StringVar(value="PD: q_e -> q_c readout appears after the first export")
+        tk.Label(
+            self.root, textvariable=self.pd_readout, bg=GRAPHITE, fg=PANEL_TEXT,
+            font=("TkFixedFont", 8), anchor="w", justify="left",
+            wraplength=1200,
+        ).pack(fill="x", padx=18, pady=(2, 6))
+        tk.Frame(self.root, height=1, bg="#46525b").pack(fill="x", padx=18, pady=6)
+        tk.Label(
             self.root, text="EXPORTED JOINT RANGES [rad]", bg=GRAPHITE,
             fg=PANEL_TEXT, font=("TkDefaultFont", 11, "bold"), anchor="w",
         ).pack(fill="x", padx=18, pady=(3, 5))
@@ -378,10 +647,65 @@ class SliderPanel:
 
     def _slider_changed(self, _value=None):
         if not self.suspend:
-            self.enqueue(immediate=False)
+            # Tk Scale widgets can fire their -command when the panel re-lays
+            # out after new widgets are packed, with the value unchanged. Only
+            # queue a recompute when a border value actually changed.
+            current = self.snapshot()
+            if (
+                self._last_result is None
+                or tuple(self._last_result.parameters) != current
+            ):
+                self.enqueue(immediate=False)
 
     def _slider_released(self, _event=None):
         self.enqueue(immediate=True)
+
+    def _qe_slider_changed(self, _value=None):
+        # The q_e sliders set the PD target; they never change the envelope, so
+        # they only refresh the live q_e -> q_c readout instead of queueing a
+        # border recompute.
+        if not self.suspend:
+            self.refresh_pd_readout()
+
+    def qe_snapshot(self):
+        return tuple(self.qe_variables[name].get() for name in EL4090_JOINT_NAMES)
+
+    def refresh_pd_readout(self):
+        if self._last_result is None or self._joint_lower is None:
+            return
+        qe = torch.tensor(self.qe_snapshot(), dtype=torch.float32)
+        rejection = self._last_result.problem.rejection_ranges
+        intervals = (
+            rejection.rejected_intervals if rejection is not None else None
+        )
+        if intervals is None:
+            qc = torch.clamp(qe, self._joint_lower, self._joint_upper)
+        else:
+            qc = nearest_outside_rejection(
+                qe, intervals, self._joint_lower, self._joint_upper,
+            )
+        lines = []
+        for block in range(3):
+            qe_values = ", ".join(f"{float(qe[j]):+.2f}" for j in range(block * 6, block * 6 + 6))
+            qc_values = ", ".join(f"{float(qc[j]):+.2f}" for j in range(block * 6, block * 6 + 6))
+            names = " ".join(f"{EL4090_JOINT_NAMES[j]:>7}" for j in range(block * 6, block * 6 + 6))
+            lines.append(names)
+            lines.append(f"q_e [{qe_values}]")
+            lines.append(f"q_c [{qc_values}]")
+        if rejection is not None and rejection.feasible_reference:
+            rejected_names = [
+                EL4090_JOINT_NAMES[j]
+                for j in range(len(rejection.rejected_intervals))
+                if rejection.rejected_intervals[j]
+            ]
+            lines.append(
+                "rejection reference: "
+                f"{rejection.reference_source}; {len(rejected_names)} joints "
+                f"rejected: {', '.join(rejected_names) if rejected_names else 'none'}"
+            )
+        else:
+            lines.append("rejection: not applicable (no feasible reference)")
+        self.pd_readout.set("\n".join(lines))
 
     def _capture(self):
         self.capture_requested = True
@@ -408,6 +732,7 @@ class SliderPanel:
         self._last_result = result
         self._last_elapsed = elapsed_ms
         self._render_range_labels(result)
+        self.refresh_pd_readout()
         motion = (
             "motion frozen: resting pose outside envelope"
             if result.trajectory is None else ""
@@ -467,24 +792,52 @@ class SliderPanel:
             pass
 
 
-def write_evidence(gym, viewer, screenshot, result, state, stats, history, step):
+def write_evidence(
+    gym, viewer, screenshot, result, state, stats, history, step,
+    pd_state=None,
+):
     write_lidar_evidence(
         gym, viewer, screenshot, result.problem, state["directions"],
         state, stats, step,
     )
     path = screenshot.resolve().with_suffix(".json")
     record = json.loads(path.read_text(encoding="utf-8"))
-    record["point_source"] = "ZhangHT slider border ray intersections"
+    record["point_source"] = "ZhangHT slider rectangle border support points"
     record["cloud"]["angular_coverage"] = (
-        "one ZhangHT-border-derived return in every registered sector"
+        "one ZhangHT-border-support return in every registered sector"
     )
     record["cloud"]["structure"]["randomization"] = (
-        "none; deterministic ray intersections controlled by the five sliders"
+        "none; deterministic border support points controlled by the five sliders"
     )
     record["envelope_math_model"] = result.problem.free_envelope.optimality_scope
     record["slider_parameters"] = dict(zip(LEGACY_PARAMETER_ORDER, result.parameters))
     record["slider_border_vertices_xy"] = result.border_vertices_xy.tolist()
     record["recompute_history"] = history
+    if pd_state is not None:
+        record["pd_control"] = {
+            "mode": "pd",
+            "kp": pd_state["kp"],
+            "kd": pd_state["kd"],
+            "dt": pd_state["dt"],
+            "max_rate_rad_s": pd_state["max_rate"],
+            "ema_alpha": pd_state["alpha"],
+            "settle_rad": pd_state["settle_rad"],
+            "q_e_rad": pd_state["q_e"].detach().cpu().tolist(),
+            "q_c_rad": pd_state["q_c"].detach().cpu().tolist(),
+            "q_actual_rad": pd_state["q"].detach().cpu().tolist(),
+            "q_dot_rad_s": pd_state["q_dot"].detach().cpu().tolist(),
+            "rejection_reference_q_rad": pd_state["reference_r"].detach().cpu().tolist(),
+            "rejection_reference_source": (
+                result.problem.rejection_ranges.reference_source
+                if result.problem.rejection_ranges is not None else None
+            ),
+            "settled": bool(pd_state["settled"]),
+            "settled_max_envelope_excess_m": pd_state["stats"]["settled_max_envelope_excess_m"],
+            "max_envelope_excess_m": pd_state["stats"]["max_envelope_excess_m"],
+            "max_joint_limit_excess_rad": pd_state["stats"]["max_joint_limit_excess_rad"],
+            "frame_count": pd_state["stats"]["frame_count"],
+            "settled_frames": pd_state["stats"]["settled_frames"],
+        }
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -512,7 +865,17 @@ def main():
             print("  motion frozen: resting pose outside the envelope")
         return
 
-    panel = SliderPanel(show_rejection=args.show_rejection)
+    initial_qe = None
+    if args.qe is not None:
+        raw = [float(value) for value in args.qe.split(",")]
+        if len(raw) != 18:
+            raise ValueError("--qe requires exactly 18 comma-separated values")
+        initial_qe = raw
+    panel = SliderPanel(
+        show_rejection=args.show_rejection,
+        joint_lower=context["lower"], joint_upper=context["upper"],
+        initial_qe=initial_qe,
+    )
     gym, sim, viewer, env, actor, q_indices = create_simulation(args, result.problem.baseline_q)
     state = {
         "motion": not args.no_motion, "motion_step": 0,
@@ -522,10 +885,32 @@ def main():
         "directions": context["directions"],
     }
     set_camera(gym, viewer, 0)
-    stats = new_stats(result.trajectory)
     history = []
     captured = False
     step = 0
+    # ENV-RECT-CONTROL-012: the default control is PD joint reaching. The old
+    # trajectory motion stays available behind --legacy_motion.
+    pd_state = None
+    if not args.legacy_motion:
+        pd_state = {
+            "kp": args.pd_kp, "kd": args.pd_kd, "dt": args.pd_dt,
+            "max_rate": args.pd_max_rate, "alpha": args.pd_alpha,
+            "settle_rad": args.pd_settle_rad,
+            "q": context["baseline_q"].clone(),
+            "q_dot": torch.zeros_like(context["baseline_q"]),
+            "reference_r": context["baseline_q"].clone(),
+            "reference_r_at_rejection": context["baseline_q"].clone(),
+            "q_e": torch.zeros_like(context["baseline_q"]),
+            "q_c": torch.zeros_like(context["baseline_q"]),
+            "settled": False,
+            "last_recompute_step": -args.rejection_min_interval_steps,
+            "stats": new_pd_stats(),
+        }
+        stats = pd_state["stats"]
+        build_trajectory = False
+    else:
+        stats = new_stats(result.trajectory)
+        build_trajectory = True
     # The sweep walks the front width through the slider range and records the
     # exported per-leg HAA span on every recompute: the MAX border keeps the
     # resting pose feasible (motion accepted), 0.50 and 0.40 still admit poses
@@ -546,6 +931,8 @@ def main():
         sweep = (presets[args.border_preset],)
         result = compute_result(
             kinematics, context, sweep[0], args, panel.requested_generation,
+            reference_q=(pd_state["reference_r"] if pd_state is not None else None),
+            build_trajectory=build_trajectory,
         )
         # Mark the preset applied so the panel's pending() stays False and the
         # loop does not immediately recompute the slider's initial MAX border.
@@ -588,7 +975,12 @@ def main():
                 started = time.perf_counter()
                 try:
                     updated = compute_result(
-                        kinematics, context, values, args, panel.requested_generation,
+                        kinematics, context, values, args,
+                        panel.requested_generation,
+                        reference_q=(
+                            pd_state["reference_r"] if pd_state is not None else None
+                        ),
+                        build_trajectory=build_trajectory,
                     )
                 except (ValueError, RuntimeError) as error:
                     panel.update_error(str(error))
@@ -596,7 +988,16 @@ def main():
                     elapsed_ms = 1000.0 * (time.perf_counter() - started)
                     result = updated
                     state["motion_step"] = 0
-                    stats = new_stats(result.trajectory)
+                    if pd_state is not None:
+                        # The border/envelope changed; the PD continues from the
+                        # current joint but the rejection reference must be
+                        # re-validated against the fresh envelope.
+                        pd_state["reference_r_at_rejection"] = (
+                            pd_state["reference_r"].clone()
+                        )
+                        pd_state["last_recompute_step"] = step
+                    else:
+                        stats = new_stats(result.trajectory)
                     panel.update_result(result, elapsed_ms)
                     haa_span = average_haa_range_deg(result.problem.range_export)
                     history.append({
@@ -613,7 +1014,74 @@ def main():
                         else " HAA infeasible"
                     )
                     print(f"  update {len(history)}: {result_summary(result)};{haa_text}; {elapsed_ms:.1f} ms")
-            if result.trajectory is not None:
+            if pd_state is not None:
+                # ENV-RECT-CONTROL-012: PD joint control. q_e comes from the 18
+                # sliders, q_c is the nearest value outside the rejected
+                # intervals, and the rejection reference is the EMA of the actual
+                # joint, recomputed on a throttle when the reference has moved.
+                pd_state["q_e"] = torch.tensor(
+                    panel.qe_snapshot(), dtype=context["baseline_q"].dtype,
+                )
+                pd_state["reference_r"] = ema_reference_update(
+                    pd_state["q"], pd_state["reference_r"], args.pd_alpha,
+                )
+                reference_moved = float((
+                    pd_state["reference_r"] - pd_state["reference_r_at_rejection"]
+                ).abs().max())
+                if (
+                    reference_moved > args.rejection_recompute_rad
+                    and step - pd_state["last_recompute_step"]
+                    >= args.rejection_min_interval_steps
+                ):
+                    started = time.perf_counter()
+                    result = recompute_ranges_at_reference(
+                        result, kinematics, context,
+                        pd_state["reference_r"], args,
+                        panel.requested_generation,
+                    )
+                    pd_state["last_recompute_step"] = step
+                    pd_state["reference_r_at_rejection"] = (
+                        pd_state["reference_r"].clone()
+                    )
+                    panel._last_result = result
+                    panel._render_range_labels(result)
+                    panel.refresh_pd_readout()
+                    print(
+                        "  rejection reference updated (EMA moved "
+                        f"{reference_moved:.4f} rad) in "
+                        f"{1000.0 * (time.perf_counter() - started):.0f} ms"
+                    )
+                intervals = result.problem.rejection_ranges.rejected_intervals
+                pd_state["q_c"] = nearest_outside_rejection(
+                    pd_state["q_e"], intervals,
+                    context["lower"], context["upper"],
+                )
+                pd_state["q_c"] = envelope_feasible_q_c(
+                    pd_state["q_e"], pd_state["q_c"], intervals,
+                    kinematics, context["capsules"], context["directions"],
+                    result.problem.free_envelope.support_m,
+                    context["lower"], context["upper"],
+                )
+                pd_state["q"], pd_state["q_dot"] = pd_integrate(
+                    pd_state["q"], pd_state["q_dot"], pd_state["q_c"],
+                    kp=args.pd_kp, kd=args.pd_kd, dt=args.pd_dt,
+                    max_rate=args.pd_max_rate,
+                    lower=context["lower"], upper=context["upper"],
+                )
+                pd_state["settled"] = pd_settled(
+                    pd_state["q"], pd_state["q_c"], pd_state["q_dot"],
+                    args.pd_settle_rad,
+                )
+                if pd_state["settled"]:
+                    pd_state["q"] = pd_state["q_c"].clone()
+                    pd_state["q_dot"] = torch.zeros_like(pd_state["q_dot"])
+                update_pd_stats(
+                    pd_state["stats"], kinematics, context["capsules"],
+                    context["directions"], result.problem, pd_state["q"],
+                    pd_state["settled"],
+                )
+                pose = pd_state["q"]
+            elif result.trajectory is not None:
                 _, pose, naive_excess, accepted = accepted_motion_pose(
                     result.trajectory, state["motion_step"],
                 )
@@ -654,10 +1122,13 @@ def main():
             if args.screenshot is not None and (
                 panel.capture_requested or (not captured and step >= args.screenshot_step)
             ):
-                write_evidence(gym, viewer, args.screenshot, result, state, stats, history, step)
+                write_evidence(
+                    gym, viewer, args.screenshot, result, state, stats,
+                    history, step, pd_state=pd_state,
+                )
                 panel.capture_requested = False
                 captured = True
-            if result.trajectory is not None and state["motion"]:
+            if pd_state is None and result.trajectory is not None and state["motion"]:
                 state["motion_step"] += 1
             step += 1
             if args.max_steps > 0 and step >= args.max_steps:
