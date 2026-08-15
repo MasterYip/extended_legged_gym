@@ -20,6 +20,7 @@ ENVELOPE_DIR = PACKAGE_ROOT / "utils" / "envelop"
 sys.path.insert(0, str(ENVELOPE_DIR))
 
 from gym_envelope_geometry import (  # noqa: E402
+    accessible_interval_complement,
     haa_arc_geometry,
     haa_arc_geometry_interval,
     interpolate_joint_ranges,
@@ -561,17 +562,37 @@ def draw_haa(gym, viewer, env, kinematics, problem, pose, rejection=None) -> Non
     markers = markers.detach().cpu().numpy() + translation
     haa_indices = [EL4090_JOINT_NAMES.index(f"{leg}_HAA") for leg in EL4090_LEG_NAMES]
     for index in range(6):
-        add_bold_segments(
-            gym, viewer, env, polyline_segments(arcs[index]), AMBER,
+        exported_lo = float(problem.haa_ranges[index][0])
+        exported_hi = float(problem.haa_ranges[index][1])
+        rejected = (
+            rejection.rejected_intervals[haa_indices[index]]
+            if rejection is not None and rejection.feasible_reference else ()
         )
+        if rejected:
+            # The amber arc is the accessible range: the exported box minus the
+            # rejected bands. Draw it as sub-arcs so amber and magenta never
+            # overlap; together they tile [exported_lo, exported_hi].
+            for lo_v, hi_v in accessible_interval_complement(exported_lo, exported_hi, rejected):
+                sub = haa_arc_geometry_interval(
+                    kinematics, pose, problem.haa_ranges, index, lo_v, hi_v,
+                    radius=0.25, samples=17,
+                )
+                sub = sub.detach().cpu().numpy() + translation
+                add_bold_segments(
+                    gym, viewer, env, polyline_segments(sub), AMBER,
+                )
+        else:
+            add_bold_segments(
+                gym, viewer, env, polyline_segments(arcs[index]), AMBER,
+            )
         bounds = np.stack((origins[index], arcs[index, 0], origins[index], arcs[index, -1]))
         add_bold_segments(gym, viewer, env, bounds, AMBER)
         endpoint = origins[index] + 1.28 * (markers[index] - origins[index])
         add_bold_segments(
             gym, viewer, env, np.stack((origins[index], endpoint)), AMBER,
         )
-        if rejection is not None and rejection.feasible_reference:
-            for lo_v, hi_v in rejection.rejected_intervals[haa_indices[index]]:
+        if rejected:
+            for lo_v, hi_v in rejected:
                 sub = haa_arc_geometry_interval(
                     kinematics, pose, problem.haa_ranges, index, lo_v, hi_v,
                     radius=0.25, samples=17,
