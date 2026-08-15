@@ -203,6 +203,35 @@ def haa_arc_geometry_interval(
     return arcs[leg_index]
 
 
+def accessible_interval_complement(
+    lo: float,
+    hi: float,
+    rejected: Sequence[Tuple[float, float]],
+) -> Tuple[Tuple[float, float], ...]:
+    """Complement of the rejected sub-intervals within ``[lo, hi]``.
+
+    The rejected intervals are expected sorted and non-overlapping (as produced
+    by ``joint_rejection_ranges``). The result tiles ``[lo, hi]`` exactly with
+    the rejected intervals: union of the returned accessible gaps equals
+    ``[lo, hi]`` minus the rejected union, and no accessible gap overlaps a
+    rejected interval. Used to draw the amber "accessible" HAA arc only over
+    the non-rejected sub-ranges so it never overlaps the magenta rejected bands.
+    """
+    accessible: list[Tuple[float, float]] = []
+    cursor = lo
+    for r_lo, r_hi in rejected:
+        if r_hi <= lo or r_lo >= hi:
+            continue  # entirely outside [lo, hi]; must not consume the range
+        low = max(cursor, r_lo)
+        high = min(hi, r_hi)
+        if cursor < low:
+            accessible.append((cursor, low))
+        cursor = max(cursor, high)
+    if cursor < hi:
+        accessible.append((cursor, hi))
+    return tuple(accessible)
+
+
 def build_demo_preset(
     name: str,
     kinematics: BatchedUrdfKinematics,

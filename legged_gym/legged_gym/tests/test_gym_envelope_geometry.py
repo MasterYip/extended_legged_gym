@@ -178,5 +178,45 @@ class TestGymEnvelopeGeometry(unittest.TestCase):
         self.assertTrue(torch.equal(first.reachable_support, second.reachable_support))
 
 
+class TestAccessibleIntervalComplement(unittest.TestCase):
+    def test_no_rejection_keeps_full_range(self):
+        self.assertEqual(
+            GEOM.accessible_interval_complement(-3.0, 3.0, ()),
+            ((-3.0, 3.0),),
+        )
+
+    def test_single_rejected_band_splits_range(self):
+        self.assertEqual(
+            GEOM.accessible_interval_complement(-3.0, 3.0, ((1.05, 2.01),)),
+            ((-3.0, 1.05), (2.01, 3.0)),
+        )
+
+    def test_multiple_bands_are_complementary_no_overlap(self):
+        lo, hi = -3.0, 3.0
+        rejected = ((-2.5, -2.0), (0.0, 0.4), (1.1, 2.2))
+        accessible = GEOM.accessible_interval_complement(lo, hi, rejected)
+        # accessible tiles [lo, hi] exactly with the rejected bands, disjoint.
+        accessible_span = sum(b - a for a, b in accessible)
+        rejected_span = sum(b - a for a, b in rejected)
+        self.assertAlmostEqual(accessible_span + rejected_span, hi - lo, places=9)
+        for a_lo, a_hi in accessible:
+            for r_lo, r_hi in rejected:
+                self.assertFalse(a_lo < r_hi and r_lo < a_hi)  # no overlap
+        self.assertAlmostEqual(accessible[0][0], lo, places=9)
+        self.assertAlmostEqual(accessible[-1][1], hi, places=9)
+
+    def test_rejected_bands_outside_range_are_ignored(self):
+        self.assertEqual(
+            GEOM.accessible_interval_complement(-1.5, 2.4, ((-3.0, -2.0), (2.5, 3.0))),
+            ((-1.5, 2.4),),
+        )
+
+    def test_adjacent_bands_merge_accessible_gap(self):
+        accessible = GEOM.accessible_interval_complement(
+            0.0, 3.0, ((0.5, 1.0), (1.0, 2.0)),
+        )
+        self.assertEqual(accessible, ((0.0, 0.5), (2.0, 3.0)))
+
+
 if __name__ == "__main__":
     unittest.main()
