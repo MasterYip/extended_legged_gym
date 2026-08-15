@@ -485,6 +485,49 @@ class TestPerAxisExportAtReference(unittest.TestCase):
         self.assertTrue(torch.isnan(export.upper).all())
         self.assertIn("no feasible reference", export.diagnostics.label)
 
+    def test_rejection_over_full_range_reports_wings(self):
+        # Regression: the rejection used to be swept only over the exported box,
+        # so when a border tightened and the box narrowed (a leg can tuck inside)
+        # the infeasible "wings" outside the box were never reported. Sweeping
+        # over the FULL URDF range makes rejection = where the leg pokes out
+        # (wings + internal holes), which is what makes front/back leg rejection
+        # appear when forward/backward limits shrink.
+        target = torch.tensor([0.0, 1.0, -1.0] * 6)
+        allowed = KE.capsule_support(
+            self.kin, target.unsqueeze(0), self.capsules, self.directions,
+        )[0]
+        lower = torch.full((18,), -3.0)
+        upper = torch.full((18,), 3.0)
+        export = KE.export_envelope_joint_ranges_at_reference(
+            self.kin, self.capsules, self.directions, allowed, lower, upper, target,
+        )
+        self.assertTrue(bool(export.valid))
+        # The tuck envelope must tighten at least one joint below the full span.
+        tightened = [
+            j for j in range(18)
+            if float(export.upper[j] - export.lower[j]) < 5.9
+        ]
+        self.assertGreater(len(tightened), 0)
+        rejection_full = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions, allowed, lower, upper, target,
+        )
+        self.assertTrue(rejection_full.feasible_reference)
+        wings = [
+            (j, iv) for j in range(18) for iv in rejection_full.rejected_intervals[j]
+            if iv[0] <= -3.0 + 1e-3 or iv[1] >= 3.0 - 1e-3
+        ]
+        self.assertGreater(len(wings), 0)
+        # The box-range sweep clamps to the box, so it cannot report those wings.
+        rejection_box = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions, allowed,
+            export.lower, export.upper, target,
+        )
+        self.assertTrue(rejection_box.feasible_reference)
+        for j, intervals in enumerate(rejection_box.rejected_intervals):
+            for lo, hi in intervals:
+                self.assertGreaterEqual(lo, float(export.lower[j]) - 1e-3)
+                self.assertLessEqual(hi, float(export.upper[j]) + 1e-3)
+
     def test_export_and_rejection_consistent(self):
         # The per-axis export box is the feasible extent of the same sweep the
         # rejection intervals report, so the two agree: the box spans exactly the

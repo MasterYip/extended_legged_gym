@@ -82,6 +82,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no_motion", action="store_true")
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--screenshot_step", type=int, default=5)
+    parser.add_argument(
+        "--border_preset", choices=("max", "fwd_060", "bwd_060", "tight_030", "narrow"),
+        default=None,
+        help="override the auto-sweep with a single border for evidence capture",
+    )
     return parser.parse_args()
 
 
@@ -201,7 +206,7 @@ def compute_result(kinematics, context, values, args, generation):
         required_joint_shrink_rad=0.0,
         rejection_ranges=joint_rejection_ranges(
             kinematics, context["capsules"], directions,
-            free_envelope.support_m, export.lower, export.upper,
+            free_envelope.support_m, context["lower"], context["upper"],
             reference, tolerance=TOLERANCE,
             fallback_candidates=context["candidate_q"],
         ),
@@ -403,12 +408,15 @@ class SliderPanel:
                 if math.isnan(lo) or math.isnan(hi):
                     pieces.append(f"{joint} infeasible")
                 else:
-                    text = f"{joint} [{lo:+.3f}, {hi:+.3f}]"
+                    text = f"{joint} reach[{lo:+.3f},{hi:+.3f}]"
                     if self.show_rejection and rejection is not None and rejection.feasible_reference:
                         intervals = rejection.rejected_intervals[index]
                         if intervals:
                             marks = ";".join(f"{a:+.3f}-{b:+.3f}" for a, b in intervals)
-                            text = f"{joint} [{lo:+.3f}, ({marks}), {hi:+.3f}]"
+                            # Rejection is the complement of the reach over the
+                            # full URDF range, so marks can extend beyond the box
+                            # (the wings where a tightened border rejects).
+                            text += f" rej({marks})"
                     pieces.append(text)
             self.range_labels[leg].set(f"{leg}  " + "   ".join(pieces))
 
@@ -502,13 +510,32 @@ def main():
     # (0.40 freezes the resting pose), 0.30 tightens the HAA range strongly,
     # and the final very narrow border has no feasible pose. All recompute
     # live now, and the HAA range tightens instead of staying flat.
-    sweep = (
-        LEGACY_MAXIMUM,
-        (0.50, 0.70, 0.60, 0.88, -0.88),
-        (0.40, 0.70, 0.60, 0.86, -0.86),
-        (0.30, 0.70, 0.60, 0.84, -0.84),
-        (0.30, 0.50, 0.30, 0.70, -0.70),
-    )
+    if args.border_preset is not None:
+        # Single-border evidence capture: override both the initial border and
+        # the sweep so the rejection/accessible behavior of a specific border
+        # (e.g. fwd_060 for the front-leg wings) can be screenshotted directly.
+        presets = {
+            "max": LEGACY_MAXIMUM,
+            "fwd_060": (0.60, 0.70, 0.60, 0.60, -0.90),
+            "bwd_060": (0.60, 0.70, 0.60, 0.90, -0.60),
+            "tight_030": (0.30, 0.70, 0.60, 0.84, -0.84),
+            "narrow": (0.30, 0.50, 0.30, 0.70, -0.70),
+        }
+        sweep = (presets[args.border_preset],)
+        result = compute_result(
+            kinematics, context, sweep[0], args, panel.requested_generation,
+        )
+        # Mark the preset applied so the panel's pending() stays False and the
+        # loop does not immediately recompute the slider's initial MAX border.
+        panel.update_result(result, 0.0)
+    else:
+        sweep = (
+            LEGACY_MAXIMUM,
+            (0.50, 0.70, 0.60, 0.88, -0.88),
+            (0.40, 0.70, 0.60, 0.86, -0.86),
+            (0.30, 0.70, 0.60, 0.84, -0.84),
+            (0.30, 0.50, 0.30, 0.70, -0.70),
+        )
     try:
         while panel.running and not gym.query_viewer_has_closed(viewer):
             panel.pump()

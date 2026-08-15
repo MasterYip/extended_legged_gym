@@ -20,10 +20,9 @@ ENVELOPE_DIR = PACKAGE_ROOT / "utils" / "envelop"
 sys.path.insert(0, str(ENVELOPE_DIR))
 
 from gym_envelope_geometry import (  # noqa: E402
-    accessible_interval_complement,
     haa_arc_geometry,
-    haa_arc_geometry_interval,
     interpolate_joint_ranges,
+    joint_arc_geometry_interval,
     polyline_segments,
     support_polygon,
 )
@@ -244,7 +243,7 @@ def build_problem(args, kinematics, directions, seed: int) -> LidarProblem:
         required_joint_shrink_rad=args.min_joint_shrink_rad,
         rejection_ranges=joint_rejection_ranges(
             kinematics, capsules, directions, free_envelope.support_m,
-            export.lower, export.upper, reference, tolerance=TOLERANCE,
+            effective_lower, effective_upper, reference, tolerance=TOLERANCE,
             fallback_candidates=candidate_q,
         ),
     )
@@ -561,50 +560,41 @@ def draw_haa(gym, viewer, env, kinematics, problem, pose, rejection=None) -> Non
     arcs = arcs.detach().cpu().numpy() + translation
     markers = markers.detach().cpu().numpy() + translation
     haa_indices = [EL4090_JOINT_NAMES.index(f"{leg}_HAA") for leg in EL4090_LEG_NAMES]
+    if rejection is not None and rejection.feasible_reference:
+        # J mode: draw ONLY the rejected bands. The rejection is the complement
+        # of the accessible reach over the full URDF range, so it includes both
+        # internal holes and the wings outside the exported box (exactly where a
+        # leg pokes out when a forward/back limit tightens). Every rejected joint
+        # (HAA/HFE/KFE) of every leg is drawn as a stylized foot-direction arc.
+        for index in range(6):
+            leg = EL4090_LEG_NAMES[index]
+            for joint_kind in ("HAA", "HFE", "KFE"):
+                joint_index = EL4090_JOINT_NAMES.index(f"{leg}_{joint_kind}")
+                for lo_v, hi_v in rejection.rejected_intervals[joint_index]:
+                    sub = joint_arc_geometry_interval(
+                        kinematics, pose, index, joint_kind, lo_v, hi_v,
+                        radius=0.25, samples=17,
+                    )
+                    sub = sub.detach().cpu().numpy() + translation
+                    # Elevate the rejected band so it renders above the envelope
+                    # lines instead of depth-fighting at the same z.
+                    elevated = sub.copy()
+                    elevated[:, 2] += 0.02
+                    add_bold_segments(
+                        gym, viewer, env, polyline_segments(elevated), REJECTION_RED,
+                    )
+        return
+    # H mode: amber full HAA arcs (the accessible reach) plus the current marker.
     for index in range(6):
-        exported_lo = float(problem.haa_ranges[index][0])
-        exported_hi = float(problem.haa_ranges[index][1])
-        rejected = (
-            rejection.rejected_intervals[haa_indices[index]]
-            if rejection is not None and rejection.feasible_reference else ()
+        add_bold_segments(
+            gym, viewer, env, polyline_segments(arcs[index]), AMBER,
         )
-        if rejected:
-            # The amber arc is the accessible range: the exported box minus the
-            # rejected bands. Draw it as sub-arcs so amber and magenta never
-            # overlap; together they tile [exported_lo, exported_hi].
-            for lo_v, hi_v in accessible_interval_complement(exported_lo, exported_hi, rejected):
-                sub = haa_arc_geometry_interval(
-                    kinematics, pose, problem.haa_ranges, index, lo_v, hi_v,
-                    radius=0.25, samples=17,
-                )
-                sub = sub.detach().cpu().numpy() + translation
-                add_bold_segments(
-                    gym, viewer, env, polyline_segments(sub), AMBER,
-                )
-        else:
-            add_bold_segments(
-                gym, viewer, env, polyline_segments(arcs[index]), AMBER,
-            )
         bounds = np.stack((origins[index], arcs[index, 0], origins[index], arcs[index, -1]))
         add_bold_segments(gym, viewer, env, bounds, AMBER)
         endpoint = origins[index] + 1.28 * (markers[index] - origins[index])
         add_bold_segments(
             gym, viewer, env, np.stack((origins[index], endpoint)), AMBER,
         )
-        if rejected:
-            for lo_v, hi_v in rejected:
-                sub = haa_arc_geometry_interval(
-                    kinematics, pose, problem.haa_ranges, index, lo_v, hi_v,
-                    radius=0.25, samples=17,
-                )
-                sub = sub.detach().cpu().numpy() + translation
-                # Elevate the rejected band so it renders above the amber arc
-                # instead of depth-fighting at the same z.
-                elevated = sub.copy()
-                elevated[:, 2] += 0.02
-                add_bold_segments(
-                    gym, viewer, env, polyline_segments(elevated), REJECTION_RED,
-                )
 
 
 def draw_scene(gym, viewer, env, kinematics, directions, problem, pose, state) -> None:

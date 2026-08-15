@@ -203,6 +203,54 @@ def haa_arc_geometry_interval(
     return arcs[leg_index]
 
 
+def joint_arc_geometry_interval(
+    kinematics: BatchedUrdfKinematics,
+    current_q: Tensor,
+    leg_index: int,
+    joint_kind: str,
+    interval_lo: float,
+    interval_hi: float,
+    *,
+    radius: float = 0.22,
+    samples: int = 17,
+) -> Tensor:
+    """One leg's body-frame stylized foot-direction arc over a joint sub-interval.
+
+    ``joint_kind`` is one of ``"HAA"``, ``"HFE"``, ``"KFE"``. The named joint of
+    the given leg is swept over ``[interval_lo, interval_hi]`` with every other
+    joint (including the other legs) pinned at ``current_q``. Arc points are the
+    hip origin plus ``radius * unit(hip-to-foot XY)``, the same stylization as
+    ``haa_arc_geometry``, so the HAA case reproduces the HAA arc exactly. Used to
+    draw rejected HFE/KFE bands (forward/back motion) in the same style as the
+    HAA rejection bands.
+    """
+    if current_q.shape != (kinematics.num_dof,):
+        raise ValueError("current_q must be [num_dof]")
+    if not 0 <= leg_index < len(EL4090_LEG_NAMES):
+        raise ValueError("leg_index must be in [0, num_legs)")
+    if joint_kind not in ("HAA", "HFE", "KFE"):
+        raise ValueError("joint_kind must be one of HAA, HFE, KFE")
+    if interval_hi < interval_lo:
+        raise ValueError("interval_lo must not exceed interval_hi")
+    if samples < 3 or radius <= 0.0:
+        raise ValueError("samples must be >= 3 and radius must be positive")
+    joint_index = EL4090_JOINT_NAMES.index(f"{EL4090_LEG_NAMES[leg_index]}_{joint_kind}")
+    alpha = torch.linspace(0.0, 1.0, samples, dtype=current_q.dtype, device=current_q.device)
+    sweep_q = current_q.repeat(samples, 1)
+    sweep_q[:, joint_index] = interval_lo + alpha * (interval_hi - interval_lo)
+    hip_link = f"{EL4090_LEG_NAMES[leg_index]}_HIP"
+    foot_link = f"{EL4090_LEG_NAMES[leg_index]}_FOOT"
+    local = torch.zeros((1, 1, 3), dtype=current_q.dtype, device=current_q.device)
+    hips = kinematics.points(sweep_q, (hip_link,), local)[..., 0, 0, :]
+    feet = kinematics.points(sweep_q, (foot_link,), local)[..., 0, 0, :]
+    direction = feet - hips
+    direction[..., 2] = 0.0
+    norms = direction.norm(dim=-1, keepdim=True)
+    if bool((norms <= torch.finfo(current_q.dtype).eps).any()):
+        raise ValueError("hip-to-foot XY directions must be nonzero")
+    return hips + radius * direction / norms
+
+
 def accessible_interval_complement(
     lo: float,
     hi: float,

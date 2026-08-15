@@ -156,6 +156,33 @@ class TestGymEnvelopeGeometry(unittest.TestCase):
                 radius=0.2, samples=17,
             )
 
+    def test_joint_arc_geometry_interval_haa_matches_haa_arc_interval(self):
+        current = torch.tensor([0.1, 0.6, -0.6] * 6, dtype=torch.float64)
+        ranges = torch.tensor([[-0.4, 0.5]] * 6, dtype=torch.float64)
+        sub_new = GEOM.joint_arc_geometry_interval(
+            self.kinematics, current, 3, "HAA", -0.4, 0.5, radius=0.2, samples=17,
+        )
+        sub_old = GEOM.haa_arc_geometry_interval(
+            self.kinematics, current, ranges, 3, -0.4, 0.5, radius=0.2, samples=17,
+        )
+        self.assertEqual(sub_new.shape, (17, 3))
+        self.assertTrue(torch.allclose(sub_new, sub_old, atol=1e-12))
+
+    def test_joint_arc_geometry_interval_hfe_kfe_shapes(self):
+        current = torch.tensor([0.1, 0.6, -0.6] * 6, dtype=torch.float64)
+        for kind in ("HFE", "KFE"):
+            for leg in (0, 3):
+                sub = GEOM.joint_arc_geometry_interval(
+                    self.kinematics, current, leg, kind, -2.0, -1.0,
+                    radius=0.2, samples=17,
+                )
+                self.assertEqual(sub.shape, (17, 3))
+                self.assertTrue(torch.isfinite(sub).all())
+        with self.assertRaises(ValueError):
+            GEOM.joint_arc_geometry_interval(
+                self.kinematics, current, 0, "FOO", -2.0, -1.0,
+            )
+
     def test_demo_preset_is_deterministic_and_has_numeric_haa_ranges(self):
         directions = KE.support_directions(24)
         lower, upper = self.kinematics.joint_limits(soft_fraction=0.9)
