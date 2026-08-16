@@ -565,5 +565,160 @@ class TestPerAxisExportAtReference(unittest.TestCase):
                 self.assertFalse(lo <= float(self.reference[joint]) <= hi)
 
 
+class TestHaaRejectionRanges(unittest.TestCase):
+    """Fold-aware per-leg HAA rejection: pinned / fold / none regimes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.kin = KE.BatchedUrdfKinematics(KE.load_urdf_joints(URDF))
+        cls.directions = KE.support_directions(32)
+        cls.capsules = KE.default_el4090_capsules()
+        cls.lower, cls.upper = cls.kin.joint_limits(soft_fraction=1.0)
+        cls.haa_indices = [0, 3, 6, 9, 12, 15]
+        cls.margin = 0.02
+        cls.pins = torch.zeros(18)
+        for leg in range(6):
+            cls.pins[1 + 3 * leg] = 0.6
+            cls.pins[2 + 3 * leg] = -0.6
+
+    def _allowed(self, w):
+        vertices = torch.tensor([
+            [0.75, w], [0.0, w], [-0.72, w], [-0.72, -w], [0.0, -w], [0.75, -w],
+        ], dtype=torch.float32)
+        return (self.directions @ vertices.T).max(dim=-1).values + self.margin
+
+    def _complement(self, box_lo, box_hi, rejected):
+        out, cursor = [], box_lo
+        for lo, hi in rejected:
+            if lo > cursor + 1e-9:
+                out.append((cursor, lo))
+            cursor = max(cursor, hi)
+        if cursor < box_hi - 1e-9:
+            out.append((cursor, box_hi))
+        return out
+
+    def test_pinned_regime_at_default_envelope(self):
+        # Default Mode-C envelope (w 0.70, margin 0.02): the resting pins fit, so
+        # the rejection is the reference-pinned per-axis sweep at the pins. The
+        # LB_HAA band (0.98, 2.63) is the recorded rev-8 value.
+        result = KE.haa_rejection_ranges(
+            self.kin, self.capsules, self.directions, self._allowed(0.70),
+            self.lower, self.upper, self.pins, self.haa_indices,
+        )
+        self.assertEqual(result.mode, "pinned")
+        self.assertTrue(result.pins_feasible)
+        lb = result.per_haa_joint_intervals[0]  # LB_HAA
+        self.assertEqual(len(lb), 1)
+        self.assertAlmostEqual(lb[0][0], 0.98, delta=0.03)
+        self.assertAlmostEqual(lb[0][1], 2.63, delta=0.03)
+        # Byte-identical to the reference-pinned sweep at the exact pins.
+        rej = KE.joint_rejection_ranges(
+            self.kin, self.capsules, self.directions, self._allowed(0.70),
+            self.lower, self.upper, self.pins, steps=201,
+        )
+        for idx in self.haa_indices:
+            self.assertEqual(
+                result.per_haa_joint_intervals[idx], tuple(rej.rejected_intervals[idx]))
+
+    def test_fold_regime_at_narrow_width(self):
+        # w 0.30: the extended pins no longer fit, but a real mammal folds its
+        # legs in via HAA, so the rejection is the existential projection over
+        # the 6-D HAA box: the tuck |HAA| > ~1.57 side is accessible, the band
+        # is NOT full range, and magenta+amber tile [-3,3] per leg.
+        result = KE.haa_rejection_ranges(
+            self.kin, self.capsules, self.directions, self._allowed(0.30),
+            self.lower, self.upper, self.pins, self.haa_indices,
+        )
+        self.assertEqual(result.mode, "fold")
+        self.assertFalse(result.pins_feasible)
+        for idx in self.haa_indices:
+            self.assertNotEqual(result.per_haa_joint_intervals[idx], ((-3.0, 3.0),))
+        tuck_accessible = any(
+            all(not (lo < -1.6 and hi > 1.6) for lo, hi in result.per_haa_joint_intervals[idx])
+            for idx in self.haa_indices
+        )
+        self.assertTrue(tuck_accessible)
+        for idx in self.haa_indices:
+            iv = result.per_haa_joint_intervals[idx]
+            union = sorted(iv + tuple(self._complement(-3.0, 3.0, iv)))
+            merged = []
+            for lo, hi in union:
+                if merged and lo <= merged[-1][1] + 1e-6:
+                    merged[-1][1] = max(merged[-1][1], hi)
+                else:
+                    merged.append([lo, hi])
+            self.assertEqual(len(merged), 1)
+            self.assertAlmostEqual(merged[0][0], -3.0, delta=1e-3)
+            self.assertAlmostEqual(merged[0][1], 3.0, delta=1e-3)
+
+    def test_none_regime_at_tiny_width(self):
+        # w 0.20: the envelope is smaller than the body, no HAA tuple fits at
+        # all, so every HAA row is the full mechanical range (honest answer).
+        result = KE.haa_rejection_ranges(
+            self.kin, self.capsules, self.directions, self._allowed(0.20),
+            self.lower, self.upper, self.pins, self.haa_indices,
+        )
+        self.assertEqual(result.mode, "none")
+        self.assertFalse(result.pins_feasible)
+        for idx in self.haa_indices:
+            self.assertEqual(result.per_haa_joint_intervals[idx], ((-3.0, 3.0),))
+
+
+class TestLegRejectionRanges(unittest.TestCase):
+    """Per-leg rejection triples existential over the leg's other two joints."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.kin = KE.BatchedUrdfKinematics(KE.load_urdf_joints(URDF))
+        cls.directions = KE.support_directions(32)
+        cls.capsules = KE.default_el4090_capsules()
+        cls.lower = torch.full((18,), -0.4)
+        cls.upper = torch.full((18,), 0.4)
+        cls.reference = torch.zeros(18)
+        cls.base_support = KE.capsule_support(
+            cls.kin, cls.reference.unsqueeze(0), cls.capsules, cls.directions,
+        )[0]
+
+    def test_loose_envelope_rejects_nothing(self):
+        result = KE.leg_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            self.base_support + 1.0, self.lower, self.upper, self.reference,
+        )
+        self.assertTrue(result.feasible_reference)
+        for leg in range(6):
+            for kind in ("HAA", "HFE", "KFE"):
+                self.assertEqual(result.per_leg_intervals[leg][kind], ())
+
+    def test_tight_envelope_reports_per_leg_intervals(self):
+        result = KE.leg_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            self.base_support + 0.02, self.lower, self.upper, self.reference,
+        )
+        self.assertTrue(result.feasible_reference)
+        self.assertTrue(torch.allclose(result.reference_q, torch.zeros(18)))
+        any_rejected = any(
+            result.per_leg_intervals[leg][kind]
+            for leg in range(6) for kind in ("HAA", "HFE", "KFE")
+        )
+        self.assertTrue(any_rejected)
+        for leg in range(6):
+            for kind in ("HAA", "HFE", "KFE"):
+                for lo, hi in result.per_leg_intervals[leg][kind]:
+                    self.assertLessEqual(lo, hi)
+                    self.assertGreaterEqual(lo, float(self.lower[leg]) - 1e-6)
+                    self.assertLessEqual(hi, float(self.upper[leg]) + 1e-6)
+
+    def test_no_feasible_reference_returns_marker(self):
+        result = KE.leg_rejection_ranges(
+            self.kin, self.capsules, self.directions,
+            self.base_support - 0.001, self.lower, self.upper, self.reference,
+        )
+        self.assertFalse(result.feasible_reference)
+        self.assertIsNone(result.reference_q)
+        for leg in range(6):
+            for kind in ("HAA", "HFE", "KFE"):
+                self.assertEqual(result.per_leg_intervals[leg][kind], ())
+
+
 if __name__ == "__main__":
     unittest.main()

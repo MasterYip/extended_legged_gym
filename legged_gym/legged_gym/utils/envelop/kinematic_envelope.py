@@ -1,13 +1,69 @@
 """Batched Torch kinematics and capsule support envelopes for EL4090.
 
-The module deliberately keeps two models separate:
+Model math
+----------
+The occupied-body proxy is a union of ``L`` capsules attached to URDF links.
+For a joint configuration ``q`` and a fixed unit direction ``u_k`` the occupied
+support is
 
-* occupied-body support uses conservative capsule proxies for robot links;
-* reachable-foot support uses sampled forward-kinematic foot positions.
+    h_kl(q) = max( u_k . a_l(q), u_k . b_l(q) ) + r_l,
+    h_k^occ(q) = max_l h_kl(q),
+
+the max over the two transformed planar endpoints of capsule ``l`` plus its
+radius (``capsule_support`` over ``support_directions``).  The induced
+finite-normal polytope is
+
+    P_K(q) = { p in R^2 : u_k . p <= h_k^occ(q),  k = 0..K-1 },
+
+a polygonal outer approximation of the capsule union (a convex hull proxy, not a
+mesh-complete robot model).  A pose is envelope-feasible iff
+``h_k^occ(q) <= allowed_support[k] + tolerance`` for every ``k``.
+
+Rejection semantics
+-------------------
+The per-joint rejection describes the complement of the envelope-feasible joint
+set ``R = { q in B : support(q) <= allowed_support + tolerance }`` (with ``B``
+the per-joint URDF mechanical box) projected onto each joint axis:
+
+* reference-pinned ``P^ref``: ``joint_rejection_ranges`` sweeps each joint with
+  every other joint pinned at a validated feasible reference ``r``, rejecting
+  ``q_j`` when ``support((q_j, r_-j)) > allowed_support + tolerance``.  This is
+  conservative: a value may still be reachable by moving the other joints.
+* existential ``P^ex``: ``haa_rejection_ranges`` and ``leg_rejection_ranges``
+  reject a joint value only when NO configuration of a free joint group (the
+  six HAA joints, or the same leg's other two joints) keeps the body inside the
+  envelope.  Both share the sampling/projection helper
+  ``_existential_projection_rejection``.
 
 Capsules are an explicit approximation of link meshes.  A zero violation rate
 therefore means conservative only with respect to the registered validation
 samples and capsule model, not collision completeness for the physical robot.
+
+File map
+--------
+constants .............. ``EL4090_JOINT_NAMES``, ``EL4090_LEG_NAMES``,
+                         ``LEGACY_HAA_ORDER``
+dataclasses ............ frozen proxy / result records, including the
+                         rejection result types
+URDF loading ........... ``load_urdf_joints``
+rotations/kinematics ... ``BatchedUrdfKinematics`` (+ private transform helpers)
+capsule models ......... ``default_el4090_capsules``,
+                         ``default_el4090_torso_capsules``
+support/envelope math .. ``support_directions``, ``capsule_support``,
+                         ``foot_positions``, ``point_violations``,
+                         ``contains_points``, ``add_support_margin``,
+                         ``reachable_foot_support``
+range export ........... ``export_sample_bounding_ranges``,
+                         ``export_envelope_joint_ranges``
+reference selection .... ``feasible_reference_q``
+per-axis sweep/rejection ``_sweep_feasible_at_reference``,
+                         ``export_envelope_joint_ranges_at_reference``,
+                         ``joint_rejection_ranges``
+existential rejection .. ``haa_rejection_ranges``, ``leg_rejection_ranges``
+sampling ............... ``deterministic_joint_samples``
+legacy observation ..... ``legacy_condition_from_support``,
+                         ``haa_ranges_from_joint_export``,
+                         ``append_legacy_envelop2_observation``
 """
 
 from __future__ import annotations
@@ -22,6 +78,8 @@ import torch
 from torch import Tensor
 
 
+# --- constants ---------------------------------------------------------------
+
 EL4090_JOINT_NAMES: Tuple[str, ...] = (
     "LB_HAA", "LB_HFE", "LB_KFE", "LF_HAA", "LF_HFE", "LF_KFE",
     "LM_HAA", "LM_HFE", "LM_KFE", "RB_HAA", "RB_HFE", "RB_KFE",
@@ -29,7 +87,10 @@ EL4090_JOINT_NAMES: Tuple[str, ...] = (
 )
 EL4090_LEG_NAMES: Tuple[str, ...] = ("LB", "LF", "LM", "RB", "RF", "RM")
 LEGACY_HAA_ORDER: Tuple[str, ...] = ("RF", "RM", "RB", "LF", "LM", "LB")
+_JOINT_KINDS: Tuple[str, ...] = ("HAA", "HFE", "KFE")
 
+
+# --- dataclasses -------------------------------------------------------------
 
 @dataclass(frozen=True)
 class UrdfJoint:
@@ -98,6 +159,83 @@ class EnvelopeJointRangeExport:
     diagnostics: EnvelopeRangeDiagnostics
 
 
+@dataclass(frozen=True)
+class JointRejectionRanges:
+    """Per-joint rejected sub-intervals of an exported joint box.
+
+    ``feasible_reference`` is False when no validated feasible reference pose
+    could be found (an empty NaN box, or an envelope so tight that neither
+    ``reference_q`` nor the exported box center is envelope-feasible). In that
+    case ``rejected_intervals`` is a tuple of empty tuples and the summary
+    fields are zeroed, so callers can render a clean "not applicable".
+    """
+
+    feasible_reference: bool
+    reference_source: str
+    reference_q: Optional[Tensor]
+    rejected_intervals: Tuple[Tuple[Tuple[float, float], ...], ...]
+    rejected_joint_count: int
+    max_rejected_span_rad: float
+    max_rejected_joint_index: int
+
+    def to_evidence_dict(self, joint_names: Sequence[str] = EL4090_JOINT_NAMES) -> dict:
+        """Return a JSON-serializable evidence record for the viewer examples."""
+        return {
+            "feasible_reference": self.feasible_reference,
+            "reference_source": self.reference_source,
+            "reference_q_rad": (
+                self.reference_q.detach().cpu().tolist()
+                if self.reference_q is not None else None
+            ),
+            "per_joint_intervals_rad": [
+                [list(interval) for interval in joint]
+                for joint in self.rejected_intervals
+            ],
+            "rejected_joint_count": self.rejected_joint_count,
+            "max_rejected_span_rad": self.max_rejected_span_rad,
+            "max_rejected_joint_index": self.max_rejected_joint_index,
+            "max_rejected_joint_name": (
+                joint_names[self.max_rejected_joint_index]
+                if self.max_rejected_joint_index >= 0 else None
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class HaARejectionRanges:
+    """Per-leg HAA rejected sub-intervals over the 6-D HAA box.
+
+    ``mode`` is ``"pinned"`` when the exact HFE/KFE pins are envelope-feasible
+    (the rejection is the reference-pinned per-axis sweep at the pins),
+    ``"fold"`` when the pins are infeasible but some fold of the six HAA joints
+    keeps the body inside the envelope (a leg's HAA value is rejected only when
+    NO fold of the other legs' HAA fits), or ``"none"`` when no HAA tuple fits
+    at all (every HAA row is the full mechanical range). ``pins_feasible`` is
+    True exactly in the ``"pinned"`` mode.
+    """
+
+    mode: str
+    per_haa_joint_intervals: Dict[int, Tuple[Tuple[float, float], ...]]
+    pins_feasible: bool
+
+
+@dataclass(frozen=True)
+class LegRejectionRanges:
+    """Per-leg rejection triples existential over the leg's other two joints.
+
+    ``feasible_reference`` is False when no validated feasible reference pose
+    could be found; in that case ``per_leg_intervals`` holds empty tuples for
+    every leg/joint and ``reference_q`` is None.
+    """
+
+    feasible_reference: bool
+    reference_source: str
+    reference_q: Optional[Tensor]
+    per_leg_intervals: Dict[int, Dict[str, Tuple[Tuple[float, float], ...]]]
+
+
+# --- URDF loading ------------------------------------------------------------
+
 def _vec(text: Optional[str], default: Sequence[float]) -> Tuple[float, float, float]:
     values = default if text is None else tuple(float(value) for value in text.split())
     if len(values) != 3:
@@ -128,6 +266,8 @@ def load_urdf_joints(path: Path | str) -> Tuple[UrdfJoint, ...]:
         )
     return tuple(joints)
 
+
+# --- rotations and batched kinematics ----------------------------------------
 
 def _rpy_matrix(rpy: Tensor) -> Tensor:
     roll, pitch, yaw = rpy.unbind(-1)
@@ -246,6 +386,8 @@ class BatchedUrdfKinematics:
         return torch.einsum("...lij,lpj->...lpi", rotation, points) + translation.unsqueeze(-2)
 
 
+# --- capsule models ----------------------------------------------------------
+
 def default_el4090_capsules() -> Tuple[CapsuleProxy, ...]:
     """Explicit low-cost link proxies calibrated from EL4090 URDF joint spans."""
     proxies = [CapsuleProxy("base_x", "BASE", (-0.45, 0.0, 0.0), (0.45, 0.0, 0.0), 0.12)]
@@ -267,6 +409,8 @@ def default_el4090_torso_capsules() -> Tuple[CapsuleProxy, ...]:
     leg reach."""
     return default_el4090_capsules()[:1]
 
+
+# --- support and envelope math -----------------------------------------------
 
 def support_directions(
     count: int,
@@ -333,6 +477,8 @@ def reachable_foot_support(
     projected = torch.einsum("...sli,ki->...slk", feet[..., :2], directions)
     return projected.amax(dim=(-3, -2))
 
+
+# --- range export ------------------------------------------------------------
 
 def export_sample_bounding_ranges(
     feasible_samples: Tensor,
@@ -481,47 +627,7 @@ def export_envelope_joint_ranges(
     )
 
 
-def _sweep_feasible_at_reference(
-    kinematics: BatchedUrdfKinematics,
-    capsules: Sequence[CapsuleProxy],
-    directions: Tensor,
-    allowed_support: Tensor,
-    lower: Tensor,
-    upper: Tensor,
-    reference_q: Tensor,
-    *,
-    tolerance: float = 1e-6,
-    steps: int = 101,
-) -> Tuple[Tensor, Tensor]:
-    """Sweep each joint linearly over ``[lower, upper]`` with the other joints
-    pinned at ``reference_q`` and return the per-sweep envelope-feasibility mask.
-
-    Returns ``(sweep_values, feasible)`` with shape ``[J, steps]`` where
-    ``sweep_values[j, s]`` is the value of joint ``j`` at sweep step ``s`` and
-    ``feasible[j, s]`` is whether that pose stays inside ``allowed_support``.
-    This is the same 1-D scan ``joint_rejection_ranges`` applies, shared so the
-    per-axis export and the rejection intervals always come from one sweep.
-    """
-    num_joints = kinematics.num_dof
-    lower = lower.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
-    upper = upper.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
-    allowed = allowed_support.to(dtype=reference_q.dtype, device=reference_q.device)
-    base = reference_q.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
-    alpha = torch.linspace(0.0, 1.0, steps, dtype=lower.dtype, device=lower.device)
-    sweep_values = lower.unsqueeze(1) + alpha.unsqueeze(0) * (upper - lower).unsqueeze(1)
-    sweep_q = base.unsqueeze(0).unsqueeze(0).expand(num_joints, steps, num_joints).clone()
-    diagonal = torch.arange(num_joints, device=lower.device)
-    sweep_q[diagonal, :, diagonal] = sweep_values
-    support = capsule_support(kinematics, sweep_q, capsules, directions)
-    feasible = (support <= allowed.unsqueeze(0).unsqueeze(0) + tolerance).all(dim=-1)
-    # The reference pose itself is envelope-feasible (callers validate it), so
-    # the grid point nearest its value on each axis must also count as feasible;
-    # otherwise an off-grid reference could export NaN on an axis or be reported
-    # as "rejected" purely from grid spacing.
-    nearest = (sweep_values - base.unsqueeze(1)).abs().argmin(dim=-1)
-    feasible[torch.arange(num_joints, device=base.device), nearest] = True
-    return sweep_values, feasible
-
+# --- reference selection -----------------------------------------------------
 
 def feasible_reference_q(
     kinematics: BatchedUrdfKinematics,
@@ -570,6 +676,50 @@ def feasible_reference_q(
             distance = (feasible_q - base.unsqueeze(0)).abs().amax(dim=-1)
             return feasible_q[distance.argmin()], "nearest feasible candidate"
     return None, "none"
+
+
+# --- per-axis sweep and reference-pinned rejection ----------------------------
+
+def _sweep_feasible_at_reference(
+    kinematics: BatchedUrdfKinematics,
+    capsules: Sequence[CapsuleProxy],
+    directions: Tensor,
+    allowed_support: Tensor,
+    lower: Tensor,
+    upper: Tensor,
+    reference_q: Tensor,
+    *,
+    tolerance: float = 1e-6,
+    steps: int = 101,
+) -> Tuple[Tensor, Tensor]:
+    """Sweep each joint linearly over ``[lower, upper]`` with the other joints
+    pinned at ``reference_q`` and return the per-sweep envelope-feasibility mask.
+
+    Returns ``(sweep_values, feasible)`` with shape ``[J, steps]`` where
+    ``sweep_values[j, s]`` is the value of joint ``j`` at sweep step ``s`` and
+    ``feasible[j, s]`` is whether that pose stays inside ``allowed_support``.
+    This is the same 1-D scan ``joint_rejection_ranges`` applies, shared so the
+    per-axis export and the rejection intervals always come from one sweep.
+    """
+    num_joints = kinematics.num_dof
+    lower = lower.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    upper = upper.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    allowed = allowed_support.to(dtype=reference_q.dtype, device=reference_q.device)
+    base = reference_q.reshape(-1).to(dtype=reference_q.dtype, device=reference_q.device)
+    alpha = torch.linspace(0.0, 1.0, steps, dtype=lower.dtype, device=lower.device)
+    sweep_values = lower.unsqueeze(1) + alpha.unsqueeze(0) * (upper - lower).unsqueeze(1)
+    sweep_q = base.unsqueeze(0).unsqueeze(0).expand(num_joints, steps, num_joints).clone()
+    diagonal = torch.arange(num_joints, device=lower.device)
+    sweep_q[diagonal, :, diagonal] = sweep_values
+    support = capsule_support(kinematics, sweep_q, capsules, directions)
+    feasible = (support <= allowed.unsqueeze(0).unsqueeze(0) + tolerance).all(dim=-1)
+    # The reference pose itself is envelope-feasible (callers validate it), so
+    # the grid point nearest its value on each axis must also count as feasible;
+    # otherwise an off-grid reference could export NaN on an axis or be reported
+    # as "rejected" purely from grid spacing.
+    nearest = (sweep_values - base.unsqueeze(1)).abs().argmin(dim=-1)
+    feasible[torch.arange(num_joints, device=base.device), nearest] = True
+    return sweep_values, feasible
 
 
 def export_envelope_joint_ranges_at_reference(
@@ -697,48 +847,6 @@ def export_envelope_joint_ranges_at_reference(
     )
 
 
-@dataclass(frozen=True)
-class JointRejectionRanges:
-    """Per-joint rejected sub-intervals of an exported joint box.
-
-    ``feasible_reference`` is False when no validated feasible reference pose
-    could be found (an empty NaN box, or an envelope so tight that neither
-    ``reference_q`` nor the exported box center is envelope-feasible). In that
-    case ``rejected_intervals`` is a tuple of empty tuples and the summary
-    fields are zeroed, so callers can render a clean "not applicable".
-    """
-
-    feasible_reference: bool
-    reference_source: str
-    reference_q: Optional[Tensor]
-    rejected_intervals: Tuple[Tuple[Tuple[float, float], ...], ...]
-    rejected_joint_count: int
-    max_rejected_span_rad: float
-    max_rejected_joint_index: int
-
-    def to_evidence_dict(self, joint_names: Sequence[str] = EL4090_JOINT_NAMES) -> dict:
-        """Return a JSON-serializable evidence record for the viewer examples."""
-        return {
-            "feasible_reference": self.feasible_reference,
-            "reference_source": self.reference_source,
-            "reference_q_rad": (
-                self.reference_q.detach().cpu().tolist()
-                if self.reference_q is not None else None
-            ),
-            "per_joint_intervals_rad": [
-                [list(interval) for interval in joint]
-                for joint in self.rejected_intervals
-            ],
-            "rejected_joint_count": self.rejected_joint_count,
-            "max_rejected_span_rad": self.max_rejected_span_rad,
-            "max_rejected_joint_index": self.max_rejected_joint_index,
-            "max_rejected_joint_name": (
-                joint_names[self.max_rejected_joint_index]
-                if self.max_rejected_joint_index >= 0 else None
-            ),
-        }
-
-
 def _contiguous_true_runs(mask: Tensor) -> Tuple[Tuple[int, int], ...]:
     """Return inclusive index runs of True values in a one-dimensional mask."""
     if mask.ndim != 1:
@@ -864,6 +972,240 @@ def joint_rejection_ranges(
     )
 
 
+# --- existential (fold) rejection --------------------------------------------
+
+def _existential_projection_rejection(
+    kinematics: BatchedUrdfKinematics,
+    capsules: Sequence[CapsuleProxy],
+    directions: Tensor,
+    allowed_support: Tensor,
+    lower: Tensor,
+    upper: Tensor,
+    base: Tensor,
+    free_joint_indices: Sequence[int],
+    target_joint_indices: Sequence[int],
+    *,
+    tolerance: float = 1e-6,
+    samples: int = 65536,
+    bins: int = 257,
+    min_rej_span: float = 0.03,
+    seed: int = 4090,
+) -> Optional[Dict[int, Tuple[Tuple[float, float], ...]]]:
+    """Existential projection of the feasible joint set onto target axes.
+
+    Samples the box of ``free_joint_indices`` (all other joints pinned at
+    ``base``) with deterministic scrambled Sobol points, marks the
+    envelope-feasible subset, then for every target joint returns the rejected
+    sub-intervals: the complement (within the joint's ``[lower, upper]`` box)
+    of the feasible cloud's projection onto that axis, binned into ``bins``
+    bins, with sampling-noise slivers narrower than ``min_rej_span`` dropped.
+    Returns ``None`` when no sampled free-box point is feasible at all.
+    """
+    free_indices = list(free_joint_indices)
+    target_indices = list(target_joint_indices)
+    lo = torch.stack([lower[i] for i in free_indices]).to(dtype=base.dtype, device=base.device)
+    hi = torch.stack([upper[i] for i in free_indices]).to(dtype=base.dtype, device=base.device)
+    engine = torch.quasirandom.SobolEngine(len(free_indices), scramble=True, seed=seed)
+    pts = lo + engine.draw(samples).to(dtype=lo.dtype, device=lo.device) * (hi - lo)  # [N, len(free)]
+    poses = base.repeat(samples, 1)
+    poses[:, free_indices] = pts
+    allowed = allowed_support.to(dtype=poses.dtype, device=poses.device)
+    support = capsule_support(kinematics, poses, capsules, directions)
+    feasible = (support <= allowed.unsqueeze(0) + tolerance).all(dim=-1)
+    if not bool(feasible.any().item()):
+        return None
+    fpts = pts[feasible]
+
+    intervals: Dict[int, Tuple[Tuple[float, float], ...]] = {}
+    for idx in target_indices:
+        col = free_indices.index(idx)
+        vals = fpts[:, col].contiguous()
+        box_lo = float(lower[idx].item())
+        box_hi = float(upper[idx].item())
+        edges = torch.linspace(box_lo, box_hi, bins + 1, dtype=vals.dtype, device=vals.device)
+        acc = torch.zeros(bins, dtype=torch.bool, device=vals.device)
+        bucket = torch.bucketize(vals, edges, right=False).clamp(0, bins - 1)
+        acc[bucket] = True
+        # contiguous accessible runs -> rejection = complement within the box
+        runs: list[Tuple[int, int]] = []
+        in_acc = False
+        start = 0
+        for s in range(bins):
+            if acc[s] and not in_acc:
+                start = s
+                in_acc = True
+            if not acc[s] and in_acc:
+                runs.append((start, s - 1))
+                in_acc = False
+        if in_acc:
+            runs.append((start, bins - 1))
+        rej: list[Tuple[float, float]] = []
+        cursor = box_lo
+        for sa, ea in runs:
+            a_lo = float(edges[sa].item())
+            a_hi = float(edges[ea + 1].item())
+            if a_lo > cursor + 1e-9:
+                rej.append((cursor, a_lo))
+            cursor = max(cursor, a_hi)
+        if cursor < box_hi - 1e-9:
+            rej.append((cursor, box_hi))
+        rej = [(a, b) for a, b in rej if b - a >= min_rej_span]
+        intervals[idx] = tuple(rej)
+    return intervals
+
+
+def haa_rejection_ranges(
+    kinematics: BatchedUrdfKinematics,
+    capsules: Sequence[CapsuleProxy],
+    directions: Tensor,
+    allowed_support: Tensor,
+    lower: Tensor,
+    upper: Tensor,
+    pinned: Tensor,
+    haa_joint_indices: Sequence[int],
+    *,
+    tolerance: float = 1e-6,
+    sweep_steps: int = 201,
+    fold_samples: int = 65536,
+    fold_bins: int = 257,
+    min_rej_span: float = 0.03,
+) -> HaARejectionRanges:
+    """Per-leg HAA rejection over the 6-D HAA box (pinned / fold / none).
+
+    The HFE/KFE pins are honored exactly.  When the pinned pose is
+    envelope-feasible the rejection is the reference-pinned per-axis sweep at
+    the pins (``joint_rejection_ranges``; mode ``"pinned"``).  When the pins are
+    infeasible but some fold of the six HAA joints fits, a leg's HAA value is
+    rejected only when NO fold of the other legs' HAA keeps the body inside
+    ``allowed_support + tolerance`` (existential projection; mode ``"fold"``).
+    When no HAA tuple fits at all every HAA row is the full mechanical range
+    (mode ``"none"``).  The fold sampling is deterministic scrambled Sobol
+    (seed 4090) so the intervals are reproducible.
+    """
+    haa_indices = list(haa_joint_indices)
+    allowed = allowed_support.to(dtype=pinned.dtype, device=pinned.device)
+    pins_support = capsule_support(
+        kinematics, pinned.unsqueeze(0), capsules, directions,
+    )[0]
+    pins_feasible = bool((pins_support <= allowed + tolerance).all().item())
+    if pins_feasible:
+        rej = joint_rejection_ranges(
+            kinematics, capsules, directions, allowed_support, lower, upper, pinned,
+            tolerance=tolerance, steps=sweep_steps,
+        )
+        per_joint = {idx: tuple(rej.rejected_intervals[idx]) for idx in haa_indices}
+        return HaARejectionRanges(
+            mode="pinned",
+            per_haa_joint_intervals=per_joint,
+            pins_feasible=True,
+        )
+    fold = _existential_projection_rejection(
+        kinematics, capsules, directions, allowed_support, lower, upper,
+        pinned, haa_indices, haa_indices,
+        tolerance=tolerance, samples=fold_samples, bins=fold_bins,
+        min_rej_span=min_rej_span, seed=4090,
+    )
+    full = {
+        idx: ((float(lower[idx].item()), float(upper[idx].item())),)
+        for idx in haa_indices
+    }
+    if fold is None or all(fold[idx] == full[idx] for idx in haa_indices):
+        return HaARejectionRanges(
+            mode="none",
+            per_haa_joint_intervals=full,
+            pins_feasible=False,
+        )
+    return HaARejectionRanges(
+        mode="fold",
+        per_haa_joint_intervals=fold,
+        pins_feasible=False,
+    )
+
+
+def leg_rejection_ranges(
+    kinematics: BatchedUrdfKinematics,
+    capsules: Sequence[CapsuleProxy],
+    directions: Tensor,
+    allowed_support: Tensor,
+    lower: Tensor,
+    upper: Tensor,
+    reference: Tensor,
+    *,
+    tolerance: float = 1e-6,
+    free_samples: int = 8192,
+    steps: int = 257,
+    min_rej_span: float = 0.03,
+    seed: int = 4090,
+) -> LegRejectionRanges:
+    """Per-leg rejection triples existential over the leg's other two joints.
+
+    For each leg the three joints are the free box (all other joints pinned at
+    the validated feasible ``reference``); a joint value ``v`` is rejected iff
+    no configuration ``(q_j=v, q_a, q_b)`` of the same leg's other two joints
+    keeps the body envelope-feasible.  The feasible free-box cloud is sampled
+    with deterministic scrambled Sobol and projected onto each of the leg's
+    three axes.  Returns a marker with ``feasible_reference=False`` when no
+    validated feasible reference exists.
+    """
+    num_joints = kinematics.num_dof
+    lower = lower.reshape(-1).to(dtype=reference.dtype, device=reference.device)
+    upper = upper.reshape(-1).to(dtype=reference.dtype, device=reference.device)
+    allowed = allowed_support.to(dtype=reference.dtype, device=reference.device)
+    if lower.numel() != num_joints or upper.numel() != num_joints or allowed.shape != (directions.shape[0],):
+        raise ValueError("lower/upper must have num_dof entries and allowed_support must match the directions")
+    empty = {
+        leg_index: {kind: () for kind in _JOINT_KINDS}
+        for leg_index in range(len(EL4090_LEG_NAMES))
+    }
+    if not bool(torch.isfinite(lower).all().item()) or not bool(torch.isfinite(upper).all().item()):
+        return LegRejectionRanges(
+            feasible_reference=False,
+            reference_source="none: exported box is empty (NaN)",
+            reference_q=None,
+            per_leg_intervals=empty,
+        )
+    base = reference.reshape(-1).to(dtype=reference.dtype, device=reference.device)
+    chosen, source = feasible_reference_q(
+        kinematics, capsules, directions, allowed, lower, upper, base,
+        tolerance=tolerance,
+    )
+    if chosen is None:
+        return LegRejectionRanges(
+            feasible_reference=False,
+            reference_source="no feasible reference among reference pose and box center",
+            reference_q=None,
+            per_leg_intervals=empty,
+        )
+    per_leg: Dict[int, Dict[str, Tuple[Tuple[float, float], ...]]] = {}
+    for leg_index, leg in enumerate(EL4090_LEG_NAMES):
+        leg_indices = [
+            EL4090_JOINT_NAMES.index(f"{leg}_{kind}") for kind in _JOINT_KINDS
+        ]
+        intervals = _existential_projection_rejection(
+            kinematics, capsules, directions, allowed_support, lower, upper,
+            chosen, leg_indices, leg_indices,
+            tolerance=tolerance, samples=free_samples, bins=steps,
+            min_rej_span=min_rej_span, seed=seed,
+        )
+        # The validated reference is itself a feasible free-box point, so in
+        # practice a feasible cloud always exists; guard a degenerate miss by
+        # reporting no rejected intervals for that leg.
+        if intervals is None:
+            intervals = {}
+        per_leg[leg_index] = {
+            kind: tuple(intervals.get(idx, ()))
+            for kind, idx in zip(_JOINT_KINDS, leg_indices)
+        }
+    return LegRejectionRanges(
+        feasible_reference=True,
+        reference_source=source,
+        reference_q=chosen,
+        per_leg_intervals=per_leg,
+    )
+
+
+# --- sampling -----------------------------------------------------------------
+
 def deterministic_joint_samples(
     lower: Tensor,
     upper: Tensor,
@@ -878,6 +1220,8 @@ def deterministic_joint_samples(
     interior = engine.draw(count - 2).to(dtype=lower.dtype, device=lower.device)
     return torch.cat((lower.unsqueeze(0), upper.unsqueeze(0), lower + interior * (upper - lower)), dim=0)
 
+
+# --- legacy observation -------------------------------------------------------
 
 def legacy_condition_from_support(
     occupied_support: Tensor,
