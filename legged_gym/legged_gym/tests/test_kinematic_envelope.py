@@ -719,6 +719,74 @@ class TestLegRejectionRanges(unittest.TestCase):
             for kind in ("HAA", "HFE", "KFE"):
                 self.assertEqual(result.per_leg_intervals[leg][kind], ())
 
+    def _allowed_hex(self, w):
+        """Hexagon ``(x_f,w_f),(0,w_m),(x_b,w_b)`` with x_f=0.75, x_b=-0.72,
+        margin 0.02 -- the Mode-C default envelope family."""
+        vertices = torch.tensor([
+            [0.75, w], [0.0, w], [-0.72, w], [-0.72, -w], [0.0, -w], [0.75, -w],
+        ], dtype=torch.float32)
+        return (self.directions @ vertices.T).max(dim=-1).values + 0.02
+
+    def _resting_pins(self):
+        reference = torch.zeros(18)
+        for leg in range(6):
+            reference[1 + 3 * leg] = 0.6
+            reference[2 + 3 * leg] = -0.6
+        return reference
+
+    def test_tight_envelope_with_fallback_finds_reference_and_intervals(self):
+        # At widths 0.30 the extended resting pins (HFE 0.6 / KFE -0.6) do not
+        # fit the envelope, so without fallback candidates the function returns
+        # a marker even though a folded reference EXISTS.  With
+        # ``fallback_candidates`` (matching ``joint_rejection_ranges``) the
+        # nearest feasible candidate is used and the per-leg rejection triples
+        # are produced where they matter.
+        lower, upper = self.kin.joint_limits(soft_fraction=1.0)
+        reference = self._resting_pins()
+        allowed = self._allowed_hex(0.30)
+        pins_support = KE.capsule_support(
+            self.kin, reference.unsqueeze(0), self.capsules, self.directions,
+        )[0]
+        self.assertFalse(torch.all(pins_support <= allowed + 1e-6))
+        fallback = KE.deterministic_joint_samples(lower, upper, 257, seed=4090)
+        result = KE.leg_rejection_ranges(
+            self.kin, self.capsules, self.directions, allowed,
+            lower, upper, reference, fallback_candidates=fallback,
+        )
+        self.assertTrue(result.feasible_reference)
+        self.assertEqual(result.reference_source, "nearest feasible candidate")
+        self.assertIsNotNone(result.reference_q)
+        any_rejected = any(
+            result.per_leg_intervals[leg][kind]
+            for leg in range(6) for kind in ("HAA", "HFE", "KFE")
+        )
+        self.assertTrue(any_rejected)
+        # The tuck |HAA| > ~1.57 side stays accessible for at least one leg.
+        tuck_accessible = any(
+            all(not (lo < -1.6 and hi > 1.6)
+                for lo, hi in result.per_leg_intervals[leg]["HAA"])
+            for leg in range(6)
+        )
+        self.assertTrue(tuck_accessible)
+
+    def test_tight_envelope_without_fallback_returns_marker(self):
+        # Documented behavior: at the same tight envelope, omitting
+        # ``fallback_candidates`` leaves only reference_q / box center (both
+        # the infeasible extended postures) and returns the honest marker.
+        lower, upper = self.kin.joint_limits(soft_fraction=1.0)
+        reference = self._resting_pins()
+        allowed = self._allowed_hex(0.30)
+        result = KE.leg_rejection_ranges(
+            self.kin, self.capsules, self.directions, allowed,
+            lower, upper, reference,
+        )
+        self.assertFalse(result.feasible_reference)
+        self.assertIsNone(result.reference_q)
+        self.assertIn("no feasible reference", result.reference_source)
+        for leg in range(6):
+            for kind in ("HAA", "HFE", "KFE"):
+                self.assertEqual(result.per_leg_intervals[leg][kind], ())
+
 
 if __name__ == "__main__":
     unittest.main()

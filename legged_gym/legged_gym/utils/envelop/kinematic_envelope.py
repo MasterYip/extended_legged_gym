@@ -1136,6 +1136,7 @@ def leg_rejection_ranges(
     steps: int = 257,
     min_rej_span: float = 0.03,
     seed: int = 4090,
+    fallback_candidates: Optional[Tensor] = None,
 ) -> LegRejectionRanges:
     """Per-leg rejection triples existential over the leg's other two joints.
 
@@ -1144,8 +1145,15 @@ def leg_rejection_ranges(
     no configuration ``(q_j=v, q_a, q_b)`` of the same leg's other two joints
     keeps the body envelope-feasible.  The feasible free-box cloud is sampled
     with deterministic scrambled Sobol and projected onto each of the leg's
-    three axes.  Returns a marker with ``feasible_reference=False`` when no
-    validated feasible reference exists.
+    three axes.
+
+    The reference must be envelope-feasible; like ``joint_rejection_ranges``,
+    ``reference`` is preferred and the exported box center ``0.5 * (lower +
+    upper)`` is the first fallback.  When neither fits, the nearest feasible
+    candidate sample is used when ``fallback_candidates`` is given (e.g.
+    ``deterministic_joint_samples(lower, upper, 257, seed=4090)``); otherwise a
+    marker with ``feasible_reference=False`` is returned and no intervals are
+    reported.
     """
     num_joints = kinematics.num_dof
     lower = lower.reshape(-1).to(dtype=reference.dtype, device=reference.device)
@@ -1167,12 +1175,16 @@ def leg_rejection_ranges(
     base = reference.reshape(-1).to(dtype=reference.dtype, device=reference.device)
     chosen, source = feasible_reference_q(
         kinematics, capsules, directions, allowed, lower, upper, base,
-        tolerance=tolerance,
+        tolerance=tolerance, fallback_candidates=fallback_candidates,
     )
     if chosen is None:
         return LegRejectionRanges(
             feasible_reference=False,
-            reference_source="no feasible reference among reference pose and box center",
+            reference_source=(
+                "no feasible reference among reference pose, box center, and candidate samples"
+                if fallback_candidates is not None
+                else "no feasible reference among reference pose and box center"
+            ),
             reference_q=None,
             per_leg_intervals=empty,
         )
