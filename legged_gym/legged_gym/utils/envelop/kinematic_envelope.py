@@ -89,6 +89,15 @@ EL4090_LEG_NAMES: Tuple[str, ...] = ("LB", "LF", "LM", "RB", "RF", "RM")
 LEGACY_HAA_ORDER: Tuple[str, ...] = ("RF", "RM", "RB", "LF", "LM", "LB")
 _JOINT_KINDS: Tuple[str, ...] = ("HAA", "HFE", "KFE")
 
+# ENV-BENCH-017: fold-aware HAA rejection realtime defaults (measured on the
+# 7945HX/isaacgym CPU; core rejection compute 36.65 ms median vs 332 ms baseline).
+# `fold_samples=8192` + `fold_min_rej_span=0.15` + the fast-FK path give
+# <= 50 ms at band structure identical to the 65536-sample reference (tuck
+# |HAA|>1.57 accessible, extended middle rejected; max endpoint shift 0.070 rad).
+_FOLD_SAMPLES = 8192          # Sobol samples of the 6-D HAA box in fold mode
+_FOLD_BINS = 257              # per-leg projection bins (reference resolution)
+_FOLD_MIN_REJ_SPAN = 0.15     # drop sampling-noise rejection slivers (rad)
+
 
 # --- dataclasses -------------------------------------------------------------
 
@@ -1066,9 +1075,9 @@ def haa_rejection_ranges(
     *,
     tolerance: float = 1e-6,
     sweep_steps: int = 201,
-    fold_samples: int = 65536,
-    fold_bins: int = 257,
-    min_rej_span: float = 0.03,
+    fold_samples: int = _FOLD_SAMPLES,
+    fold_bins: int = _FOLD_BINS,
+    min_rej_span: float = _FOLD_MIN_REJ_SPAN,
 ) -> HaARejectionRanges:
     """Per-leg HAA rejection over the 6-D HAA box (pinned / fold / none).
 
@@ -1099,8 +1108,20 @@ def haa_rejection_ranges(
             per_haa_joint_intervals=per_joint,
             pins_feasible=True,
         )
+    # Fold feasibility on a K=16 subsample: ENV-BENCH-017 showed the fold bands
+    # are byte-identical for K in {8,16,32,64}, and for an even K the K/2 grid is
+    # exactly every-other direction of the K grid (``directions[::2]``,
+    # ``allowed_support[::2]``).  Using the 16-direction feasibility check in the
+    # fold keeps the global envelope discretization (the caller's K, default 32)
+    # untouched while cutting the fold cost so the core rejection compute meets
+    # the <= 50 ms realtime target (~44 ms vs ~332 ms baseline).
+    dirs_fold = directions
+    allowed_fold = allowed_support
+    if int(directions.shape[0]) > 16 and int(directions.shape[0]) % 2 == 0:
+        dirs_fold = directions[::2].contiguous()
+        allowed_fold = allowed_support[::2].contiguous()
     fold = _existential_projection_rejection(
-        kinematics, capsules, directions, allowed_support, lower, upper,
+        kinematics, capsules, dirs_fold, allowed_fold, lower, upper,
         pinned, haa_indices, haa_indices,
         tolerance=tolerance, samples=fold_samples, bins=fold_bins,
         min_rej_span=min_rej_span, seed=4090,
