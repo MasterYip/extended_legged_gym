@@ -334,7 +334,14 @@ def play(args):
         if keyboard.fd is None:
             print("stdin 不是 TTY，键盘控制已禁用。")
 
-        for _ in range(int(env.max_episode_length * 10)):
+        total_steps = int(env.max_episode_length * 10)
+        if args.max_steps is not None:
+            if args.max_steps < 1:
+                raise ValueError("--max_steps must be at least 1")
+            total_steps = args.max_steps
+
+        completed_steps = 0
+        for _ in range(total_steps):
             step_start = time.time()
             for key in keyboard.read_keys():
                 if key == "\x1b":
@@ -414,6 +421,7 @@ def play(args):
             env.commands[:, 2] = command["yaw"]
             actions = policy(obs.detach())
             obs, _, _, dones, _ = env.step(actions.detach())
+            completed_steps += 1
             if torch.any(dones):
                 active_condition = _apply_envelope(env, active_condition)
                 env.compute_observations()
@@ -430,12 +438,22 @@ def play(args):
                 sleep_time = env.dt - (time.time() - step_start)
                 if sleep_time > 0:
                     time.sleep(sleep_time)
+        print(f"Completed playback steps: {completed_steps}")
     finally:
         keyboard.__exit__(None, None, None)
 
 
 if __name__ == "__main__":
     EXPORT_POLICY = False
-    FOLLOW_CAMERA = True
-    REALTIME_MODE = True
-    play(get_args())
+    args = get_args(
+        [
+            {
+                "name": "--max_steps",
+                "type": int,
+                "help": "Stop after this many simulation steps (default: interactive run).",
+            }
+        ]
+    )
+    FOLLOW_CAMERA = not args.headless
+    REALTIME_MODE = not args.headless
+    play(args)

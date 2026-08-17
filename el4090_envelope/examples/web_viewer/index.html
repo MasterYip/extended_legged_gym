@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>EL4090 · Occupied-Body Support Envelope — Instrument</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body data-style="refined">
+
+<header class="topbar">
+  <div class="nameplate">
+    <span class="brand">EL4090</span>
+    <span class="model">OCCUPIED-BODY SUPPORT ENVELOPE · INSTRUMENT</span>
+  </div>
+
+  <div class="mode-toggle" role="tablist" aria-label="explorer mode">
+    <button id="modeA" class="seg active" role="tab" aria-selected="true" data-mode="A">
+      <span class="seg-k">A</span><span class="seg-t">pose → envelope</span>
+    </button>
+    <button id="modeB" class="seg" role="tab" aria-selected="false" data-mode="B">
+      <span class="seg-k">B</span><span class="seg-t">envelope → rejection</span>
+    </button>
+    <button id="modeC" class="seg" role="tab" aria-selected="false" data-mode="C">
+      <span class="seg-k">C</span><span class="seg-t">HAA&nbsp;rejection</span>
+    </button>
+  </div>
+
+  <div class="view-toggle" role="group" aria-label="stage view">
+    <button id="viewTop" class="seg active" aria-pressed="true" data-view="topdown">
+      <span class="seg-k">⌖</span><span class="seg-t">top-down</span>
+    </button>
+    <button id="view3d" class="seg" aria-pressed="false" data-view="3d">
+      <span class="seg-k">◧</span><span class="seg-t">3D</span>
+    </button>
+  </div>
+
+  <div class="compute-toggle" role="group" aria-label="compute timing">
+    <span class="compute-label">Compute</span>
+    <button id="computeLive" class="seg" type="button" aria-pressed="false"
+            title="Recompute the envelope and rejection results continuously while dragging">Live</button>
+    <button id="computeRelease" class="seg active" type="button" aria-pressed="true"
+            title="Preview robot motion while dragging and recompute derived results after release">On release</button>
+  </div>
+
+  <label class="style-picker">
+    <span>Style</span>
+    <select id="styleSelect" aria-label="visual style">
+      <option value="refined" selected>Refined</option>
+      <option value="classic">Classic</option>
+    </select>
+  </label>
+
+  <div class="live">
+    <span class="led" id="led" aria-hidden="true"></span>
+    <span class="live-text" id="liveText">READY</span>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="deck" id="deck">
+
+    <section class="panel" id="ctrlA" aria-label="mode A controls">
+      <h2 class="panel-title">MODE A · ENVELOPE FROM POSE</h2>
+      <label class="ctl">
+        <span class="ctl-label">margin <span class="unit">m</span></span>
+        <span class="ctl-row"><input type="range" id="aMargin" min="0" max="0.5" step="0.005" value="0" /><output id="aMarginVal" class="val">0.000</output></span>
+      </label>
+      <label class="ctl">
+        <span class="ctl-label">K directions</span>
+        <span class="ctl-row"><input type="range" id="aK" min="8" max="64" step="1" value="32" /><output id="aKVal" class="val">32</output></span>
+      </label>
+      <div class="ctl">
+        <span class="ctl-label">capsule set</span>
+        <div class="seg group" id="aCapsule" role="group" aria-label="capsule set">
+          <button class="seg active" data-capsule="full">full 19</button>
+          <button class="seg" data-capsule="torso">torso</button>
+        </div>
+      </div>
+      <div class="ctl checks">
+        <label class="check"><input type="checkbox" id="aLegacy" checked="checked" /><span>legacy 5-param overlay</span></label>
+        <label class="check"><input type="checkbox" id="aReach" checked="checked" /><span>reachable-foot overlay</span></label>
+      </div>
+      <div class="ctl">
+        <span class="ctl-label">presets</span>
+        <div class="preset-row" id="presetRow">
+          <button class="chip" data-preset="spider">spider</button>
+          <button class="chip" data-preset="mammal">mammal</button>
+          <button class="chip" data-preset="wide-low">wide-low</button>
+          <button class="chip" data-preset="tuck">tuck</button>
+          <button class="chip" data-preset="zero">zero</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="ctrlB" aria-label="mode B controls">
+      <h2 class="panel-title">MODE B · ENVELOPE → REJECTION</h2>
+      <div class="env-grid">
+        <label class="ctl">
+          <span class="ctl-label">w<sub>f</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="bWf" min="0.10" max="1.00" step="0.005" value="0.70" /><output id="bWfVal" class="val">0.700</output></span>
+        </label>
+        <label class="ctl">
+          <span class="ctl-label">w<sub>m</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="bWm" min="0.10" max="1.00" step="0.005" value="0.70" /><output id="bWmVal" class="val">0.700</output></span>
+        </label>
+        <label class="ctl">
+          <span class="ctl-label">w<sub>b</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="bWb" min="0.10" max="1.00" step="0.005" value="0.70" /><output id="bWbVal" class="val">0.700</output></span>
+        </label>
+        <label class="ctl">
+          <span class="ctl-label">x<sub>f</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="bXf" min="0.10" max="1.00" step="0.005" value="0.75" /><output id="bXfVal" class="val">0.750</output></span>
+        </label>
+        <label class="ctl">
+          <span class="ctl-label">x<sub>b</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="bXb" min="-1.00" max="-0.10" step="0.005" value="-0.72" /><output id="bXbVal" class="val">-0.720</output></span>
+        </label>
+      </div>
+      <label class="ctl">
+        <span class="ctl-label">margin <span class="unit">m</span></span>
+        <span class="ctl-row"><input type="range" id="bMargin" min="0" max="0.30" step="0.005" value="0.02" /><output id="bMarginVal" class="val">0.020</output></span>
+      </label>
+      <label class="ctl">
+        <span class="ctl-label">K directions</span>
+        <span class="ctl-row"><input type="range" id="bK" min="8" max="64" step="1" value="32" /><output id="bKVal" class="val">32</output></span>
+      </label>
+      <div class="ctl">
+        <span class="ctl-label">capsule set</span>
+        <div class="seg group" id="bCapsule" role="group" aria-label="capsule set">
+          <button class="seg active" data-capsule="full">full 19</button>
+          <button class="seg" data-capsule="torso">torso</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="ctl-label">reference pose</span>
+        <div class="seg group" id="bReference" role="group" aria-label="reference pose">
+          <button class="seg active" data-ref="resting">resting</button>
+          <button class="seg" data-ref="custom">joint sliders</button>
+        </div>
+      </div>
+      <div class="ctl checks">
+        <label class="check"><input type="checkbox" id="bRejected" checked="checked" /><span class="sw mag">▮</span><span>rejected bands</span></label>
+        <label class="check"><input type="checkbox" id="bAccessible" checked="checked" /><span class="sw amb">▮</span><span>accessible HAA arcs</span></label>
+        <label class="check"><input type="checkbox" id="bAnimate" checked="checked" /><span class="sw">◍</span><span>sweep animation</span></label>
+      </div>
+      <details class="deck-help">
+        <summary>Method note</summary>
+        <p class="deck-note" id="bNote">Rejection is pinned to the chosen reference pose. Each joint is swept over its full URDF range ±3 rad with the other joints fixed; the magenta bands are where the swept body leaves the allowed envelope. The sweep animation moves a marker along each rejected interval's true foot trajectory.</p>
+      </details>
+    </section>
+
+    <section class="panel hidden" id="ctrlC" aria-label="mode C controls">
+      <h2 class="panel-title">MODE C · HAA REJECTION</h2>
+      <div class="env-grid">
+        <label class="ctl">
+          <span class="ctl-label">w<sub>f</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="cWf" min="0.10" max="1.00" step="0.005" value="0.70" /><output id="cWfVal" class="val">0.700</output></span>
+        </label>
+        <label class="ctl">
+          <span class="ctl-label">w<sub>m</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="cWm" min="0.10" max="1.00" step="0.005" value="0.70" /><output id="cWmVal" class="val">0.700</output></span>
+        </label>
+        <label class="ctl">
+          <span class="ctl-label">w<sub>b</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="cWb" min="0.10" max="1.00" step="0.005" value="0.70" /><output id="cWbVal" class="val">0.700</output></span>
+        </label>
+        <label class="ctl">
+          <span class="ctl-label">x<sub>f</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="cXf" min="0.10" max="1.00" step="0.005" value="0.75" /><output id="cXfVal" class="val">0.750</output></span>
+        </label>
+        <label class="ctl">
+          <span class="ctl-label">x<sub>b</sub> <span class="unit">m</span></span>
+          <span class="ctl-row"><input type="range" id="cXb" min="-1.00" max="-0.10" step="0.005" value="-0.72" /><output id="cXbVal" class="val">-0.720</output></span>
+        </label>
+      </div>
+      <label class="ctl">
+        <span class="ctl-label">margin <span class="unit">m</span></span>
+        <span class="ctl-row"><input type="range" id="cMargin" min="0" max="0.30" step="0.005" value="0.02" /><output id="cMarginVal" class="val">0.020</output></span>
+      </label>
+      <label class="ctl">
+        <span class="ctl-label">K directions</span>
+        <span class="ctl-row"><input type="range" id="cK" min="8" max="64" step="1" value="32" /><output id="cKVal" class="val">32</output></span>
+      </label>
+      <div class="ctl">
+        <span class="ctl-label">capsule set</span>
+        <div class="seg group" id="cCapsule" role="group" aria-label="capsule set">
+          <button class="seg active" data-capsule="full">full&nbsp;19</button>
+          <button class="seg" data-capsule="torso">torso</button>
+        </div>
+      </div>
+      <div class="ctl checks">
+        <label class="check"><input type="checkbox" id="cRejected" checked="checked" /><span class="sw mag">▮</span><span>rejected HAA bands</span></label>
+        <label class="check"><input type="checkbox" id="cAccessible" checked="checked" /><span class="sw amb">▮</span><span>accessible HAA arcs</span></label>
+        <label class="check"><input type="checkbox" id="cAnimate" checked="checked" /><span class="sw">◍</span><span>sweep animation</span></label>
+      </div>
+      <details class="deck-help">
+        <summary>Method note</summary>
+        <p class="deck-note" id="cNote">HAA is swept with each leg's HFE/KFE pinned at the <b>JOINT POSE</b> rack values. Drag <b>HFE/KFE</b> to move the rejection band; drag <b>HAA</b> to check a value — the marker rides the band (magenta = rejected, amber = accessible). When the envelope narrows, folding is the natural response: the rejection accounts for the legs folding in via HAA, so the tuck |HAA| ≳ 1.6 shows up as accessible on its own (HFE/KFE stay pinned). The envelope is convex (intersection of support half-planes) — it cannot be non-convex; the middle width only shapes it while above the corner hull (below it the shape is the corner quadrilateral).</p>
+      </details>
+    </section>
+
+  </aside>
+
+  <section class="stage" id="stage" aria-label="envelope view">
+    <div class="stage-meta" aria-hidden="true">
+      <span class="stage-coordinate">BODY / YAW</span>
+      <span class="stage-mode" id="stageModeLabel">POSE → ENVELOPE</span>
+      <span class="stage-view" id="stageViewLabel">TOP-DOWN</span>
+    </div>
+    <svg id="stageSvg" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="envelope plan view in the body-yaw frame"></svg>
+    <div class="stage-banner hidden" id="stageBanner"></div>
+    <div class="stage-chrome">
+      <button id="recenter" class="chrome-btn" type="button"
+              title="Reset pan and zoom; in 3D also restore the ground-origin target and default rotation">⌖ recenter</button>
+      <span class="chrome-hint" id="stageHint">drag to pan · wheel zoom</span>
+    </div>
+    <div class="anim-label" id="animLabel"></div>
+  </section>
+</main>
+
+<section class="rack" id="jointRack" aria-label="joint pose rack">
+  <div class="rack-head">
+    <h2 class="panel-title">JOINT POSE <span class="panel-sub" id="jointModeNote">q[18] · drives the envelope</span></h2>
+  </div>
+  <div class="joint-grid" id="jointGrid"></div>
+</section>
+
+<details class="diagnostics" id="diagnostics" open>
+  <summary><span>Diagnostics</span><span class="diagnostics-hint">support values · rejection intervals · reference state</span></summary>
+  <section class="readout" id="readout" aria-live="polite"></section>
+</details>
+
+<footer class="statusline" id="statusline"></footer>
+
+<script src="app.js"></script>
+</body>
+</html>
