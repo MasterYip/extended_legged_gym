@@ -7,6 +7,15 @@ range export, and reference-pinned or existential rejection projections. The
 installable core has no Isaac Gym, RL environment, web framework, or
 `agent_team` dependency; optional repository examples are kept outside `src/`.
 
+```mermaid
+flowchart LR
+    urdf["EL4090 URDF and joint pose"] --> core["el4090_envelope core"]
+    core --> support["Occupied support and feasible envelope"]
+    core --> ranges["Joint ranges and rejection intervals"]
+    support --> viewers["Web and Isaac Gym examples"]
+    ranges --> consumers["Planning and RL integrations"]
+```
+
 ## Layout
 
 - `src/el4090_envelope/model.py`: kinematics, capsules, support/envelope and rejection math.

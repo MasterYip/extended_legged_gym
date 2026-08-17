@@ -6,6 +6,17 @@ ranges, and computing rejection intervals. Mathematical definitions and
 evidence boundaries are in [math.md](math.md); this document focuses on using
 the API correctly.
 
+```mermaid
+flowchart LR
+    setup["URDF, joint limits, capsule registry, support normals"] --> pose["Pose or deterministic pose samples"]
+    pose --> support["Occupied and reachable support"]
+    support --> query["Point and pose feasibility queries"]
+    support --> export["Candidate or reference-pinned range export"]
+    export --> reject["Pinned, HAA fold-aware, or per-leg rejection"]
+    query --> app["Planner, RL adapter, web viewer, or Isaac example"]
+    reject --> app
+```
+
 ## Install and verify
 
 The core requires Python 3.8 or newer, NumPy, and Torch. From
@@ -46,8 +57,8 @@ lower, upper = kinematics.joint_limits(soft_fraction=1.0, dtype=torch.float64)
 The EL4090 joint order is `EL4090_JOINT_NAMES`; do not infer order from a
 checkpoint or dictionary. The simulator leg order is `LB, LF, LM, RB, RF, RM`.
 The current URDF has 18 revolute joints and full mechanical limits of
-`[-3, 3]` radians. Use `soft_fraction < 1` only when the caller deliberately
-contracts those limits.
+$[-3,3]\,\mathrm{rad}$. Use `soft_fraction` $<1$ only when the caller
+deliberately contracts those limits.
 
 ## Occupied support and point checks
 
@@ -73,8 +84,9 @@ inside = contains_points(points, directions, allowed, tolerance=1e-6)
 excess_m = point_violations(points, directions, allowed)
 ```
 
-`point_violations <= 0` means inside every represented half-space. A positive
-value is the maximum face excess in metres. Because directions are unit
+The query computes $\rho(p;h)=\max_k(u_k^\top p-h_k)$, so $\rho\le0$ means the
+point is inside every represented half-space. A positive value is the maximum
+face excess in metres. Because directions are unit
 normals, adding a scalar margin offsets each stored face by that metric amount.
 This is an exact offset of represented faces, not a mesh-exact collision test.
 

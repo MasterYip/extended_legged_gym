@@ -12,6 +12,25 @@ selection, pinned rejection, existential rejection, deterministic sampling, and
 legacy tensor assembly. `geometry.py` contains reusable, Isaac-independent
 half-space intersection and kinematic arc helpers.
 
+```mermaid
+flowchart TB
+    subgraph core["Installable core: src/el4090_envelope"]
+        model["model.py: FK, capsules, support, export, rejection"]
+        geometry["geometry.py: half-space polygons and arc geometry"]
+        public["__init__.py: stable public exports"]
+        model --> public
+        geometry --> public
+    end
+
+    tests["tests: deterministic model, geometry, and example checks"] --> public
+    web["examples/web_viewer: HTTP and browser adapter"] --> public
+    isaac["examples/isaac_gym: three optional simulator viewers"] --> public
+    legacy["legged_gym compatibility facades"] --> public
+
+    urdf["Caller-provided EL4090 URDF"] --> model
+    public --> consumers["RL, planning, visualization, and analysis callers"]
+```
+
 ## Main API
 
 - Model: `load_urdf_joints`, `BatchedUrdfKinematics`.
@@ -29,7 +48,9 @@ half-space intersection and kinematic arc helpers.
 - Geometry: import viewer-independent helpers from `el4090_envelope.geometry`.
 
 All tensors preserve caller dtype/device where practical and accept leading
-batch dimensions as documented by each function. Joint order is
+batch dimensions as documented by each function. For a pose batch
+$q\in\mathbb R^{B\times18}$ and $K$ directions, occupied support has shape
+$B\times K$. Joint order is
 `EL4090_JOINT_NAMES`; leg order is `LB, LF, LM, RB, RF, RM`. The old checkpoint
 HAA order remains explicitly available as `LEGACY_HAA_ORDER`.
 
