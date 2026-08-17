@@ -25,11 +25,17 @@ The core requires Python 3.8 or newer, NumPy, and Torch. From
 ```bash
 python -m pip install -e .
 python -m unittest discover -s tests -v
-python -c "import el4090_envelope; print(el4090_envelope.__version__)"
+(cd /tmp && python -c "import el4090_envelope; print(el4090_envelope.__version__)")
 ```
 
-Without installation, prefix commands with `PYTHONPATH=src`. The package does
-not install Isaac Gym, a web framework, URDF assets, or `legged_gym`.
+The final command intentionally runs outside the checkout to prove that the
+editable import is active. Source changes are used immediately; reinstall only
+after changing package metadata or dependencies. From the parent repository,
+the equivalent command is `python -m pip install -e ./el4090_envelope`.
+
+Without installation, commands can still be prefixed with `PYTHONPATH=src` as a
+temporary fallback. The package does not install Isaac Gym, a web framework,
+URDF assets, or `legged_gym`.
 
 ## Build the EL4090 model
 

@@ -25,14 +25,23 @@ flowchart LR
 - `examples/isaac_gym/`: original kinematic, LiDAR, and slider viewers.
 - `docs/`: mathematics, implementation/API, and migration notes.
 
-## Use from a source checkout
+## Editable install
 
-From this directory, use the project's `src` tree explicitly:
+From the `el4090_envelope/` directory, install the package into the active
+Python environment:
 
 ```bash
-PYTHONPATH=src python -c "import el4090_envelope; print(el4090_envelope.__file__)"
-PYTHONPATH=src python -m unittest discover -s tests -v
+python -m pip install -e .
+python -c "import el4090_envelope; print(el4090_envelope.__version__)"
+python -m unittest discover -s tests -v
 ```
+
+The editable install makes `import el4090_envelope` work from any directory and
+keeps it linked to this checkout, so source edits are visible without
+reinstalling. The distribution name used by pip is `el4090-envelope`; the
+Python import name is `el4090_envelope`. To install from the parent
+`extended_legged_gym/` directory, run
+`python -m pip install -e ./el4090_envelope`.
 
 Basic model construction:
 
@@ -61,7 +70,7 @@ examples, and [docs/migration.md](docs/migration.md) for legacy imports.
 ## Web viewer
 
 ```bash
-PYTHONPATH=src python examples/web_viewer/envelope_server.py --port 8766
+python examples/web_viewer/envelope_server.py --port 8766
 ```
 
 Open `http://127.0.0.1:8766/`. The server defaults to the sibling repository's
