@@ -1,0 +1,19 @@
+{
+  "batch": 2048,
+  "capsules": 19,
+  "device": "cpu",
+  "directions": 64,
+  "dtype": "torch.float32",
+  "iterations": 10,
+  "median_ms": 25.28882448677905,
+  "min_ms": 23.203337972518057,
+  "output_shape": [
+    2048,
+    64
+  ],
+  "peak_rss_increase_kib": 65212,
+  "process_peak_rss_kib": 433996,
+  "threads": 16,
+  "throughput_env_s": 80984.38901621112,
+  "warmup": 3
+}

@@ -135,6 +135,8 @@ def get_load_path(root, load_run=-1, checkpoint=-1):
 def update_cfg_from_args(env_cfg, cfg_train, args):
     # seed
     if env_cfg is not None:
+        if args.seed is not None:
+            env_cfg.seed = args.seed
         # num envs
         if args.num_envs is not None:
             env_cfg.env.num_envs = args.num_envs
@@ -266,7 +268,7 @@ def get_default_args():
     return args
 
 
-def get_args():
+def get_args(extra_custom_parameters=None):
     custom_parameters = [
         {"name": "--task", "type": str, "default": "anymal_c_flat",
             "help": "Resume training or start testing from a checkpoint. Overrides config file if provided."},
@@ -286,6 +288,8 @@ def get_args():
         {"name": "--seed", "type": int, "help": "Random seed. Overrides config file if provided."},
         {"name": "--max_iterations", "type": int, "help": "Maximum number of training iterations. Overrides config file if provided."},
     ]
+    if extra_custom_parameters:
+        custom_parameters.extend(extra_custom_parameters)
     # parse arguments
     args = gymutil.parse_arguments(
         description="RL Policy",
