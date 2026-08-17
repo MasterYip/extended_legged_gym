@@ -7,7 +7,8 @@ Compute selector for Live or On-release derived computation.
 From the `el4090_envelope` project directory:
 
 ```bash
-PYTHONPATH=src python examples/web_viewer/envelope_server.py --port 8766
+python -m pip install -e .
+python examples/web_viewer/envelope_server.py --port 8766
 ```
 
 Then open `http://127.0.0.1:8766/`. Use a port other than an existing deployed

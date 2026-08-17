@@ -18,7 +18,11 @@ RL policy or checkpoint.
 ```bash
 cd /home/user/CodeSpace/Python/PredictiveDiffusionPlanner_Dev/extended_legged_gym/el4090_envelope
 conda activate isaacgym
+python -m pip install -e .
 ```
+
+The editable installation makes `el4090_envelope` importable directly and keeps
+the examples linked to this checkout.
 
 If Isaac Gym cannot locate `libpython3.8.so.1.0`, expose the active environment's
 library directory before running an example:
@@ -47,7 +51,7 @@ All three scripts support compute-only, bounded, and interactive modes; the slid
 ### Compute-only validation
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py --compute_only
+python examples/isaac_gym/visualize_kinematic_envelope_gym.py --compute_only
 ```
 
 The command prints the exact preset definitions and their range-export
@@ -63,7 +67,7 @@ Create the output directory outside the RL repository, then run:
 
 ```bash
 mkdir -p /tmp/env-design-003
-PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py \
+python examples/isaac_gym/visualize_kinematic_envelope_gym.py \
   --max_steps 240 \
   --motion_period_steps 240 \
   --screenshot /tmp/env-design-003/kinematic_envelope.png \
@@ -81,7 +85,7 @@ Motion compliance: ... joint samples, 0 violations, max excess 0 rad
 ### Interactive viewer
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py \
+python examples/isaac_gym/visualize_kinematic_envelope_gym.py \
   --screenshot /tmp/env-design-003/kinematic_envelope.png
 ```
 
@@ -143,7 +147,7 @@ $q_j\in[q_j^-,q_j^+]$.
 ### Compute-only validation
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py --compute_only
+python examples/isaac_gym/visualize_lidar_free_envelope_gym.py --compute_only
 ```
 
 The default run reports the seed, randomized point-cloud structure, clearances,
@@ -161,7 +165,7 @@ toward the feasible anchor, so accepted violations must remain zero.
 To check another deterministic cloud:
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
+python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
   --compute_only --seed 4091 --point_count 20 \
   --near_band_fraction 0.05 --lateral_robot_clearance 0.025 \
   --lateral_anchors_per_side 5
@@ -179,7 +183,7 @@ reference-capped face counts, band fraction, and lateral anchor sectors.
 
 ```bash
 mkdir -p /tmp/env-design-003
-PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
+python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
   --seed 4090 \
   --max_steps 180 \
   --motion_period_steps 120 \
@@ -199,7 +203,7 @@ Accepted compliance: ... joint samples; 0 joint violations; 0 envelope violation
 ### Interactive viewer
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
+python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
   --screenshot /tmp/env-design-003/lidar_free_envelope.png
 ```
 
@@ -299,13 +303,13 @@ valid while leaving some exported intervals unchanged.
 Compute without opening either window:
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py --compute_only
+python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py --compute_only
 ```
 
 Start the interactive Tkinter panel and Isaac Gym viewer:
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py \
+python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py \
   --screenshot /tmp/env-design-003/legacy_slider.png
 ```
 
@@ -413,7 +417,7 @@ viewer naturally. Use the default value `0` for an interactive session.
 Use the scripts' built-in help as the authoritative option list:
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py --help
-PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py --help
-PYTHONPATH=src python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py --help
+python examples/isaac_gym/visualize_kinematic_envelope_gym.py --help
+python examples/isaac_gym/visualize_lidar_free_envelope_gym.py --help
+python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py --help
 ```

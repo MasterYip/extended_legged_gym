@@ -8,9 +8,10 @@ Run from the `el4090_envelope` directory with an Isaac Gym environment and the
 sibling `legged_gym/resources` tree available:
 
 ```bash
-PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py --compute_only
-PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py --compute_only
-PYTHONPATH=src python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py --compute_only
+python -m pip install -e .
+python examples/isaac_gym/visualize_kinematic_envelope_gym.py --compute_only
+python examples/isaac_gym/visualize_lidar_free_envelope_gym.py --compute_only
+python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py --compute_only
 ```
 
 See [../../docs/isaac_gym_examples.md](../../docs/isaac_gym_examples.md) for
