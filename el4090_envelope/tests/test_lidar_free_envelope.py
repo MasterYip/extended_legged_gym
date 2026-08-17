@@ -1,4 +1,3 @@
-import importlib.util
 import sys
 import unittest
 from pathlib import Path
@@ -6,22 +5,15 @@ from pathlib import Path
 import torch
 
 
-ROOT = Path(__file__).resolve().parents[1]
-ENVELOPE_DIR = ROOT / "utils" / "envelop"
+DISTRIBUTION_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = DISTRIBUTION_ROOT.parent
+EXAMPLE_DIR = DISTRIBUTION_ROOT / "examples" / "isaac_gym"
+sys.path.insert(0, str(EXAMPLE_DIR))
 
+import el4090_envelope as KE
+import lidar_free_envelope as LFE
 
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-KE = load_module("kinematic_envelope", ENVELOPE_DIR / "kinematic_envelope.py")
-LFE = load_module("lidar_free_envelope", ENVELOPE_DIR / "lidar_free_envelope.py")
-URDF = ROOT.parent / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
+URDF = REPOSITORY_ROOT / "legged_gym" / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
 
 
 class TestLidarFreeEnvelope(unittest.TestCase):

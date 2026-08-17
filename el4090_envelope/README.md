@@ -3,8 +3,9 @@
 `el4090_envelope` is the standalone mathematical implementation of the EL4090
 occupied-body support-envelope model. It provides batched Torch forward
 kinematics, capsule support functions, finite-normal envelopes, deterministic
-range export, and reference-pinned or existential rejection projections. It has
-no Isaac Gym, RL environment, web framework, or `agent_team` dependency.
+range export, and reference-pinned or existential rejection projections. The
+installable core has no Isaac Gym, RL environment, web framework, or
+`agent_team` dependency; optional repository examples are kept outside `src/`.
 
 ## Layout
 
@@ -12,6 +13,7 @@ no Isaac Gym, RL environment, web framework, or `agent_team` dependency.
 - `src/el4090_envelope/geometry.py`: reusable half-space and arc geometry.
 - `tests/`: deterministic unit, regression, edge-case, and serialization checks.
 - `examples/web_viewer/`: self-contained ENV-VIS-015 interactive viewer.
+- `examples/isaac_gym/`: original kinematic, LiDAR, and slider viewers.
 - `docs/`: mathematics, implementation/API, and migration notes.
 
 ## Use from a source checkout
@@ -41,9 +43,11 @@ occupied_support = capsule_support(
 )
 ```
 
-See [docs/math.md](docs/math.md) for the model and approximation contract,
-[docs/implementation.md](docs/implementation.md) for the API, and
-[docs/migration.md](docs/migration.md) for legacy imports.
+Continue with [docs/usage.md](docs/usage.md) for detailed API workflows,
+[docs/math.md](docs/math.md) for the model and approximation contract,
+[docs/implementation.md](docs/implementation.md) for architecture/API ownership,
+[docs/isaac_gym_examples.md](docs/isaac_gym_examples.md) for the original viewer
+examples, and [docs/migration.md](docs/migration.md) for legacy imports.
 
 ## Web viewer
 

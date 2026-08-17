@@ -40,12 +40,12 @@ maximum point-free envelope in the declared capped polygon family, exports
 admissible joint intervals, and animates an EL4090 pose that satisfies both the
 joint and envelope constraints. It does not load an RL checkpoint.
 
-Run from the repository root:
+Run from the standalone distribution directory:
 
 ```bash
-cd legged_gym
+cd el4090_envelope
 conda activate isaacgym
-python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
+PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
   --seed 4090 \
   --point_count 20 \
   --directions 48 \
@@ -85,7 +85,7 @@ lateral safety contract; the first two only change sampling density and radial
 placement within that contract.
 
 The viewer uses two vertically offset strokes for every envelope, LiDAR, and
-HAA line primitive. See the complete [envelope visualization guide](legged_gym/doc/envelope_visualization.md)
+HAA line primitive. See the complete [package visualization guide](el4090_envelope/docs/isaac_gym_examples.md)
 for bounded runs, evidence capture, controls, color semantics, and
 troubleshooting.
 
@@ -98,9 +98,9 @@ capped by the pre-obstacle reachable envelope, and the existing LiDAR pipeline
 recomputes the fixed-normal maximum point-free envelope and all 18 joint ranges.
 
 ```bash
-cd legged_gym
+cd el4090_envelope
 conda activate isaacgym
-python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py
+PYTHONPATH=src python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py
 ```
 
 The sliders use the original ranges: `front_width` 0.3-0.6 m,

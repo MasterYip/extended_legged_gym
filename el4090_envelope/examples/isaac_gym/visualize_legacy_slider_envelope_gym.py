@@ -7,7 +7,6 @@ import argparse
 from dataclasses import dataclass, replace
 import json
 import math
-import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,32 +15,30 @@ import tkinter as tk
 from isaacgym import gymapi  # Must precede Torch imports for Isaac Gym Preview 4.
 import torch
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = PACKAGE_ROOT.parent
-ENVELOPE_DIR = PACKAGE_ROOT / "utils" / "envelop"
-sys.path.insert(0, str(ENVELOPE_DIR))
+DISTRIBUTION_ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY_ROOT = DISTRIBUTION_ROOT.parent
 
-from kinematic_envelope import (  # noqa: E402
+from el4090_envelope import (
     EL4090_JOINT_NAMES, EL4090_LEG_NAMES, BatchedUrdfKinematics,
     capsule_support, default_el4090_capsules, deterministic_joint_samples,
     export_envelope_joint_ranges_at_reference, feasible_reference_q,
     haa_ranges_from_joint_export, joint_rejection_ranges, load_urdf_joints,
     reachable_foot_support, support_directions,
 )
-from legacy_slider_envelope import (  # noqa: E402
+from legacy_slider_envelope import (
     LEGACY_MAXIMUM, LEGACY_MIDPOINT, LEGACY_PARAMETER_ORDER,
     LEGACY_PARAMETER_RANGES, legacy_border_lidar_cloud,
     legacy_border_support, legacy_border_vertices, parameter_tensor,
 )
-from lidar_free_envelope import (  # noqa: E402
+from lidar_free_envelope import (
     envelope_excess, maximum_sector_point_free_envelope,
     polygon_support_excess,
 )
-from pd_control import (  # noqa: E402
+from pd_control import (
     ema_reference_update, nearest_outside_rejection, pd_integrate,
     pd_settled,
 )
-from visualize_lidar_free_envelope_gym import (  # noqa: E402
+from visualize_lidar_free_envelope_gym import (
     LidarProblem, TOLERANCE, WHITE, accepted_motion_pose, apply_pose,
     build_motion_trajectory, create_simulation, draw_boundary, draw_cloud,
     draw_scene as draw_lidar_scene, new_stats, print_exported_box,
@@ -849,7 +846,7 @@ def main():
         raise ValueError("reference containment margin must be positive")
     if args.motion_period_steps < 2 or args.point_clearance <= 0.0:
         raise ValueError("motion period must be at least 2 and point clearance positive")
-    urdf = PROJECT_ROOT / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
+    urdf = REPOSITORY_ROOT / "legged_gym" / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
     kinematics = BatchedUrdfKinematics(load_urdf_joints(urdf))
     context = build_context(kinematics, args)
     result = compute_result(kinematics, context, LEGACY_MAXIMUM, args, 0)

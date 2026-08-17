@@ -1,4 +1,3 @@
-import importlib.util
 import sys
 import unittest
 from pathlib import Path
@@ -6,23 +5,13 @@ from pathlib import Path
 import torch
 
 
-ROOT = Path(__file__).resolve().parents[1]
-ENVELOPE_DIR = ROOT / "utils" / "envelop"
-sys.path.insert(0, str(ENVELOPE_DIR))
+DISTRIBUTION_ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE_DIR = DISTRIBUTION_ROOT / "examples" / "isaac_gym"
+sys.path.insert(0, str(EXAMPLE_DIR))
 
-
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-KE = load_module("kinematic_envelope", ENVELOPE_DIR / "kinematic_envelope.py")
-LIDAR = load_module("lidar_free_envelope", ENVELOPE_DIR / "lidar_free_envelope.py")
-LEGACY = load_module("legacy_slider_envelope", ENVELOPE_DIR / "legacy_slider_envelope.py")
+import el4090_envelope as KE
+import legacy_slider_envelope as LEGACY
+import lidar_free_envelope as LIDAR
 
 
 class TestLegacySliderPointSource(unittest.TestCase):

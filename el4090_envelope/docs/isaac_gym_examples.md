@@ -1,6 +1,6 @@
-# EL4090 Envelope Visualization Examples
+# Isaac Gym visualization examples
 
-This guide covers the standalone Isaac Gym examples for inspecting the EL4090
+This guide covers the package-owned optional Isaac Gym examples for inspecting the EL4090
 kinematic envelope and the LiDAR-prescribed collision-free envelope. The examples
 use the EL4090 URDF and deterministic Torch geometry directly; they do not load an
 RL policy or checkpoint.
@@ -13,10 +13,10 @@ RL policy or checkpoint.
   `resources/robots/el_4090/urdf/el_4090.urdf`.
 - An NVIDIA GPU and a working graphical display are required for the viewer.
   Compute-only validation does not open a window.
-- The commands below are run from the `legged_gym` project directory:
+- The commands below are run from the `el4090_envelope` distribution directory:
 
 ```bash
-cd /home/user/CodeSpace/Python/PredictiveDiffusionPlanner_Dev/extended_legged_gym/legged_gym
+cd /home/user/CodeSpace/Python/PredictiveDiffusionPlanner_Dev/extended_legged_gym/el4090_envelope
 conda activate isaacgym
 ```
 
@@ -31,9 +31,9 @@ export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 | Example | Script | Purpose |
 | --- | --- | --- |
-| Kinematic comparison | `legged_gym/scripts/visualize_kinematic_envelope_gym.py` | Compare compact, nominal, and wide EL4090 envelopes while all joints move within their exported intervals. |
-| LiDAR free envelope | `legged_gym/scripts/visualize_lidar_free_envelope_gym.py` | Generate a structured synthetic 2D LiDAR cloud, derive the point-free envelope, export joint intervals, and animate a constraint-compliant pose. |
-| ZhangHT border sliders | `legged_gym/scripts/visualize_legacy_slider_envelope_gym.py` | Replace random LiDAR returns with slider-border ray intersections, then run the unchanged maximum-envelope and joint-range pipeline. |
+| Kinematic comparison | `examples/isaac_gym/visualize_kinematic_envelope_gym.py` | Compare compact, nominal, and wide EL4090 envelopes while all joints move within their exported intervals. |
+| LiDAR free envelope | `examples/isaac_gym/visualize_lidar_free_envelope_gym.py` | Generate a structured synthetic 2D LiDAR cloud, derive the point-free envelope, export joint intervals, and animate a constraint-compliant pose. |
+| ZhangHT border sliders | `examples/isaac_gym/visualize_legacy_slider_envelope_gym.py` | Replace random LiDAR returns with slider-border ray intersections, then run the unchanged maximum-envelope and joint-range pipeline. |
 
 All three scripts support compute-only, bounded, and interactive modes; the slider example additionally opens a Tkinter control panel. The original two viewers support three modes:
 
@@ -47,7 +47,7 @@ All three scripts support compute-only, bounded, and interactive modes; the slid
 ### Compute-only validation
 
 ```bash
-python legged_gym/scripts/visualize_kinematic_envelope_gym.py --compute_only
+PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py --compute_only
 ```
 
 The command prints the exact preset definitions and their range-export
@@ -63,7 +63,7 @@ Create the output directory outside the RL repository, then run:
 
 ```bash
 mkdir -p /tmp/env-design-003
-python legged_gym/scripts/visualize_kinematic_envelope_gym.py \
+PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py \
   --max_steps 240 \
   --motion_period_steps 240 \
   --screenshot /tmp/env-design-003/kinematic_envelope.png \
@@ -81,7 +81,7 @@ Motion compliance: ... joint samples, 0 violations, max excess 0 rad
 ### Interactive viewer
 
 ```bash
-python legged_gym/scripts/visualize_kinematic_envelope_gym.py \
+PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py \
   --screenshot /tmp/env-design-003/kinematic_envelope.png
 ```
 
@@ -143,7 +143,7 @@ $q_j\in[q_j^-,q_j^+]$.
 ### Compute-only validation
 
 ```bash
-python legged_gym/scripts/visualize_lidar_free_envelope_gym.py --compute_only
+PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py --compute_only
 ```
 
 The default run reports the seed, randomized point-cloud structure, clearances,
@@ -161,7 +161,7 @@ toward the feasible anchor, so accepted violations must remain zero.
 To check another deterministic cloud:
 
 ```bash
-python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
+PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
   --compute_only --seed 4091 --point_count 20 \
   --near_band_fraction 0.05 --lateral_robot_clearance 0.025 \
   --lateral_anchors_per_side 5
@@ -179,7 +179,7 @@ reference-capped face counts, band fraction, and lateral anchor sectors.
 
 ```bash
 mkdir -p /tmp/env-design-003
-python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
+PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
   --seed 4090 \
   --max_steps 180 \
   --motion_period_steps 120 \
@@ -199,7 +199,7 @@ Accepted compliance: ... joint samples; 0 joint violations; 0 envelope violation
 ### Interactive viewer
 
 ```bash
-python legged_gym/scripts/visualize_lidar_free_envelope_gym.py \
+PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py \
   --screenshot /tmp/env-design-003/lidar_free_envelope.png
 ```
 
@@ -299,13 +299,13 @@ valid while leaving some exported intervals unchanged.
 Compute without opening either window:
 
 ```bash
-python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py --compute_only
+PYTHONPATH=src python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py --compute_only
 ```
 
 Start the interactive Tkinter panel and Isaac Gym viewer:
 
 ```bash
-python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py \
+PYTHONPATH=src python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py \
   --screenshot /tmp/env-design-003/legacy_slider.png
 ```
 
@@ -342,7 +342,7 @@ trajectory.
 ## Evidence Location Policy
 
 Generated PNG and JSON files must be stored outside the
-`extended_legged_gym` Git repository. All three scripts reject screenshot paths inside
+the `extended_legged_gym` Git repository. All three scripts reject screenshot paths inside
 the repository. Use `/tmp/env-design-003/` for temporary inspection or copy a
 selected, reviewed result to the canonical task evidence directory managed by the
 agent-team workflow. Do not place generated evidence in `legged_gym/doc/imgs`,
@@ -413,7 +413,7 @@ viewer naturally. Use the default value `0` for an interactive session.
 Use the scripts' built-in help as the authoritative option list:
 
 ```bash
-python legged_gym/scripts/visualize_kinematic_envelope_gym.py --help
-python legged_gym/scripts/visualize_lidar_free_envelope_gym.py --help
-python legged_gym/scripts/visualize_legacy_slider_envelope_gym.py --help
+PYTHONPATH=src python examples/isaac_gym/visualize_kinematic_envelope_gym.py --help
+PYTHONPATH=src python examples/isaac_gym/visualize_lidar_free_envelope_gym.py --help
+PYTHONPATH=src python examples/isaac_gym/visualize_legacy_slider_envelope_gym.py --help
 ```

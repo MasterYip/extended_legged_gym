@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 from isaacgym import gymapi  # Must precede Torch imports for Isaac Gym Preview 4.
@@ -13,12 +12,10 @@ import numpy as np
 import torch
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = PACKAGE_ROOT.parent
-ENVELOPE_DIR = PACKAGE_ROOT / "utils" / "envelop"
-sys.path.insert(0, str(ENVELOPE_DIR))
+DISTRIBUTION_ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY_ROOT = DISTRIBUTION_ROOT.parent
 
-from gym_envelope_geometry import (  # noqa: E402
+from el4090_envelope.geometry import (
     DemoPreset,
     build_demo_preset,
     haa_arc_geometry,
@@ -27,7 +24,7 @@ from gym_envelope_geometry import (  # noqa: E402
     polyline_segments,
     support_polygon,
 )
-from kinematic_envelope import (  # noqa: E402
+from el4090_envelope import (
     EL4090_JOINT_NAMES,
     EL4090_LEG_NAMES,
     BatchedUrdfKinematics,
@@ -384,7 +381,7 @@ def write_evidence(
 ) -> None:
     screenshot = screenshot.resolve()
     try:
-        screenshot.relative_to(PROJECT_ROOT.resolve())
+        screenshot.relative_to(REPOSITORY_ROOT.resolve())
     except ValueError:
         pass
     else:
@@ -443,7 +440,7 @@ def create_simulation(args, presets):
     asset_options.collapse_fixed_joints = False
     asset_options.flip_visual_attachments = False
     asset_options.default_dof_drive_mode = int(gymapi.DOF_MODE_NONE)
-    asset_root = PROJECT_ROOT / "resources" / "robots" / "el_4090" / "urdf"
+    asset_root = REPOSITORY_ROOT / "legged_gym" / "resources" / "robots" / "el_4090" / "urdf"
     robot_asset = gym.load_asset(sim, str(asset_root), "el_4090.urdf", asset_options)
     if robot_asset is None:
         gym.destroy_sim(sim)
@@ -526,7 +523,7 @@ def main() -> None:
     args = parse_args()
     if args.motion_period_steps <= 0:
         raise ValueError("--motion_period_steps must be positive")
-    urdf = PROJECT_ROOT / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
+    urdf = REPOSITORY_ROOT / "legged_gym" / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
     kinematics = BatchedUrdfKinematics(load_urdf_joints(urdf))
     directions = support_directions(args.directions)
     presets = build_presets(kinematics, directions)

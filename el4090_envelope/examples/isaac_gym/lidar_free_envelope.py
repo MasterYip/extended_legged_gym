@@ -8,7 +8,7 @@ from typing import Sequence
 import torch
 from torch import Tensor
 
-from kinematic_envelope import BatchedUrdfKinematics, CapsuleProxy, capsule_support
+from el4090_envelope import BatchedUrdfKinematics, CapsuleProxy, capsule_support
 
 
 MIN_STRUCTURE_CENTER_SEPARATION_RAD = 0.60

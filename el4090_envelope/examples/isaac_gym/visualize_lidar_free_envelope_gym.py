@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,19 +13,17 @@ import numpy as np
 import torch
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = PACKAGE_ROOT.parent
-ENVELOPE_DIR = PACKAGE_ROOT / "utils" / "envelop"
-sys.path.insert(0, str(ENVELOPE_DIR))
+DISTRIBUTION_ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY_ROOT = DISTRIBUTION_ROOT.parent
 
-from gym_envelope_geometry import (  # noqa: E402
+from el4090_envelope.geometry import (
     haa_arc_geometry,
     interpolate_joint_ranges,
     joint_arc_geometry_interval,
     polyline_segments,
     support_polygon,
 )
-from kinematic_envelope import (  # noqa: E402
+from el4090_envelope import (
     EL4090_JOINT_NAMES,
     EL4090_LEG_NAMES,
     BatchedUrdfKinematics,
@@ -42,7 +39,7 @@ from kinematic_envelope import (  # noqa: E402
     reachable_foot_support,
     support_directions,
 )
-from lidar_free_envelope import (  # noqa: E402
+from lidar_free_envelope import (
     assigned_point_clearances,
     backtrack_to_feasible_anchor,
     envelope_excess,
@@ -666,7 +663,7 @@ def create_simulation(args, initial_q):
     asset_options.disable_gravity = True
     asset_options.collapse_fixed_joints = False
     asset_options.default_dof_drive_mode = int(gymapi.DOF_MODE_NONE)
-    asset_root = PROJECT_ROOT / "resources" / "robots" / "el_4090" / "urdf"
+    asset_root = REPOSITORY_ROOT / "legged_gym" / "resources" / "robots" / "el_4090" / "urdf"
     robot_asset = gym.load_asset(sim, str(asset_root), "el_4090.urdf", asset_options)
     if robot_asset is None:
         gym.destroy_sim(sim)
@@ -735,7 +732,7 @@ def apply_pose(gym, env, actor, q_indices, pose) -> None:
 def write_evidence(gym, viewer, path, problem, directions, state, stats, step) -> None:
     path = path.resolve()
     try:
-        path.relative_to(PROJECT_ROOT.resolve())
+        path.relative_to(REPOSITORY_ROOT.resolve())
     except ValueError:
         pass
     else:
@@ -922,7 +919,7 @@ def validate_args(args) -> None:
 def main() -> None:
     args = parse_args()
     validate_args(args)
-    urdf = PROJECT_ROOT / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
+    urdf = REPOSITORY_ROOT / "legged_gym" / "resources" / "robots" / "el_4090" / "urdf" / "el_4090.urdf"
     kinematics = BatchedUrdfKinematics(load_urdf_joints(urdf))
     directions = support_directions(args.directions)
     problem = build_problem(args, kinematics, directions, args.seed)
